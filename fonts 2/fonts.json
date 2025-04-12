@@ -1,0 +1,8 @@
+{
+    "arial": {
+        "normal": "arial.ttf",
+        "bold": "arialbd.ttf",
+        "italic": "ariali.ttf",
+        "bold_italic": "arialbi.ttf"
+    }
+}

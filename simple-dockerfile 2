@@ -1,0 +1,24 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install essential build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Streamlit and core dependencies
+RUN pip install --no-cache-dir streamlit==1.27.0 \
+    pandas==1.5.3 \
+    numpy==1.24.3 \
+    matplotlib==3.7.1 \
+    plotly==5.13.1
+
+# Copy the test streamlit app
+COPY streamlit-app.py /app/
+
+# Expose the Streamlit port
+EXPOSE 8501
+
+# Start Streamlit
+CMD ["streamlit", "run", "streamlit-app.py", "--server.address=0.0.0.0"]
