@@ -1,0 +1,103 @@
+{
+    "databases": {
+        "main_db_path": "data/databases/production/psx_consolidated_data_indicators_PSX.db",
+        "signals_db_path": "data/databases/production/PSX_investing_Stocks_KMI30.db"
+    },
+    "output_paths": {
+        "charts_folder": "outputs/charts/RSI_AO_CHARTS",
+        "dashboards_folder": "outputs/dashboards/PSX_DASHBOARDS"
+    },
+    "analysis": {
+        "rsi_oversold": 40,
+        "rsi_overbought": 60,
+        "neutral_threshold": 1.5,
+        "max_holding_days": 180,
+        "indicator_weights": {
+            "rsi_score_weight": 0.3,
+            "ao_score_weight": 0.25,
+            "volume_score_weight": 0.2,
+            "ma_score_weight": 0.15,
+            "pattern_score_weight": 0.1
+        }
+    },
+    "visualization": {
+        "chart_figsize": [
+            14,
+            14
+        ],
+        "dashboard_figsize": [
+            20,
+            16
+        ],
+        "status_colors": {
+            "BUY/HOLD": "#00FF00",
+            "SELL": "#FF0000",
+            "OPPORTUNITY": "#0000FF",
+            "NEUTRAL": "#808080"
+        },
+        "phase_colors": {
+            "ACCUMULATION": "#00FF00",
+            "DISTRIBUTION": "#FF0000",
+            "NEUTRAL": "#808080"
+        }
+    },
+    "market_conditions": {
+        "STRONGLY_BULLISH": 65,
+        "MODERATELY_BULLISH": 55,
+        "NEUTRAL": 45,
+        "MODERATELY_BEARISH": 35
+    },
+    "allocation_targets": {
+        "STRONGLY_BULLISH": [
+            80,
+            100
+        ],
+        "MODERATELY_BULLISH": [
+            70,
+            90
+        ],
+        "NEUTRAL": [
+            60,
+            80
+        ],
+        "MODERATELY_BEARISH": [
+            40,
+            60
+        ],
+        "STRONGLY_BEARISH": [
+            30,
+            50
+        ]
+    },
+    "kmi30_symbols": [
+        "AICL",
+        "ATRL",
+        "BAFL",
+        "BAHL",
+        "CNERGY",
+        "EFERT",
+        "ENGRO",
+        "FFBL",
+        "FFC",
+        "FCCL",
+        "HUBC",
+        "HBL",
+        "ISL",
+        "ILP",
+        "LUCK",
+        "MCB",
+        "MARI",
+        "MEBL",
+        "MLCF",
+        "MTL",
+        "NBP",
+        "NML",
+        "OGDC",
+        "PAKT",
+        "PPL",
+        "PIOC",
+        "PSO",
+        "SNGP",
+        "SSGC"
+    ]
+}

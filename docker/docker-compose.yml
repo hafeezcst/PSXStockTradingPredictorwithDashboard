@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  streamlit-app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+      - ../outputs:/app/outputs
+      - ../exports:/app/exports
+    environment:
+      - PYTHONPATH=/app
+    restart: unless-stopped
