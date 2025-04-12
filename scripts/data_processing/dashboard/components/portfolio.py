@@ -6,7 +6,6 @@ Combines portfolio data with technical indicators for comprehensive analysis
 import streamlit as st
 import pandas as pd
 import sqlite3
-import plotly.express as px
 import plotly.graph_objects as go
 from typing import Dict, Any, List, Tuple
 from datetime import datetime, timedelta
@@ -295,40 +294,25 @@ def calculate_position_sizing(portfolio_df: pd.DataFrame) -> Dict[str, Any]:
     }
 
 def generate_visualizations(portfolio_df: pd.DataFrame) -> Dict:
-    """Generate visualizations for portfolio analysis"""
+    """Generate portfolio visualizations using plotly.graph_objects."""
     visualizations = {}
     
-    # Create sector distribution pie chart
-    sector_data = portfolio_df.groupby('Sector').agg({
-        'Market Value': 'sum',
-        'Net P/L': 'sum'
-    }).reset_index()
+    # Portfolio Composition Pie Chart
+    fig = go.Figure(data=[go.Pie(
+        labels=portfolio_df['Name'],
+        values=portfolio_df['Market Value'],
+        hole=.3
+    )])
+    fig.update_layout(title='Portfolio Composition')
+    visualizations['composition'] = fig
     
-    fig_sector = px.pie(
-        sector_data,
-        values='Market Value',
-        names='Sector',
-        title='Sector Distribution',
-        hover_data=['Net P/L']
-    )
-    visualizations['sector_distribution'] = fig_sector
-    
-    # Create performance heatmap
-    top_performers = portfolio_df.nlargest(10, 'Daily P/L%')
-    fig_heatmap = go.Figure(data=go.Heatmap(
-        z=[[p for p in top_performers['Daily P/L%']]],
-        x=top_performers['Name'],
-        y=['Daily Performance'],
-        colorscale='RdYlGn',
-        showscale=True
-    ))
-    fig_heatmap.update_layout(
-        title='Top 10 Daily Performers',
-        xaxis_title='Stock',
-        yaxis_title='Performance',
-        height=300
-    )
-    visualizations['performance_heatmap'] = fig_heatmap
+    # Performance Bar Chart
+    fig = go.Figure(data=[go.Bar(
+        x=portfolio_df['Name'],
+        y=portfolio_df['Net P/L%']
+    )])
+    fig.update_layout(title='Performance by Stock')
+    visualizations['performance'] = fig
     
     return visualizations
 
@@ -1165,21 +1149,20 @@ def display_basic_analysis(portfolio_df: pd.DataFrame):
     col1, col2 = st.columns(2)
     
     with col1:
-        fig_sector = px.pie(
-            sector_data,
-            values='Market Value',
-            names='Sector',
-            title='Sector Distribution'
-        )
+        fig_sector = go.Figure(data=[go.Pie(
+            labels=sector_data['Sector'],
+            values=sector_data['Market Value'],
+            hole=.3
+        )])
+        fig_sector.update_layout(title='Sector Distribution')
         st.plotly_chart(fig_sector)
     
     with col2:
-        fig_performance = px.bar(
-            sector_data,
-            x='Sector',
-            y='P/L%',
-            title='Sector Performance'
-        )
+        fig_performance = go.Figure(data=[go.Bar(
+            x=sector_data['Sector'],
+            y=sector_data['P/L%']
+        )])
+        fig_performance.update_layout(title='Sector Performance')
         st.plotly_chart(fig_performance)
     
     # Risk Management
@@ -1286,21 +1269,20 @@ def display_portfolio_analysis(config=None):
     col1, col2 = st.columns(2)
     
     with col1:
-        fig_sector = px.pie(
-            sector_data,
-            values='Market Value',
-            names='Sector',
-            title='Sector Distribution'
-        )
+        fig_sector = go.Figure(data=[go.Pie(
+            labels=sector_data['Sector'],
+            values=sector_data['Market Value'],
+            hole=.3
+        )])
+        fig_sector.update_layout(title='Sector Distribution')
         st.plotly_chart(fig_sector)
     
     with col2:
-        fig_performance = px.bar(
-            sector_data,
-            x='Sector',
-            y='P/L%',
-            title='Sector Performance'
-        )
+        fig_performance = go.Figure(data=[go.Bar(
+            x=sector_data['Sector'],
+            y=sector_data['P/L%']
+        )])
+        fig_performance.update_layout(title='Sector Performance')
         st.plotly_chart(fig_performance)
     
     # Risk Analysis
