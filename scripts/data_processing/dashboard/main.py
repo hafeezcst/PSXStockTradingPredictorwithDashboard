@@ -482,74 +482,45 @@ def display_sidebar():
     return selected_page
 
 def main():
-    """Main function to run the dashboard application."""
+    """
+    Main function to run the dashboard.
+    """
+    # Initialize configuration
+    config = initialize_config()
+    
     # Apply custom CSS
     apply_custom_css()
-
-    # Load configuration
-    config = initialize_config()
-
-    # Display enhanced header
+    
+    # Display header
     display_header()
-
-    # Get selected page from enhanced sidebar
-    current_page = display_sidebar()
-
-    # Create main content container
-    main_container = st.container()
     
-    with main_container:
-        # Display selected page with enhanced layout
-        if current_page == "Dashboard":
-            st.markdown("### 🏠 Dashboard Overview")
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                display_market(config)
-            with col2:
-                display_portfolio_analysis(config)
-        elif current_page == "Market Analysis":
-            st.markdown("### 📊 Market Analysis")
-            display_market(config)
-        elif current_page == "Charts":
-            st.markdown("### 📈 Market Charts")
-            display_charts(config)
-        elif current_page == "Technical Indicators":
-            st.markdown("### 📉 Technical Analysis")
-            display_indicator_analysis(config)
-        elif current_page == "Trading Signals":
-            st.markdown("### 🎯 Trading Signals")
-            display_trading_signals(config)
-        elif current_page == "Financial Reports":
-            st.markdown("### 📑 Financial Reports")
-            display_financial_reports(config)
-        elif current_page == "Portfolio":
-            st.markdown("### 💼 Portfolio Management")
-            display_portfolio_analysis(config)
-        elif current_page == "Mutual Funds":
-            st.markdown("### 🏦 Mutual Funds")
-            display_mutual_funds(config)
-        elif current_page == "Dividend Analysis":
-            st.markdown("### 💸 Dividend Analysis")
-            display_dividend_analysis(config)
-
-    # Footer
-    st.markdown("---")
+    # Display sidebar
+    display_sidebar()
     
-    # Get market status for footer
-    is_open, status_text, status_emoji, next_session, remaining_time = get_market_status()
+    # Display main content
+    st.markdown("## Portfolio Analysis")
+    display_portfolio_analysis(config)
     
-    footer_text = f"""
-    <div style='text-align: center; color: #666;'>
-        <p>PSX Stock Trading Predictor Dashboard v2.0.0 | Data Source: PSX Database</p>
-        <p>Market Status: {status_text} {status_emoji} | Next Session: {next_session}"""
+    st.markdown("## Market Overview")
+    display_market(config)
     
-    if remaining_time:
-        footer_text += f" | Time Remaining: {remaining_time}"
+    st.markdown("## Technical Analysis")
+    display_charts(config)
     
-    footer_text += f" | Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>"
-    footer_text += "</div>"
+    st.markdown("## Mutual Funds")
+    display_mutual_funds(config)
     
-    st.markdown(footer_text, unsafe_allow_html=True)
+    st.markdown("## Financial Reports")
+    display_financial_reports(config)
+    
+    st.markdown("## Trading Signals")
+    display_trading_signals(config)
+    
+    st.markdown("## Indicator Analysis")
+    display_indicator_analysis(config)
+    
+    st.markdown("## Dividend Analysis")
+    display_dividend_analysis(config)
 
 if __name__ == "__main__":
     main() 
