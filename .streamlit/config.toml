@@ -1,0 +1,9 @@
+[server]
+enableWatchdog = false
+
+[client]
+showErrorDetails = true
+
+[runner]
+magicEnabled = true
+fastReruns = true 
