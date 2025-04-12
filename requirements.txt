@@ -24,4 +24,5 @@ fpdf2==2.7.0
 pillow==10.0.0
 PyPDF2==3.0.0
 python-docx==0.8.11
-plotly-express==0.4.1 
+plotly-express==0.4.1
+plotly==5.18.0 
