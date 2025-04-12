@@ -1,0 +1,6 @@
+import sqlite3  # Add this line at the top of your file
+
+# Rest of your code...
+def main():
+    # Your existing code...
+    conn = sqlite3.connect(signals_db_path)  # This should now work

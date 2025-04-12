@@ -1,0 +1,46 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libsqlite3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create basic streamlit requirements file
+RUN echo "streamlit==1.28.0" > /app/streamlit-requirements.txt && \
+    echo "pandas==2.0.3" >> /app/streamlit-requirements.txt && \
+    echo "numpy==1.24.3" >> /app/streamlit-requirements.txt && \
+    echo "matplotlib==3.7.2" >> /app/streamlit-requirements.txt && \
+    echo "plotly==5.14.1" >> /app/streamlit-requirements.txt && \
+    echo "Pillow==9.5.0" >> /app/streamlit-requirements.txt && \
+    echo "beautifulsoup4==4.12.2" >> /app/streamlit-requirements.txt && \
+    echo "sqlalchemy==2.0.19" >> /app/streamlit-requirements.txt && \
+    echo "fpdf2==2.7.6" >> /app/streamlit-requirements.txt && \
+    echo "tqdm==4.65.0" >> /app/streamlit-requirements.txt && \
+    echo "scikit-learn==1.2.2" >> /app/streamlit-requirements.txt && \
+    echo "statsmodels==0.13.5" >> /app/streamlit-requirements.txt
+
+# Install basic dependencies first
+RUN pip install --no-cache-dir -r /app/streamlit-requirements.txt
+
+# Create a simple test Streamlit app
+RUN mkdir -p /app/scripts/data_processing
+COPY scripts/data_processing/PSX_dashboard.py /app/scripts/data_processing/
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/outputs /app/exports /app/data/databases /app/config
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Create a simple test script
+RUN echo 'import streamlit as st\n\nst.title("PSX Dashboard Test")\nst.write("Docker test successful!")' > /app/test_app.py
+
+# Expose Streamlit port
+EXPOSE 8501
+
+# Run the test Streamlit app
+CMD ["streamlit", "run", "test_app.py", "--server.address=0.0.0.0"]
