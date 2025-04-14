@@ -19,3 +19,4 @@ joblib>=1.2.0
 pmdarima>=2.0.0
 statsmodels>=0.13.0
 pandas-ta
+schedule>=1.2.0

@@ -722,6 +722,7 @@ def main():
     # Paths for output - using path constants for consistency
     db_path = PRODUCTION_DB_DIR / 'PSXSymbols.db'
     excel_path = CONFIG_DIR / 'psxsymbols.xlsx'  # Use the correct path to PSXSymbols.xlsx
+    
     csv_path = DATA_EXPORTS_DIR / 'reports' / 'KMIALLSHR.csv'
     
     print(f"\n📂 Output paths:")

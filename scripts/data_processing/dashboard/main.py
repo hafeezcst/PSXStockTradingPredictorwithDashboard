@@ -494,33 +494,66 @@ def main():
     # Display header
     display_header()
     
-    # Display sidebar
-    display_sidebar()
+    # Display sidebar and get selected page
+    selected_page = display_sidebar()
     
-    # Display main content
-    st.markdown("## Portfolio Analysis")
-    display_portfolio_analysis(config)
+    # Display main content based on selected page
+    if selected_page == "Dashboard":
+        st.markdown("## Portfolio Analysis")
+        display_portfolio_analysis(config)
+        
+        st.markdown("## Market Overview")
+        display_market(config)
+        
+        st.markdown("## Technical Analysis")
+        display_charts(config)
+        
+        st.markdown("## Mutual Funds")
+        display_mutual_funds(config)
+        
+        st.markdown("## Financial Reports")
+        display_financial_reports(config)
+        
+        st.markdown("## Trading Signals")
+        display_trading_signals(config)
+        
+        st.markdown("## Indicator Analysis")
+        display_indicator_analysis(config)
+        
+        st.markdown("## Dividend Analysis")
+        display_dividend_analysis(config)
     
-    st.markdown("## Market Overview")
-    display_market(config)
+    elif selected_page == "Market Analysis":
+        st.markdown("## Market Overview")
+        display_market(config)
     
-    st.markdown("## Technical Analysis")
-    display_charts(config)
+    elif selected_page == "Charts":
+        st.markdown("## Technical Analysis")
+        display_charts(config)
     
-    st.markdown("## Mutual Funds")
-    display_mutual_funds(config)
+    elif selected_page == "Technical Indicators":
+        st.markdown("## Indicator Analysis")
+        display_indicator_analysis(config)
     
-    st.markdown("## Financial Reports")
-    display_financial_reports(config)
+    elif selected_page == "Trading Signals":
+        st.markdown("## Trading Signals")
+        display_trading_signals(config)
     
-    st.markdown("## Trading Signals")
-    display_trading_signals(config)
+    elif selected_page == "Financial Reports":
+        st.markdown("## Financial Reports")
+        display_financial_reports(config)
     
-    st.markdown("## Indicator Analysis")
-    display_indicator_analysis(config)
+    elif selected_page == "Portfolio":
+        st.markdown("## Portfolio Analysis")
+        display_portfolio_analysis(config)
     
-    st.markdown("## Dividend Analysis")
-    display_dividend_analysis(config)
+    elif selected_page == "Mutual Funds":
+        st.markdown("## Mutual Funds")
+        display_mutual_funds(config)
+    
+    elif selected_page == "Dividend Analysis":
+        st.markdown("## Dividend Analysis")
+        display_dividend_analysis(config)
 
 if __name__ == "__main__":
     main() 

@@ -8,7 +8,7 @@ import warnings
 from fpdf import FPDF
 
 # Configure PDF settings to handle unknown widths
-FPDF.set_global("SYSTEM_TTFONTS", str(Path(__file__).parent.parent.parent / "fonts"))
+FPDF.SYSTEM_TTFONTS = str(Path(__file__).parent.parent.parent / "fonts")
 
 # Suppress specific warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='fpdf')

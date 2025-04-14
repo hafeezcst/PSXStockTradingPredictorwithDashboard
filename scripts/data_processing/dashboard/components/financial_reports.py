@@ -18,6 +18,7 @@ import mimetypes
 import tempfile
 from dotenv import load_dotenv
 import json
+import sqlite3
 
 # Load environment variables
 load_dotenv()
@@ -2267,11 +2268,15 @@ def get_latest_buy_signals() -> Dict[str, Dict]:
     try:
         # Try to get signals from the signals module
         try:
-            from ..signals import get_latest_signals
+            import os
+            import sys
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..'))
+            sys.path.append(project_root)
+            from scripts.data_processing.signals import get_latest_signals
             signals_df = get_latest_signals()
         except ImportError:
             # Fallback to local signals file if module not available
-            signals_file = os.path.join(os.path.dirname(__file__), "..", "data", "investing_signals.xlsx")
+            signals_file = os.path.join(os.path.dirname(__file__), "..", "..", "data", "investing_signals.xlsx")
             if os.path.exists(signals_file):
                 signals_df = pd.read_excel(signals_file)
             else:
@@ -2327,42 +2332,41 @@ def get_latest_financial_reports(df: pd.DataFrame, company: str, n: int = 2) -> 
 
 def enhance_company_selection(df: pd.DataFrame):
     """
-    Enhance company selection with buy signals and auto-select latest reports.
+    Enhance company selection with signal indicators and full names.
+    Returns formatted company options and default selections.
     """
-    # Silently check version lock without displaying messages
-    check_version_lock()
-    
-    # Get latest buy signals
-    buy_signals = get_latest_buy_signals()
-    
+    try:
+        signals_df = get_latest_buy_signals()
+        if isinstance(signals_df, dict):
+            signals_df = pd.DataFrame.from_dict(signals_df, orient='index')
+            signals_df.reset_index(inplace=True)
+            signals_df.rename(columns={'index': 'Symbol'}, inplace=True)
+    except Exception as e:
+        print(f"Warning: Could not load signals: {str(e)}")
+        signals_df = pd.DataFrame(columns=['Symbol', 'Signal', 'Confidence'])
+
     # Create formatted company options with signal indicators and full names
     company_options = []
     for symbol in sorted(df['Symbol'].unique()):
         # Get full company name from the dataframe
         company_name = df[df['Symbol'] == symbol]['Company_Name'].iloc[0] if 'Company_Name' in df.columns else symbol
         
-        if symbol in buy_signals:
-            signal = buy_signals[symbol]
-            strength = "🔥" if signal['signal_type'] == 'Strong Buy' else "✨"
-            confidence = "⭐" * ({"High": 3, "Medium": 2, "Low": 1}.get(signal['confidence'], 2))
-            label = f"{company_name} ({symbol}) {strength} ({signal['signal_type']}) {confidence}"
+        if not signals_df.empty and symbol in signals_df['Symbol'].values:
+            signal = signals_df[signals_df['Symbol'] == symbol].iloc[0]
+            strength = "🔥" if signal['Signal'] == 'Strong Buy' else "✨"
+            confidence = "⭐" * ({"High": 3, "Medium": 2, "Low": 1}.get(signal['Confidence'], 2))
+            label = f"{company_name} ({symbol}) {strength} ({signal['Signal']}) {confidence}"
         else:
             label = f"{company_name} ({symbol})"
         company_options.append({"label": label, "value": symbol})
     
     # Pre-select companies with strongest buy signals
-    default_companies = [
-        symbol for symbol in buy_signals.keys()
-        if buy_signals[symbol]['signal_type'] == 'Strong Buy'
-    ][:2]  # Get top 2 companies with strong buy signals
-    
-    if len(default_companies) < 2:
-        # Add companies with regular buy signals if needed
-        additional_companies = [
-            symbol for symbol in buy_signals.keys()
-            if symbol not in default_companies
-        ][:2 - len(default_companies)]
-        default_companies.extend(additional_companies)
+    default_companies = []
+    if not signals_df.empty:
+        default_companies = [
+            symbol for symbol in signals_df['Symbol'].values
+            if signals_df[signals_df['Symbol'] == symbol]['Signal'].iloc[0] == 'Strong Buy'
+        ]
     
     return company_options, default_companies
 
@@ -2415,3 +2419,11 @@ def auto_select_reports(df: pd.DataFrame, company: str) -> tuple[pd.DataFrame, i
         best_report_idx = 0
     
     return company_reports, best_report_idx 
+
+def get_latest_signals():
+    """Get latest signals from database"""
+    try:
+        with sqlite3.connect('data/databases/production/PSX_investing_Stocks_KMI30.db') as conn:
+            return pd.read_sql("SELECT * FROM buy_stocks ORDER BY Signal_Date DESC", conn)
+    except Exception:
+        return pd.DataFrame()
