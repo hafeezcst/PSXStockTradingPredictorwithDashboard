@@ -20,7 +20,7 @@ import time
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 from scripts.data_processing.telegram_message import send_telegram_message
 
-from scripts.data_processing.dashboard.components.shared_styles import (
+from src.data_processing.dashboard.components.shared_styles import (
     apply_shared_styles,
     create_custom_header,
     create_custom_subheader,

@@ -7,7 +7,7 @@ import sys
 import streamlit as st
 import time
 from datetime import datetime
-from scripts.data_processing.dashboard.components.shared_styles import (
+from src.data_processing.dashboard.components.shared_styles import (
     apply_shared_styles,
     create_custom_header,
     create_custom_divider

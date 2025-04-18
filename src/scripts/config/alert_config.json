@@ -1,0 +1,16 @@
+{
+    "telegram": {
+        "enabled": true
+    },
+    "alerts": {
+        "signal_transitions": true,
+        "profit_threshold": 5.0,
+        "loss_threshold": -5.0,
+        "days_in_signal_threshold": 14
+    },
+    "analysis": {
+        "trend_detection": true,
+        "volume_analysis": true,
+        "performance_metrics": true
+    }
+}

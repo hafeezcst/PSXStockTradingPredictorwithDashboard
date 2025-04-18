@@ -8,7 +8,7 @@ import os
 import plotly.express as px
 from typing import Dict, Any
 
-from scripts.data_processing.dashboard.components.shared_styles import (
+from src.data_processing.dashboard.components.shared_styles import (
     apply_shared_styles,
     create_custom_header,
     create_custom_subheader,

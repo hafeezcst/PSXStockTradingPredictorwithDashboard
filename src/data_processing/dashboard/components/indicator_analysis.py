@@ -12,7 +12,7 @@ from typing import Dict, Any, List, Tuple
 import os
 from datetime import datetime, timedelta
 
-from scripts.data_processing.dashboard.components.shared_styles import (
+from src.data_processing.dashboard.components.shared_styles import (
     apply_shared_styles,
     create_custom_header,
     create_custom_subheader,

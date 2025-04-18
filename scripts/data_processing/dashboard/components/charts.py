@@ -14,8 +14,7 @@ from src.data_processing.dashboard.components.shared_styles import (
     create_custom_header,
     create_custom_subheader,
     create_custom_divider,
-    create_chart_container,
-    create_metric_card
+    create_chart_container
 )
 from typing import Optional, Dict, Any
 
