@@ -28,13 +28,6 @@ pymongo>=4.6.1
 sqlalchemy>=2.0.27
 psycopg2-binary>=2.9.9
 
-# Development tools
-pytest>=8.0.2
-black>=24.2.0
-flake8>=7.0.0
-mypy>=1.8.0
-pre-commit>=3.6.0
-
 # Document processing
 fpdf2>=2.7.7
 pillow>=10.2.0
