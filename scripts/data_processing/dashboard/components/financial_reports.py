@@ -20,6 +20,16 @@ from dotenv import load_dotenv
 import json
 import sqlite3
 
+from scripts.data_processing.dashboard.components.shared_styles import (
+    apply_shared_styles,
+    create_custom_header,
+    create_custom_subheader,
+    create_custom_divider,
+    create_chart_container,
+    create_metric_card,
+    create_alert
+)
+
 # Load environment variables
 load_dotenv()
 
@@ -563,13 +573,68 @@ def display_financial_reports(config: Dict[str, Any]):
     with st.sidebar:
         st.markdown("### 🔑 AI Analysis Configuration")
         
-        # Model selection
+        # Get API keys from .env first, then fallback to saved keys
+        api_keys = load_api_keys()
+        env_keys = {
+            'deepseek': os.getenv('DEEPSEEK_API_KEY', ''),
+            'anthropic': os.getenv('ANTHROPIC_API_KEY', ''),
+            'openai': os.getenv('OPENAI_API_KEY', ''),
+            'xai': os.getenv('XAI_API_KEY', ''),
+            'google': os.getenv('GOOGLE_API_KEY', ''),
+            'huggingface': os.getenv('HUGGINGFACE_API_KEY', '')
+        }
+        
+        # Update api_keys with env values if they exist
+        for key_type, env_key in env_keys.items():
+            if env_key and env_key != 'your_' + key_type + '_api_key_here':
+                api_keys[key_type] = env_key
+        
+        # Determine available models based on API keys
+        available_models = []
+        for model_name, model_info in MODEL_OPTIONS.items():
+            api_type = model_info['api_type']
+            api_key = api_keys.get(api_type, '')
+            
+            # Test the API key if it exists
+            if api_key:
+                success, _, _ = test_model_access(api_key, api_type)
+                if success:
+                    available_models.append(model_name)
+                elif api_type == 'deepseek' and model_name == "DeepSeek":
+                    # If DeepSeek key is invalid, prompt for new key
+                    st.warning("⚠️ DeepSeek API key has expired or is invalid")
+                    new_key = st.text_input(
+                        "Enter new DeepSeek API key:",
+                        type="password",
+                        key="new_deepseek_key"
+                    )
+                    if new_key:
+                        success, _, message = test_model_access(new_key, "deepseek")
+                        if success:
+                            api_keys['deepseek'] = new_key
+                            save_api_keys(api_keys)
+                            st.success("✅ New DeepSeek API key saved successfully!")
+                            available_models.append(model_name)
+                        else:
+                            st.error(f"❌ Invalid API key: {message}")
+        
+        # If no models are available, show all but with warnings
+        if not available_models:
+            available_models = list(MODEL_OPTIONS.keys())
+            st.warning("⚠️ No API keys configured. Please configure at least one API key to use the analysis features.")
+        
+        # Model selection with DeepSeek as default if available
         st.markdown("#### 🤖 Select Analysis Model")
+        default_model = "DeepSeek" if "DeepSeek" in available_models else available_models[0]
+        
         selected_model = st.selectbox(
-            "Choose Model:",
-            options=list(MODEL_OPTIONS.keys()),
-            format_func=lambda x: f"{x} ({MODEL_OPTIONS[x]['description']})" + (" 🔄" if MODEL_OPTIONS[x].get("beta_status", False) else ""),
-            help="Select the AI model for analysis. Different models have different strengths."
+            "Select Primary Model:",
+            options=available_models,
+            format_func=lambda x: f"{x} - {MODEL_OPTIONS[x]['description']}" +
+                               (" ✨" if MODEL_OPTIONS[x].get("beta_status", False) else "") +
+                               (" ✅" if MODEL_OPTIONS[x]['api_type'] in api_keys and api_keys[MODEL_OPTIONS[x]['api_type']] else " ⚠️"),
+            help="Select the primary model for analysis. Each model has different strengths and capabilities.",
+            index=available_models.index(default_model)
         )
         
         # Store selected model in session state
@@ -580,230 +645,31 @@ def display_financial_reports(config: Dict[str, Any]):
         for strength in MODEL_OPTIONS[selected_model]['strengths']:
             st.markdown(f"- {strength}")
         
-        # API Key configuration based on selected model
+        # Show model status
         model_info = MODEL_OPTIONS[selected_model]
-        api_keys = load_api_keys()
-        
-        if model_info['api_type'] == "deepseek":
-            st.markdown("#### 🔑 DeepSeek API Configuration")
-            current_api_key = st.session_state.get('deepseek_api_key', api_keys.get('deepseek', ''))
-            
-            # Check if there's a key in .env
-            env_key = os.getenv('DEEPSEEK_API_KEY', '')
-            if env_key and (not current_api_key or current_api_key == ''):
-                st.info("ℹ️ Using DeepSeek API key from environment variables")
-                st.session_state.deepseek_api_key = env_key
-                api_keys['deepseek'] = env_key
-                save_api_keys(api_keys)
-                current_api_key = env_key
-            
-            if current_api_key:
-                st.success("✅ DeepSeek API key is already configured")
-                if st.button("Change DeepSeek API Key", key="change_deepseek_key_sidebar"):
-                    st.session_state.deepseek_api_key = ''
-                    api_keys['deepseek'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
+        api_type = model_info['api_type']
+        if api_type in api_keys and api_keys[api_type]:
+            success, _, _ = test_model_access(api_keys[api_type], api_type)
+            if success:
+                st.success(f"✅ {selected_model} is configured and ready to use")
             else:
-                api_key = st.text_input(
-                    "DeepSeek API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your DeepSeek API key",
-                    key="deepseek_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    st.session_state.deepseek_api_key = api_key
-                    if api_key:
-                        success, _, message = test_model_access(api_key, "deepseek")
+                st.warning(f"⚠️ {selected_model} API key needs to be updated")
+                if api_type == 'deepseek':
+                    new_key = st.text_input(
+                        "Enter new DeepSeek API key:",
+                        type="password",
+                        key="new_deepseek_key_status"
+                    )
+                    if new_key:
+                        success, _, message = test_model_access(new_key, "deepseek")
                         if success:
-                            st.success(message)
-                            api_keys['deepseek'] = api_key
+                            api_keys['deepseek'] = new_key
                             save_api_keys(api_keys)
+                            st.success("✅ New DeepSeek API key saved successfully!")
                         else:
-                            st.error(message)
-        
-        elif model_info['api_type'] == "anthropic":
-            st.markdown("#### 🔑 Anthropic API Configuration")
-            current_api_key = st.session_state.get('anthropic_api_key', api_keys.get('anthropic', ''))
-            
-            if current_api_key:
-                st.success("✅ Anthropic API key is already configured")
-                if st.button("Change Anthropic API Key", key="change_anthropic_key_sidebar"):
-                    st.session_state.anthropic_api_key = ''
-                    api_keys['anthropic'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
-            else:
-                api_key = st.text_input(
-                    "Anthropic API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your Anthropic API key",
-                    key="anthropic_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    st.session_state.anthropic_api_key = api_key
-                    if api_key:
-                        success, _, message = test_model_access(api_key, "anthropic")
-                        if success:
-                            st.success(message)
-                            api_keys['anthropic'] = api_key
-                            save_api_keys(api_keys)
-                        else:
-                            st.error(message)
-        
-        elif model_info['api_type'] == "openai":
-            st.markdown("#### 🔑 OpenAI API Configuration")
-            current_api_key = st.session_state.get('openai_api_key', api_keys.get('openai', ''))
-            
-            if current_api_key:
-                st.success("✅ OpenAI API key is already configured")
-                if st.button("Change OpenAI API Key", key="change_openai_key_sidebar"):
-                    st.session_state.openai_api_key = ''
-                    api_keys['openai'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
-            else:
-                api_key = st.text_input(
-                    "OpenAI API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your OpenAI API key",
-                    key="openai_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    st.session_state.openai_api_key = api_key
-                    if api_key:
-                        success, _, message = test_model_access(api_key, "openai")
-                        if success:
-                            st.success(message)
-                            api_keys['openai'] = api_key
-                            save_api_keys(api_keys)
-                        else:
-                            st.error(message)
-        
-        elif model_info['api_type'] == "google":
-            st.markdown("#### 🔑 Google API Configuration")
-            current_api_key = st.session_state.get('google_api_key', api_keys.get('google', ''))
-            
-            if current_api_key:
-                st.success("✅ Google API key is already configured")
-                if st.button("Change Google API Key", key="change_google_key_sidebar"):
-                    st.session_state.google_api_key = ''
-                    api_keys['google'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
-            else:
-                api_key = st.text_input(
-                    "Google API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your Google API key",
-                    key="google_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    st.session_state.google_api_key = api_key
-                    if api_key:
-                        success, _, message = test_model_access(api_key, "google")
-                        if success:
-                            st.success(message)
-                            api_keys['google'] = api_key
-                            save_api_keys(api_keys)
-                        else:
-                            st.error(message)
-        
-        elif model_info['api_type'] == "xai":
-            st.markdown("#### 🔑 xAI API Configuration")
-            
-            # Display beta status and availability note
-            if model_info.get("beta_status", False):
-                st.warning("⚠️ This model is currently in beta and requires special access")
-            
-            if "availability_note" in model_info:
-                st.info(model_info["availability_note"])
-            
-            # Add a link to join the waitlist
-            st.markdown("""
-            **To get access to the Grok model:**
-            1. Visit [xAI's website](https://x.ai/)
-            2. Join the waitlist
-            3. Once approved, you'll receive instructions to get an API key
-            """)
-            
-            current_api_key = st.session_state.get('xai_api_key', api_keys.get('xai', ''))
-            
-            if current_api_key:
-                st.success("✅ xAI API key is already configured")
-                if st.button("Change xAI API Key", key="change_xai_key_sidebar"):
-                    st.session_state.xai_api_key = ''
-                    api_keys['xai'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
-            else:
-                api_key = st.text_input(
-                    "xAI API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your xAI API key",
-                    key="xai_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    st.session_state.xai_api_key = api_key
-                    if api_key:
-                        success, _, message = test_model_access(api_key, "xai")
-                        if success:
-                            st.success(message)
-                            api_keys['xai'] = api_key
-                            save_api_keys(api_keys)
-                        else:
-                            st.error(message)
-                            if "waitlist" in message.lower():
-                                st.markdown("""
-                                **It looks like you need to join the waitlist first:**
-                                1. Visit [xAI's website](https://x.ai/)
-                                2. Join the waitlist
-                                3. Once approved, you'll receive instructions to get an API key
-                                """)
-        
-        else:  # HuggingFace models
-            st.markdown("#### 🔑 Hugging Face API Configuration")
-            current_api_key = st.session_state.get('huggingface_api_key', api_keys.get('huggingface', ''))
-            
-            if current_api_key:
-                st.success("✅ Hugging Face API key is already configured")
-                if st.button("Change Hugging Face API Key", key="change_huggingface_key_sidebar"):
-                    st.session_state.huggingface_api_key = ''
-                    api_keys['huggingface'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
-            else:
-                api_key = st.text_input(
-                    "Hugging Face API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your Hugging Face API key",
-                    key="huggingface_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    if not api_key.startswith('hf_') and api_key != '':
-                        st.error("❌ Invalid API key format. Hugging Face API keys should start with 'hf_'")
-                    else:
-                        st.session_state.huggingface_api_key = api_key
-                        if api_key:
-                            success, _, message = test_model_access(api_key)
-                            if success:
-                                st.success(message)
-                                api_keys['huggingface'] = api_key
-                                save_api_keys(api_keys)
-                            else:
-                                st.error(message)
+                            st.error(f"❌ Invalid API key: {message}")
+        else:
+            st.warning(f"⚠️ {selected_model} requires API key configuration")
 
     # Get file path from config
     file_path = config.get("announcements_file")
@@ -1701,13 +1567,20 @@ def test_model_access(api_key: str, model_type: str = "huggingface") -> tuple[bo
     # Silently check version lock without displaying messages
     check_version_lock()
     
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+    if not api_key:
+        return False, "", "❌ API key is empty. Please provide a valid API key."
     
     if model_type == "deepseek":
         try:
+            # Validate DeepSeek API key format
+            if not api_key.startswith('sk-'):
+                return False, "", "❌ Invalid DeepSeek API key format. API key should start with 'sk-'"
+            
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
             test_payload = {
                 "model": MODEL_OPTIONS["DeepSeek"]["model_name"],
                 "messages": [{"role": "user", "content": "Test model access"}],
@@ -1724,10 +1597,23 @@ def test_model_access(api_key: str, model_type: str = "huggingface") -> tuple[bo
             if response.status_code == 200:
                 return True, MODEL_OPTIONS["DeepSeek"]["url"], "✅ Successfully connected to DeepSeek model"
             elif response.status_code == 401:
-                return False, "", "❌ Invalid DeepSeek API key. Please check your key and ensure it's correct."
+                error_msg = "❌ DeepSeek API authentication failed. Please ensure:"
+                error_msg += "\n1. Your API key is correct"
+                error_msg += "\n2. You have an active DeepSeek subscription"
+                error_msg += "\n3. Your API key has the necessary permissions"
+                return False, "", error_msg
             else:
-                return False, "", f"❌ Error accessing DeepSeek API: {response.text}"
+                error_msg = f"❌ Error accessing DeepSeek API: {response.text}"
+                if response.status_code == 429:
+                    error_msg += "\n⚠️ Rate limit exceeded. Please try again later."
+                elif response.status_code == 403:
+                    error_msg += "\n⚠️ Access forbidden. Please check your API key permissions."
+                return False, "", error_msg
                 
+        except requests.exceptions.Timeout:
+            return False, "", "❌ Request timed out. Please check your internet connection."
+        except requests.exceptions.ConnectionError:
+            return False, "", "❌ Connection error. Please check your internet connection."
         except Exception as e:
             return False, "", f"❌ Error testing DeepSeek model: {str(e)}"
     
@@ -1888,19 +1774,17 @@ def analyze_financial_reports(report1_text: str, report2_text: str = None,
     # Silently check version lock without displaying messages
     check_version_lock()
     
-    # Get API keys from session state
-    huggingface_api_key = st.session_state.get('huggingface_api_key', '')
-    deepseek_api_key = st.session_state.get('deepseek_api_key', '')
-    
     # Get selected model from session state
-    selected_model = st.session_state.get('selected_model', 'Mistral-7B')
+    selected_model = st.session_state.get('selected_model', 'Claude-3')
     model_info = MODEL_OPTIONS[selected_model]
     
-    if model_info["api_type"] == "deepseek" and not deepseek_api_key:
-        return "⚠️ Error: DeepSeek API key not configured. Please set up your DeepSeek API key in the sidebar."
+    # Get API keys
+    api_keys = load_api_keys()
+    api_type = model_info['api_type']
+    api_key = api_keys.get(api_type, '')
     
-    if model_info["api_type"] == "huggingface" and not huggingface_api_key:
-        return "⚠️ Error: Hugging Face API key not configured. Please set up your Hugging Face API key in the sidebar."
+    if not api_key:
+        return f"⚠️ Error: {selected_model} API key not configured. Please set up your API key in the sidebar."
     
     try:
         # Get full company names
@@ -1979,10 +1863,66 @@ Provide a detailed analysis in the following format:
 - Price targets and timeline (if applicable)
 """
         
-        if model_info["api_type"] == "deepseek":
-            # Call DeepSeek API directly
+        if model_info["api_type"] == "anthropic":
+            # Call Anthropic API with correct format
             headers = {
-                "Authorization": f"Bearer {deepseek_api_key}",
+                "Authorization": f"Bearer {api_key}",  # Changed from x-api-key to Authorization
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            }
+            
+            payload = {
+                "model": model_info["model_name"],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "max_tokens": model_info["max_tokens"]
+            }
+            
+            try:
+                response = requests.post(
+                    model_info["url"],
+                    headers=headers,
+                    json=payload,
+                    timeout=60
+                )
+                
+                if response.status_code == 200:
+                    try:
+                        result = response.json()
+                        analysis = result['content'][0]['text'] if 'content' in result else result['message']['content']
+                    except Exception as e:
+                        return f"❌ Error parsing Anthropic response: {str(e)}\nResponse: {response.text}"
+                elif response.status_code == 401:
+                    return """❌ Anthropic API authentication failed. Please ensure:
+1. Your API key is correct and active
+2. You have an active Anthropic subscription
+3. The API key has the necessary permissions"""
+                else:
+                    error_msg = f"⚠️ Anthropic API request failed with status code {response.status_code}"
+                    try:
+                        error_details = response.json()
+                        if response.status_code == 429:
+                            error_msg = "⌛ Rate limit exceeded. Please wait a few moments and try again."
+                        elif response.status_code == 403:
+                            error_msg = "❌ Access forbidden. Please check your API key permissions."
+                        error_msg += f"\nDetails: {error_details}"
+                    except:
+                        error_msg += f"\nResponse: {response.text}"
+                    return error_msg
+                    
+            except requests.exceptions.Timeout:
+                return "⏱️ Request to Anthropic API timed out. Please try again."
+            except requests.exceptions.RequestException as e:
+                return f"🌐 Error making request to Anthropic API: {str(e)}"
+        
+        elif model_info["api_type"] == "deepseek":
+            # Call DeepSeek API
+            headers = {
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             }
             
@@ -2019,7 +1959,7 @@ Provide a detailed analysis in the following format:
         
         else:  # HuggingFace models
             headers = {
-                "Authorization": f"Bearer {huggingface_api_key}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             }
             
@@ -2157,36 +2097,15 @@ MODEL_OPTIONS = {
     },
     "DeepSeek": {
         "url": "https://api.deepseek.com/v1/chat/completions",
-        "description": "Advanced model for in-depth financial analysis and technical insights",
+        "description": "Best for in-depth financial analysis and technical insights",
         "max_tokens": 2000,
         "model_name": "deepseek-chat",
         "strengths": ["Deep financial expertise", "Technical analysis", "Complex reasoning"],
         "api_type": "deepseek"
     },
-    "Llama-2-70B": {
-        "url": "meta-llama/Llama-2-70b-chat-hf",
-        "description": "Most comprehensive analysis, best for complex reports",
-        "max_tokens": 2000,
-        "strengths": ["Deep financial knowledge", "Complex reasoning", "Thorough analysis"],
-        "api_type": "huggingface"
-    },
-    "MPT-30B": {
-        "url": "mosaicml/mpt-30b-instruct",
-        "description": "Specialized in financial metrics and ratios",
-        "max_tokens": 1500,
-        "strengths": ["Financial metrics focus", "Good with numbers", "Technical analysis"],
-        "api_type": "huggingface"
-    },
-    "FLAN-T5": {
-        "url": "google/flan-t5-xl",
-        "description": "Fast analysis, good for quick insights",
-        "max_tokens": 1000,
-        "strengths": ["Quick analysis", "Good summarization", "Reliable performance"],
-        "api_type": "huggingface"
-    },
     "Claude-3": {
         "url": "https://api.anthropic.com/v1/messages",
-        "description": "Advanced reasoning and analysis capabilities",
+        "description": "Best for advanced reasoning and comprehensive analysis",
         "max_tokens": 4000,
         "model_name": "claude-3-opus-20240229",
         "strengths": ["Advanced reasoning", "Comprehensive analysis", "Context understanding"],
@@ -2194,7 +2113,7 @@ MODEL_OPTIONS = {
     },
     "GPT-4": {
         "url": "https://api.openai.com/v1/chat/completions",
-        "description": "State-of-the-art language model with strong analytical capabilities",
+        "description": "Best for state-of-the-art analysis and broad market knowledge",
         "max_tokens": 4000,
         "model_name": "gpt-4-turbo-preview",
         "strengths": ["Advanced analysis", "Broad knowledge", "Complex reasoning"],
@@ -2202,7 +2121,7 @@ MODEL_OPTIONS = {
     },
     "Gemini-Pro": {
         "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
-        "description": "Google's advanced AI model with strong analytical capabilities",
+        "description": "Best for data analysis and technical market insights",
         "max_tokens": 2048,
         "model_name": "gemini-pro",
         "strengths": ["Data analysis", "Technical insights", "Multimodal capabilities"],
@@ -2210,7 +2129,7 @@ MODEL_OPTIONS = {
     },
     "Grok-1": {
         "url": "https://api.x.ai/v1/chat/completions",
-        "description": "xAI's advanced model with strong analytical and reasoning capabilities (Currently in beta/waitlist)",
+        "description": "Best for real-time market analysis and complex reasoning",
         "max_tokens": 4096,
         "model_name": "grok-1",
         "strengths": ["Advanced reasoning", "Real-time analysis", "Complex problem solving"],

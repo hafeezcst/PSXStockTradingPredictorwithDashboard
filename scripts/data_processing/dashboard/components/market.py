@@ -10,6 +10,13 @@ from typing import Dict, Any
 from datetime import datetime, timedelta
 from PIL import Image
 
+from scripts.data_processing.dashboard.components.shared_styles import (
+    apply_shared_styles,
+    create_custom_header,
+    create_custom_subheader,
+    create_custom_divider
+)
+
 def get_latest_dashboard_images(dashboard_dir: str, n_days: int = 5):
     """
     Get the latest dashboard PNG images from the specified directory.
@@ -41,7 +48,9 @@ def get_latest_dashboard_images(dashboard_dir: str, n_days: int = 5):
 
 def display_market(config: Dict[str, Any]):
     """Display market analysis dashboard using pre-generated dashboard images."""
-    st.subheader("Market Analysis")
+    apply_shared_styles()
+    create_custom_header("Market Analysis")
+    create_custom_divider()
     
     # Get dashboard directory from config or use default
     dashboard_dir = config.get("dashboard_dir", 

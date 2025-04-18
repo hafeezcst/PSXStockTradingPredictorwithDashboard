@@ -11,6 +11,15 @@ from typing import Dict, Any, List, Tuple
 import os
 from datetime import datetime, timedelta
 
+from scripts.data_processing.dashboard.components.shared_styles import (
+    apply_shared_styles,
+    create_custom_header,
+    create_custom_subheader,
+    create_custom_divider,
+    create_chart_container,
+    create_metric_card
+)
+
 def connect_to_database(db_path: str) -> sqlite3.Connection:
     """
     Connect to the SQLite database.
@@ -189,7 +198,9 @@ def create_dividend_yield_chart(df: pd.DataFrame) -> go.Figure:
 
 def display_dividend_analysis(config: Dict[str, Any]):
     """Display dividend analysis."""
-    st.subheader("Dividend Analysis")
+    apply_shared_styles()
+    create_custom_header("Dividend Analysis")
+    create_custom_divider()
     
     # Get database path from config or use default
     db_path = config.get("dividend_db", 
@@ -232,26 +243,26 @@ def display_dividend_analysis(config: Dict[str, Any]):
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Latest Dividend", f"Rs. {latest_dividend['dividend_amount']:.2f}")
+        create_metric_card("Latest Dividend", f"Rs. {latest_dividend['dividend_amount']:.2f}")
     
     with col2:
-        st.metric("Face Value", f"Rs. {latest_dividend['face_value']:.2f}")
+        create_metric_card("Face Value", f"Rs. {latest_dividend['face_value']:.2f}")
     
     with col3:
-        st.metric("Book Closure From", latest_dividend['bc_from'].strftime('%Y-%m-%d'))
+        create_metric_card("Book Closure From", latest_dividend['bc_from'].strftime('%Y-%m-%d'))
     
     with col4:
-        st.metric("Book Closure To", latest_dividend['bc_to'].strftime('%Y-%m-%d'))
+        create_metric_card("Book Closure To", latest_dividend['bc_to'].strftime('%Y-%m-%d'))
     
     # Create tabs for different views
     tab1, tab2, tab3 = st.tabs(["Dividend History", "Upcoming Dividends", "Dividend Analysis"])
     
     with tab1:
-        st.subheader("Dividend History")
+        create_custom_subheader("Dividend History")
         
         # Display dividend timeline
         timeline = create_dividend_timeline(dividend_history)
-        st.plotly_chart(timeline, use_container_width=True)
+        create_chart_container(timeline, "Dividend Timeline")
         
         # Display dividend history table
         st.dataframe(
@@ -263,7 +274,7 @@ def display_dividend_analysis(config: Dict[str, Any]):
         )
     
     with tab2:
-        st.subheader("Upcoming Dividends")
+        create_custom_subheader("Upcoming Dividends")
         
         # Get upcoming dividends
         upcoming_dividends = get_upcoming_dividends(conn)
@@ -271,7 +282,7 @@ def display_dividend_analysis(config: Dict[str, Any]):
         if not upcoming_dividends.empty:
             # Display upcoming dividends timeline
             upcoming_timeline = create_dividend_timeline(upcoming_dividends)
-            st.plotly_chart(upcoming_timeline, use_container_width=True)
+            create_chart_container(upcoming_timeline, "Upcoming Dividends Timeline")
             
             # Display upcoming dividends table
             st.dataframe(
@@ -285,7 +296,7 @@ def display_dividend_analysis(config: Dict[str, Any]):
             st.info("No upcoming dividend payments in the next 30 days.")
     
     with tab3:
-        st.subheader("Dividend Analysis")
+        create_custom_subheader("Dividend Analysis")
         
         # Calculate dividend statistics
         total_dividends = len(dividend_history)
@@ -297,24 +308,24 @@ def display_dividend_analysis(config: Dict[str, Any]):
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("Total Dividends", total_dividends)
+            create_metric_card("Total Dividends", total_dividends)
         
         with col2:
-            st.metric("Average Dividend", f"Rs. {avg_dividend:.2f}")
+            create_metric_card("Average Dividend", f"Rs. {avg_dividend:.2f}")
         
         with col3:
-            st.metric("Highest Dividend", f"Rs. {max_dividend:.2f}")
+            create_metric_card("Highest Dividend", f"Rs. {max_dividend:.2f}")
         
         with col4:
-            st.metric("Lowest Dividend", f"Rs. {min_dividend:.2f}")
+            create_metric_card("Lowest Dividend", f"Rs. {min_dividend:.2f}")
         
         # Display dividend yield chart if price data is available
         if 'last_close' in dividend_history.columns and not dividend_history['last_close'].isna().all():
             yield_chart = create_dividend_yield_chart(dividend_history)
-            st.plotly_chart(yield_chart, use_container_width=True)
+            create_chart_container(yield_chart, "Dividend Yield History")
         
         # Dividend frequency analysis
-        st.subheader("Dividend Frequency")
+        create_custom_subheader("Dividend Frequency")
         
         # Calculate months between payments
         dividend_history['MonthsBetween'] = dividend_history['bc_from'].diff().dt.days / 30
@@ -328,7 +339,7 @@ def display_dividend_analysis(config: Dict[str, Any]):
             nbins=20
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        create_chart_container(fig, "Payment Frequency Distribution")
         
         # Display dividend type distribution
         if 'data_type' in dividend_history.columns:
@@ -340,7 +351,7 @@ def display_dividend_analysis(config: Dict[str, Any]):
                 title='Dividend Type Distribution'
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            create_chart_container(fig, "Dividend Types")
     
     # Close database connection
     conn.close() 

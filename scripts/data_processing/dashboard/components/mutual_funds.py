@@ -8,6 +8,15 @@ import os
 import plotly.express as px
 from typing import Dict, Any
 
+from scripts.data_processing.dashboard.components.shared_styles import (
+    apply_shared_styles,
+    create_custom_header,
+    create_custom_subheader,
+    create_custom_divider,
+    create_chart_container,
+    create_metric_card
+)
+
 def load_mutual_funds_data(file_path: str):
     """
     Load mutual funds favorites data from CSV file.
@@ -29,7 +38,9 @@ def load_mutual_funds_data(file_path: str):
 
 def display_mutual_funds(config: Dict[str, Any]):
     """Display mutual funds analysis."""
-    st.subheader("Mutual Funds Analysis")
+    apply_shared_styles()
+    create_custom_header("Mutual Funds Analysis")
+    create_custom_divider()
     
     # Get file path from config or use default
     file_path = config.get("mutual_funds_file", 
@@ -52,17 +63,18 @@ def display_mutual_funds(config: Dict[str, Any]):
     # Show summary metrics
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Total Stocks", len(df))
+        create_metric_card("Total Stocks", len(df))
     with col2:
-        st.metric("Total Funds Invested", f"{df['no_of_funds_invested'].sum():,}")
+        create_metric_card("Total Funds Invested", f"{df['no_of_funds_invested'].sum():,}")
     with col3:
         total_investment = df['rupee_invested_000'].sum() / 1_000_000_000
-        st.metric("Total Investment", f"Rs. {total_investment:.2f} Billion")
+        create_metric_card("Total Investment", f"Rs. {total_investment:.2f} Billion")
     
     # Create tabs for different views
     tab1, tab2 = st.tabs(["Table View", "Charts"])
     
     with tab1:
+        create_custom_subheader("Mutual Funds Favorites")
         # Filter options
         min_funds = st.slider("Minimum number of funds invested", 1, int(df['no_of_funds_invested'].max()), 5)
         filtered_df = df[df['no_of_funds_invested'] >= min_funds].sort_values(by='no_of_funds_invested', ascending=False)
@@ -83,6 +95,7 @@ def display_mutual_funds(config: Dict[str, Any]):
         )
     
     with tab2:
+        create_custom_subheader("Visualization")
         # Create charts
         chart_type = st.radio("Select Chart Type", ["Top Stocks by Funds", "Top Stocks by Investment"])
         top_n = st.slider("Number of stocks to display", 5, 30, 10)
@@ -96,7 +109,7 @@ def display_mutual_funds(config: Dict[str, Any]):
                 title=f'Top {top_n} Stocks by Number of Funds Invested',
                 labels={'symbol': 'Stock Symbol', 'no_of_funds_invested': 'Number of Funds'}
             )
-            st.plotly_chart(fig, use_container_width=True)
+            create_chart_container(fig, "Top Stocks by Fund Count")
             
         else:  # Top Stocks by Investment
             chart_df = df.nlargest(top_n, 'investment_millions')
@@ -107,4 +120,4 @@ def display_mutual_funds(config: Dict[str, Any]):
                 title=f'Top {top_n} Stocks by Investment Amount (Million Rs.)',
                 labels={'symbol': 'Stock Symbol', 'investment_millions': 'Investment (Million Rs.)'}
             )
-            st.plotly_chart(fig, use_container_width=True) 
+            create_chart_container(fig, "Top Stocks by Investment Amount") 

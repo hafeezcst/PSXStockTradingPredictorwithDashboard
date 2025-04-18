@@ -7,7 +7,8 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import plotly.graph_objects as go
-from typing import Dict, Any, List, Tuple
+import plotly.express as px
+from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime, timedelta
 import json
 import os
@@ -21,6 +22,19 @@ from scipy.optimize import minimize
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 import statsmodels.api as sm
+import yfinance as yf
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from scripts.data_processing.dashboard.components.shared_styles import (
+    apply_shared_styles,
+    create_custom_header,
+    create_custom_subheader,
+    create_custom_divider,
+    create_chart_container,
+    create_metric_card,
+    create_alert
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1211,8 +1225,10 @@ def display_basic_analysis(portfolio_df: pd.DataFrame):
         st.write(pd.DataFrame({'Action': actions}))
 
 def display_portfolio_analysis(config=None):
-    """Display simplified portfolio analysis dashboard"""
-    st.title("Portfolio Analysis Dashboard")
+    """Main function to display portfolio analysis."""
+    apply_shared_styles()
+    create_custom_header("Portfolio Analysis")
+    create_custom_divider()
     
     # Load portfolio data
     portfolio_data = load_portfolio_data()

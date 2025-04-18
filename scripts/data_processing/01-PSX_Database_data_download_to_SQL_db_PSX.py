@@ -184,12 +184,22 @@ class DataReader:
     def toframe(self, data):
         stocks = defaultdict(list)
         rows = data.select("tr")
+        today = date.today()
 
         for row in rows:
             cols = [col.getText() for col in row.select("td")]
             for key, value in zip(self.headers, cols):
                 if key == "TIME":
-                    value = datetime.strptime(value, "%b %d, %Y").date()
+                    try:
+                        parsed_date = datetime.strptime(value, "%b %d, %Y").date()
+                        if parsed_date > today:
+                            logging.warning(f"Skipping future date: {parsed_date} (input: {value})")
+                            continue
+                        logging.info(f"Parsed date: {parsed_date} from input: {value}")
+                        value = parsed_date
+                    except ValueError as e:
+                        logging.error(f"Error parsing date {value}: {e}")
+                        continue
                 stocks[key].append(value)
 
         return pd.DataFrame(stocks, columns=self.headers).set_index("TIME")

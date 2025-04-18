@@ -48,7 +48,10 @@ from scripts.data_processing.dashboard.components.financial_reports import displ
 from scripts.data_processing.dashboard.components.trading_signals import display_trading_signals
 from scripts.data_processing.dashboard.components.indicator_analysis import display_indicator_analysis
 from scripts.data_processing.dashboard.components.dividend_analysis import display_dividend_analysis
+from scripts.data_processing.dashboard.components.signal_tracker import display_signal_tracker
 from scripts.data_processing.dashboard.utils.styles import apply_custom_css
+from scripts.data_processing.dashboard.components.analysis_tool import create_analysis_tool_dashboard
+from scripts.data_processing.dashboard.components.shared_styles import apply_shared_styles
 
 def get_remaining_time(current_time, end_time):
     """
@@ -410,7 +413,9 @@ def display_sidebar():
         "🔍 Analysis Tools": [
             "Technical Indicators",
             "Trading Signals",
-            "Financial Reports"
+            "Signal Tracker",
+            "Financial Reports",
+            "Analysis Tool"
         ],
         "💰 Investment Tools": [
             "Portfolio",
@@ -517,6 +522,9 @@ def main():
         st.markdown("## Trading Signals")
         display_trading_signals(config)
         
+        st.markdown("## Signal Tracker")
+        display_signal_tracker(config)
+        
         st.markdown("## Indicator Analysis")
         display_indicator_analysis(config)
         
@@ -539,6 +547,10 @@ def main():
         st.markdown("## Trading Signals")
         display_trading_signals(config)
     
+    elif selected_page == "Signal Tracker":
+        st.markdown("## Signal Tracker")
+        display_signal_tracker(config)
+    
     elif selected_page == "Financial Reports":
         st.markdown("## Financial Reports")
         display_financial_reports(config)
@@ -554,6 +566,9 @@ def main():
     elif selected_page == "Dividend Analysis":
         st.markdown("## Dividend Analysis")
         display_dividend_analysis(config)
+    
+    elif selected_page == "Analysis Tool":
+        create_analysis_tool_dashboard()
 
 if __name__ == "__main__":
     main() 

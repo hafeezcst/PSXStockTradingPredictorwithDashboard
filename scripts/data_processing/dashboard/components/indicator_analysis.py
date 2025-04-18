@@ -12,6 +12,15 @@ from typing import Dict, Any, List, Tuple
 import os
 from datetime import datetime, timedelta
 
+from scripts.data_processing.dashboard.components.shared_styles import (
+    apply_shared_styles,
+    create_custom_header,
+    create_custom_subheader,
+    create_custom_divider,
+    create_chart_container,
+    create_metric_card
+)
+
 # Define indicator categories
 INDICATOR_CATEGORIES = {
     "RSI Indicators": ["RSI_14", "RSI_9", "RSI_26", "RSI_weekly", "RSI_monthly"],
@@ -437,7 +446,9 @@ def analyze_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 def display_indicator_analysis(config: Dict[str, Any]):
     """Display technical indicator analysis."""
-    st.subheader("Technical Indicator Analysis")
+    apply_shared_styles()
+    create_custom_header("Technical Indicator Analysis")
+    create_custom_divider()
     
     # Get database path from config or use default
     db_path = config.get("indicator_db", 
@@ -489,30 +500,30 @@ def display_indicator_analysis(config: Dict[str, Any]):
     with col1:
         price = latest_data['Close']
         price_change = (latest_data['Close'] - prev_data['Close']) / prev_data['Close'] * 100 if prev_data is not None else 0
-        st.metric("Price", f"{price:.2f}", f"{price_change:.2f}%")
+        create_metric_card("Price", f"{price:.2f}", f"{price_change:.2f}%")
     
     with col2:
         volume = latest_data['Volume']
         volume_change = (latest_data['Volume'] - prev_data['Volume']) / prev_data['Volume'] * 100 if prev_data is not None else 0
-        st.metric("Volume", f"{volume:,.0f}", f"{volume_change:.2f}%")
+        create_metric_card("Volume", f"{volume:,.0f}", f"{volume_change:.2f}%")
     
     with col3:
         rsi = latest_data['RSI_14']
         rsi_change = latest_data['RSI_14'] - prev_data['RSI_14'] if prev_data is not None else 0
         condition = "Overbought" if rsi > 70 else "Oversold" if rsi < 30 else "Neutral"
-        st.metric("RSI (14)", f"{rsi:.2f} ({condition})", f"{rsi_change:.2f}")
+        create_metric_card("RSI (14)", f"{rsi:.2f} ({condition})", f"{rsi_change:.2f}")
     
     with col4:
         ao = latest_data['AO']
         ao_change = latest_data['AO'] - prev_data['AO'] if prev_data is not None else 0
-        st.metric("Awesome Oscillator", f"{ao:.2f}", f"{ao_change:.2f}")
+        create_metric_card("Awesome Oscillator", f"{ao:.2f}", f"{ao_change:.2f}")
     
     # Create tabs for different analysis views
     tab1, tab2, tab3, tab4 = st.tabs(["Price Chart", "Indicators", "Market Context", "Advanced Analysis"])
     
     with tab1:
         # Indicator selection for price chart
-        st.subheader("Price Chart with Indicators")
+        create_custom_subheader("Price Chart with Indicators")
         
         # Group indicators by category for easier selection
         selected_indicators = []
@@ -530,10 +541,10 @@ def display_indicator_analysis(config: Dict[str, Any]):
         
         # Create and display price chart
         price_chart = create_price_chart(stock_data, selected_indicators)
-        st.plotly_chart(price_chart, use_container_width=True)
+        create_chart_container(price_chart, "Price and Indicators")
     
     with tab2:
-        st.subheader("Detailed Indicator Analysis")
+        create_custom_subheader("Detailed Indicator Analysis")
         
         # Create indicator categories with expanders
         for category, indicators in INDICATOR_CATEGORIES.items():
@@ -545,18 +556,18 @@ def display_indicator_analysis(config: Dict[str, Any]):
                     for indicator in available_indicators:
                         # Create indicator chart
                         indicator_chart = create_indicator_chart(stock_data, indicator)
-                        st.plotly_chart(indicator_chart, use_container_width=True)
+                        create_chart_container(indicator_chart, f"{indicator} Analysis")
                         
                         # Show distribution for this indicator
                         show_dist = st.checkbox(f"Show {indicator} Distribution", key=f"dist_{indicator}")
                         if show_dist:
                             dist_chart = create_indicator_distribution(stock_data, indicator)
-                            st.plotly_chart(dist_chart, use_container_width=True)
+                            create_chart_container(dist_chart, f"{indicator} Distribution")
                 else:
                     st.info(f"No {category} indicators available for {selected_stock}")
     
     with tab3:
-        st.subheader("Market Context")
+        create_custom_subheader("Market Context")
         
         # Display market conditions if available
         if not market_conditions.empty:
@@ -568,7 +579,7 @@ def display_indicator_analysis(config: Dict[str, Any]):
                 title='Market Condition Scores',
                 labels={'value': 'Score', 'variable': 'Index'}
             )
-            st.plotly_chart(market_fig, use_container_width=True)
+            create_chart_container(market_fig, "Market Condition Scores")
             
             # Market breadth
             breadth_df = market_conditions[['date', 'advancing', 'declining', 'unchanged']]
@@ -581,7 +592,7 @@ def display_indicator_analysis(config: Dict[str, Any]):
                 title='Market Breadth',
                 labels={'value': 'Number of Stocks', 'variable': 'Direction'}
             )
-            st.plotly_chart(breadth_fig, use_container_width=True)
+            create_chart_container(breadth_fig, "Market Breadth")
             
             # Show correlation with market
             if 'Close' in stock_data.columns and 'score' in market_conditions.columns:
@@ -605,12 +616,12 @@ def display_indicator_analysis(config: Dict[str, Any]):
                         title=f"{selected_stock} Price vs Market Conditions",
                         trendline="ols"
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    create_chart_container(fig, "Price-Market Correlation")
         else:
             st.info("No market condition data available.")
     
     with tab4:
-        st.subheader("Advanced Technical Analysis")
+        create_custom_subheader("Advanced Technical Analysis")
         
         # Correlation heatmap
         st.markdown("### Indicator Correlations")
@@ -628,10 +639,11 @@ def display_indicator_analysis(config: Dict[str, Any]):
         
         if selected_corr_indicators:
             corr_heatmap = create_correlation_heatmap(stock_data, selected_corr_indicators)
-            st.plotly_chart(corr_heatmap, use_container_width=True)
+            create_chart_container(corr_heatmap, "Indicator Correlation Matrix")
         
         # Trading signals
-        st.markdown("### Trading Signals Analysis")
+        create_custom_subheader("Trading Signals Analysis")
+        st.info("This analysis identifies potential trading signals based on technical indicators.")
         
         # Generate simple trading signals based on indicators
         signals = pd.DataFrame(index=stock_data.index)
@@ -667,7 +679,7 @@ def display_indicator_analysis(config: Dict[str, Any]):
         st.dataframe(signals.tail(20).sort_values('Date', ascending=False), use_container_width=True)
         
         # Composite signal
-        st.markdown("### Composite Signal Analysis")
+        create_custom_subheader("Composite Signal Analysis")
         st.info("This combines multiple indicators to generate a more robust trading signal.")
         
         # Create composite score
@@ -748,7 +760,7 @@ def display_indicator_analysis(config: Dict[str, Any]):
                 hovermode='x unified'
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            create_chart_container(fig, "Composite Score Analysis")
             
             # Display the latest signal
             latest_score = composite_signals['Score'].iloc[-1]
@@ -761,7 +773,7 @@ def display_indicator_analysis(config: Dict[str, Any]):
             # Display breakdown of components
             component_cols = [col for col in composite_signals.columns if '_Component' in col]
             if component_cols:
-                st.markdown("#### Signal Components")
+                create_custom_subheader("Signal Components")
                 component_values = {col.replace('_Component', ''): composite_signals[col].iloc[-1] for col in component_cols}
                 
                 # Create component chart
@@ -780,7 +792,7 @@ def display_indicator_analysis(config: Dict[str, Any]):
                     height=400
                 )
                 
-                st.plotly_chart(comp_fig, use_container_width=True)
+                create_chart_container(comp_fig, "Component Breakdown")
         
     # Close database connection
     conn.close()

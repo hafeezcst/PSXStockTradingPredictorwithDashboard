@@ -45,7 +45,12 @@ env/
 outputs/
 *.log
 *.xlsx
-data/
+data/*
+!data/databases/
+data/databases/*
+!data/databases/production/
+data/databases/production/*
+!data/databases/production/*.db
 macos_app/PSXStockAnalysis/venv/
 portfolio_data.json
 
@@ -84,10 +89,6 @@ exports/
 data/raw/
 data/processed/
 .env.*
-
-# Database
-*.db
-*.sqlite3
 
 # Logs
 *.log

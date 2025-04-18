@@ -1,0 +1,4 @@
+Current_Signal,days_bucket,count,avg_profit
+Buy,0-6 days,76,0.0
+Neutral,0-6 days,140,0.0
+Sell,0-6 days,27,0.0

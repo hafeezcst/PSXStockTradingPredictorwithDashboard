@@ -2,23 +2,23 @@ import subprocess
 import sys
 import os
 from pathlib import Path
-
-# Add project root directory to Python path
-project_root = Path(__file__).resolve().parents[2]
-sys.path.append(str(project_root))
-
 import logging
 import importlib.util
-from config.paths import (
-    DATA_LOGS_DIR,
-    SCRIPTS_DIR,
-    CONFIG_DIR,
-    DATA_DIR
-)
+import sqlite3
+import pandas as pd
+from datetime import datetime, timedelta
+
+# Define paths directly
+BASE_DIR = Path(__file__).resolve().parents[2]
+DATA_DIR = BASE_DIR / "data"
+DATA_LOGS_DIR = DATA_DIR / "logs"
+SCRIPTS_DIR = BASE_DIR / "scripts"
+CONFIG_DIR = BASE_DIR / "config"
+DB_PATH = DATA_DIR / "databases" / "production" / "PSX_investing_Stocks_KMI30_tracking.db"
 
 # Configure logging with proper path
 logging.basicConfig(
-    filename=DATA_LOGS_DIR / 'psx_stock_analysis.log',
+    filename=str(DATA_LOGS_DIR / 'psx_stock_analysis.log'),
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
@@ -72,6 +72,85 @@ def run_scripts(scripts: list):
             logging.error(f"Error executing {script}: {str(e)}")
             break
 
+def run_signal_tracker(db_path: str = str(DB_PATH)) -> bool:
+    """
+    Run the signal tracker analysis.
+    
+    Args:
+        db_path: Path to the SQLite database
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Connect to database
+        conn = sqlite3.connect(db_path)
+        
+        # Get signal tracking data
+        query = """
+        WITH LatestSignals AS (
+            SELECT 
+                Stock,
+                'Buy' as Current_Signal,
+                Date as Current_Date,
+                Close as Current_Close,
+                Signal_Date as Initial_Date,
+                Signal_Close as Initial_Close
+            FROM buy_stocks
+            WHERE Date = (SELECT MAX(Date) FROM buy_stocks)
+            
+            UNION ALL
+            
+            SELECT 
+                Stock,
+                'Sell' as Current_Signal,
+                Date as Current_Date,
+                Close as Current_Close,
+                Signal_Date as Initial_Date,
+                Signal_Close as Initial_Close
+            FROM sell_stocks
+            WHERE Date = (SELECT MAX(Date) FROM sell_stocks)
+            
+            UNION ALL
+            
+            SELECT 
+                Stock,
+                'Neutral' as Current_Signal,
+                Date as Current_Date,
+                Close as Current_Close,
+                Date as Initial_Date,
+                Close as Initial_Close
+            FROM neutral_stocks
+            WHERE Date = (SELECT MAX(Date) FROM neutral_stocks)
+        )
+        SELECT * FROM LatestSignals
+        """
+        
+        df = pd.read_sql_query(query, conn)
+        
+        # Update signal tracking table
+        for _, row in df.iterrows():
+            update_query = """
+            INSERT OR REPLACE INTO signal_tracking (
+                Stock, Current_Signal, Current_Date, Current_Close,
+                Initial_Date, Initial_Close, Last_Updated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
+            conn.execute(update_query, (
+                row['Stock'], row['Current_Signal'], row['Current_Date'],
+                row['Current_Close'], row['Initial_Date'], row['Initial_Close'],
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            ))
+        
+        conn.commit()
+        conn.close()
+        logging.info("Signal tracker analysis completed successfully")
+        return True
+        
+    except Exception as e:
+        logging.error(f"Error in signal tracker analysis: {str(e)}")
+        return False
+
 def main():
     """Main function to execute the stock analysis pipeline"""
     # Define script execution order
@@ -107,6 +186,11 @@ def main():
     
     # Run scripts
     run_scripts(scripts)
+    
+    # Run signal tracker
+    if not run_signal_tracker():
+        logging.error("Signal tracker analysis failed")
+        return
 
 if __name__ == "__main__":
     main()

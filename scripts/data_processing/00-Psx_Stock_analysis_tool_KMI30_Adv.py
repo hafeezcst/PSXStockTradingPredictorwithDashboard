@@ -43,6 +43,67 @@ def run_scripts(scripts: list):
             logging.error(f"Error executing {script}: {str(e)}")
             break
 
+def run_signal_tracker():
+    """Run the stock signal tracker with advanced analysis and Telegram alerts"""
+    try:
+        logging.info("Running stock signal tracker with Telegram alerts")
+        
+        # Get the path to the run_stock_signal_tracker.py script
+        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        tracker_script = os.path.join(script_dir, "run_stock_signal_tracker.py")
+        
+        # Create reports directory with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d")
+        reports_dir = os.path.join(script_dir, "..", "reports", f"signal_tracking_{timestamp}")
+        os.makedirs(reports_dir, exist_ok=True)
+        
+        # Set path to database
+        db_path = os.path.join(script_dir, "..", "data", "databases", "production", "PSX_investing_Stocks_KMI30_tracking.db")
+        
+        # Run the tracker script with enhanced parameters
+        cmd = [
+            sys.executable, 
+            tracker_script,
+            f"--db={db_path}",
+            f"--output-dir={reports_dir}"
+        ]
+        
+        logging.info(f"Executing: {' '.join(cmd)}")
+        result = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        
+        # Log output
+        if result.stdout:
+            logging.info(f"Stock signal tracker output: {result.stdout[:500]}...")
+        
+        if result.stderr:
+            logging.warning(f"Stock signal tracker errors: {result.stderr}")
+        
+        if result.returncode != 0:
+            logging.error(f"Stock signal tracker failed with return code {result.returncode}")
+        else:
+            logging.info("Stock signal tracker completed successfully")
+        
+        # Add to summary notification
+        if result.returncode == 0:
+            try:
+                from scripts.data_processing.telegram_message import send_telegram_message
+                summary = f"🔄 PSX Analysis Batch Job - {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+                summary += f"✅ Stock signal tracker executed successfully\n"
+                summary += f"📊 Reports saved to: {os.path.basename(reports_dir)}\n"
+                send_telegram_message(summary)
+            except Exception as e:
+                logging.error(f"Error sending telegram summary: {str(e)}")
+            
+        return result.returncode == 0
+    except Exception as e:
+        logging.error(f"Error running stock signal tracker: {str(e)}")
+        return False
+
 def job():
     """Main job function to run all scripts"""
     logging.info("Starting scheduled PSX analysis job")
@@ -59,8 +120,28 @@ def job():
             '10-draw_indicator_trend_lines_with_signals_Stable_V_1.0.py',
         ]
         
+        start_time = time.time()
+        
+        # Run the analysis scripts
         run_scripts(scripts)
-        logging.info("PSX analysis job completed successfully")
+        
+        # Run the stock signal tracker after all other scripts
+        run_signal_tracker()
+        
+        # Calculate execution time
+        execution_time = time.time() - start_time
+        logging.info(f"PSX analysis job completed successfully in {execution_time:.2f} seconds")
+        
+        # Send completion notification
+        try:
+            from scripts.data_processing.telegram_message import send_telegram_message
+            completion_msg = f"✅ PSX Stock Analysis Batch Job Completed\n"
+            completion_msg += f"⏱️ Total execution time: {execution_time:.2f} seconds\n"
+            completion_msg += f"🕒 Finished at: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            send_telegram_message(completion_msg)
+        except Exception as e:
+            logging.error(f"Error sending completion notification: {str(e)}")
+            
     except Exception as e:
         logging.error(f"Error in scheduled job: {str(e)}")
 

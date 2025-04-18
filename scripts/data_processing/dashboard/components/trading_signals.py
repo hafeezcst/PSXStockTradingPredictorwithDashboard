@@ -5,12 +5,22 @@ Trading signals component for the PSX dashboard.
 import streamlit as st
 import sqlite3
 import pandas as pd
-import plotly.express as px
+import numpy as np
 import plotly.graph_objects as go
-from typing import Dict, Any, List, Tuple
+import plotly.express as px
+from typing import Dict, Any, List, Optional
 import os
 from datetime import datetime, timedelta
-import numpy as np
+
+from scripts.data_processing.dashboard.components.shared_styles import (
+    apply_shared_styles,
+    create_custom_header,
+    create_custom_subheader,
+    create_custom_divider,
+    create_chart_container,
+    create_metric_card,
+    create_alert
+)
 
 def connect_to_database(db_path: str) -> sqlite3.Connection:
     """
@@ -381,8 +391,10 @@ def get_latest_signals(conn: sqlite3.Connection, signal_type: str, limit: int = 
         return pd.DataFrame()
 
 def display_trading_signals(config: Dict[str, Any]):
-    """Display trading signals analysis."""
-    st.subheader("Trading Signals Analysis")
+    """Display trading signals dashboard."""
+    apply_shared_styles()
+    create_custom_header("Trading Signals")
+    create_custom_divider()
     
     # Get database path from config or use default
     db_path = config.get("trading_signals_db", 
