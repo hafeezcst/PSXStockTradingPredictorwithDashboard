@@ -8,6 +8,7 @@ import logging
 import traceback
 from datetime import datetime
 import json
+import shutil
 from pathlib import Path
 
 # Add project root directory to Python path
@@ -18,7 +19,8 @@ from config.paths import (
     DATA_LOGS_DIR,
     DATA_EXPORTS_DIR,
     PRODUCTION_DB_DIR,
-    CONFIG_DIR
+    CONFIG_DIR,
+    SCRIPTS_DIR
 )
 
 # Configure logging with proper path
@@ -721,6 +723,7 @@ def main():
     
     # Paths for output - using path constants for consistency
     db_path = PRODUCTION_DB_DIR / 'PSXSymbols.db'
+    
     excel_path = CONFIG_DIR / 'psxsymbols.xlsx'  # Use the correct path to PSXSymbols.xlsx
     
     csv_path = DATA_EXPORTS_DIR / 'reports' / 'KMIALLSHR.csv'
@@ -748,8 +751,11 @@ def main():
                     print(f"\n⚠️ KMI100 sheet not found in {excel_path}")
         except Exception as e:
             print(f"\n⚠️ Error reading Excel file: {e}")
+    # copy the psxsymbols.xlsx file to the production directory
+    shutil.copy(excel_path, PRODUCTION_DB_DIR / 'psxsymbols.xlsx')
     
-    # Try multiple methods to get the content
+    # copy the psxsymbols.xlsx file to the src/data_processing
+    shutil.copy(excel_path, SCRIPTS_DIR / 'data_processing/psxsymbols.xlsx')
     html_content = None
     
     print("\n🔍 Fetching webpage content...")
