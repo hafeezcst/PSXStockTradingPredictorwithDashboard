@@ -93,7 +93,7 @@ def run_signal_tracker():
             try:
                 # Import locally to avoid circular imports
                 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-                from scripts.data_processing.telegram_message import send_telegram_message
+                from src.data_processing.telegram_message import send_telegram_message
                 
                 summary = f"🔄 PSX Analysis Batch Job - {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
                 summary += f"✅ Stock signal tracker executed successfully\n"
@@ -137,7 +137,7 @@ def job():
         
         # Send completion notification
         try:
-            from scripts.data_processing.telegram_message import send_telegram_message
+            from src.data_processing.telegram_message import send_telegram_message
             completion_msg = f"✅ PSX Stock Analysis Batch Job Completed\n"
             completion_msg += f"⏱️ Total execution time: {execution_time:.2f} seconds\n"
             completion_msg += f"🕒 Finished at: {datetime.now().strftime('%Y-%m-%d %H:%M')}"

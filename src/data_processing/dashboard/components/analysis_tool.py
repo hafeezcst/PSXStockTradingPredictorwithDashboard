@@ -13,11 +13,12 @@ from src.data_processing.dashboard.components.shared_styles import (
     create_custom_divider
 )
 
-# Add the parent directory to sys.path to import from scripts
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
+# Add the project root to sys.path
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.append(project_root)
 
 # Define paths
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+BASE_DIR = project_root
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DATABASES_DIR = os.path.join(DATA_DIR, "databases", "production")
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
@@ -113,8 +114,8 @@ def create_analysis_tool_dashboard() -> None:
             
             try:
                 # Import the analysis tool
-                from scripts.data_processing.psx_stock_analysis_tool_kmi30_adv import run_scripts
-                from scripts.data_processing.dashboard.components.signal_tracker import run_signal_tracker
+                from src.data_processing.psx_stock_analysis_tool_kmi30_adv import run_scripts
+                from src.data_processing.dashboard.components.signal_tracker import run_signal_tracker
                 
                 # Set up environment variables for the analysis
                 os.environ['PSX_DATA_DIR'] = DATA_DIR
