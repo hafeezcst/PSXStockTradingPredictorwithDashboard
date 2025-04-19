@@ -183,7 +183,7 @@ def create_ao_zones(ao_series):
     try:
         # Attempt to create zones
         zones = pd.cut(ao_series, bins=bins, labels=labels)
-        # Fill NaN values with 'Neutral'
+        # Fill NaN values directly instead of using fillna with 'Neutral'
         zones = zones.fillna('Neutral')
         return zones
     except ValueError:
@@ -196,7 +196,8 @@ def calculate_advanced_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Calculate advanced technical indicators."""
     # Ensure data is valid
     df = df.replace([np.inf, -np.inf], np.nan)
-    df = df.fillna(method='ffill').fillna(method='bfill')
+    # Fix: Replace fillna(method='ffill/bfill') with ffill()/bfill()
+    df = df.ffill().bfill()
     
     # Calculate Awesome Oscillator (AO) with multiple timeframes
     # Daily AO
@@ -207,14 +208,17 @@ def calculate_advanced_indicators(df: pd.DataFrame) -> pd.DataFrame:
     weekly_high = df['High'].resample('W').max()
     weekly_low = df['Low'].resample('W').min()
     weekly_ao = calculate_awesome_oscillator(weekly_high, weekly_low)
-    df['AO_weekly'] = weekly_ao.reindex(df.index, method='ffill')
+    # Fix: Use ffill() instead of reindex with method='ffill'
+    df['AO_weekly'] = weekly_ao.reindex(df.index).ffill()
     df['AO_weekly_AVG'] = df['AO_weekly'].rolling(window=3).mean()
     
     # Monthly AO
-    monthly_high = df['High'].resample('M').max()
-    monthly_low = df['Low'].resample('M').min()
+    # Fix: Replace 'M' with 'ME' for month end frequency
+    monthly_high = df['High'].resample('ME').max()
+    monthly_low = df['Low'].resample('ME').min()
     monthly_ao = calculate_awesome_oscillator(monthly_high, monthly_low)
-    df['AO_monthly'] = monthly_ao.reindex(df.index, method='ffill')
+    # Fix: Use ffill() instead of reindex with method='ffill'
+    df['AO_monthly'] = monthly_ao.reindex(df.index).ffill()
     df['AO_monthly_AVG'] = df['AO_monthly'].rolling(window=3).mean()
     
     # AO Momentum
@@ -237,10 +241,10 @@ def calculate_advanced_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['AO_weekly_Divergence'] = df['AO_weekly'] - df['AO_weekly'].shift(3)
     df['AO_monthly_Divergence'] = df['AO_monthly'] - df['AO_monthly'].shift(3)
     
-    # AO Signal Strength
-    df['AO_Signal_Strength'] = df['AO'].rolling(window=10).mean() / df['AO'].rolling(window=10).std()
-    df['AO_weekly_Signal_Strength'] = df['AO_weekly'].rolling(window=5).mean() / df['AO_weekly'].rolling(window=5).std()
-    df['AO_monthly_Signal_Strength'] = df['AO_monthly'].rolling(window=3).mean() / df['AO_monthly'].rolling(window=3).std()
+    # AO Signal Strength - Fix: Add safe division to avoid divide by zero warnings
+    df['AO_Signal_Strength'] = df['AO'].rolling(window=10).mean() / np.maximum(df['AO'].rolling(window=10).std(), 0.0001)
+    df['AO_weekly_Signal_Strength'] = df['AO_weekly'].rolling(window=5).mean() / np.maximum(df['AO_weekly'].rolling(window=5).std(), 0.0001)
+    df['AO_monthly_Signal_Strength'] = df['AO_monthly'].rolling(window=3).mean() / np.maximum(df['AO_monthly'].rolling(window=3).std(), 0.0001)
     
     # AO Histogram
     df['AO_Histogram'] = df['AO'] - df['AO_AVG']
@@ -373,7 +377,8 @@ def calculate_market_sentiment(df: pd.DataFrame) -> Dict[str, float]:
     """Calculate market sentiment indicators with validation."""
     # Ensure data is valid
     df = df.replace([np.inf, -np.inf], np.nan)
-    df = df.fillna(method='ffill').fillna(method='bfill')
+    # Fix: Replace fillna(method='ffill/bfill') with ffill()/bfill()
+    df = df.ffill().bfill()
     
     # Calculate sentiment with validation
     rsi_sentiment = 1 if df['RSI_14'].iloc[-1] > 50 else -1 if not np.isnan(df['RSI_14'].iloc[-1]) else 0
@@ -968,240 +973,6 @@ def add_structure_break_analysis(fig: go.Figure, data: pd.DataFrame) -> None:
             )
         ))
 
-def display_market_sentiment(sentiment: Dict[str, float]) -> None:
-    """Display market sentiment analysis."""
-    st.markdown("### Market Sentiment Analysis")
-    
-    # Calculate overall sentiment
-    overall_sentiment = sum(sentiment.values()) / len(sentiment)
-    sentiment_direction = "normal" if overall_sentiment > 0 else "inverse"
-    
-    # Display sentiment indicators
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric(
-            "RSI Sentiment",
-            "Bullish" if sentiment['RSI_Sentiment'] > 0 else "Bearish",
-            delta_color=sentiment_direction
-        )
-    
-    with col2:
-        st.metric(
-            "MA Sentiment",
-            "Bullish" if sentiment['MA_Sentiment'] > 0 else "Bearish",
-            delta_color=sentiment_direction
-        )
-    
-    with col3:
-        st.metric(
-            "Volume Sentiment",
-            "Bullish" if sentiment['Volume_Sentiment'] > 0 else "Bearish",
-            delta_color=sentiment_direction
-        )
-    
-    with col4:
-        st.metric(
-            "AO Sentiment",
-            "Bullish" if sentiment['AO_Sentiment'] > 0 else "Bearish",
-            delta_color=sentiment_direction
-        )
-
-def create_volume_chart(data: pd.DataFrame) -> go.Figure:
-    """Create enhanced volume chart with profile."""
-    fig = go.Figure()
-    
-    # Add volume bars
-    colors = ['red' if close < open else 'green' 
-              for close, open in zip(data['Close'], data['Open'])]
-    
-    fig.add_trace(go.Bar(
-        x=data.index,
-        y=data['Volume'],
-        name='Volume',
-        marker_color=colors,
-        opacity=0.5
-    ))
-    
-    # Add volume MA if available
-    if 'Volume_MA_20' in data.columns:
-        fig.add_trace(go.Scatter(
-            x=data.index,
-            y=data['Volume_MA_20'],
-            name='Volume MA(20)',
-            line=dict(color='blue', width=1)
-        ))
-    
-    # Add volume profile
-    price_bins = np.linspace(data['Low'].min(), data['High'].max(), 20)
-    volume_profile = np.zeros(len(price_bins[:-1]))
-    
-    for i in range(len(price_bins) - 1):
-        mask = (data['Close'] >= price_bins[i]) & (data['Close'] < price_bins[i + 1])
-        volume_profile[i] = data.loc[mask, 'Volume'].sum()
-    
-    # Create a column for each price bin's volume
-    for i in range(len(volume_profile)):
-        data[f'Volume_Profile_Bin_{i}'] = volume_profile[i]
-    
-    # Use the middle bin as the main Volume_Profile indicator
-    middle_bin = len(volume_profile) // 2
-    data['Volume_Profile'] = data[f'Volume_Profile_Bin_{middle_bin}']
-    
-    fig.add_trace(go.Bar(
-        x=volume_profile,
-        y=[(price_bins[i] + price_bins[i+1])/2 for i in range(len(price_bins)-1)],
-        name='Volume Profile',
-        orientation='h',
-        opacity=0.3,
-        visible='legendonly'
-    ))
-    
-    # Update layout
-    fig.update_layout(
-        height=200,
-        template='plotly_white',
-        margin=dict(t=0, b=20, l=50, r=50),
-        showlegend=True,
-        xaxis_rangeslider_visible=False
-    )
-    
-    return fig
-
-def create_indicator_sidebar(data: pd.DataFrame) -> None:
-    """Create enhanced indicator selection sidebar."""
-    st.markdown("### Technical Indicators")
-    
-    # Create tabs for each category
-    indicator_tabs = st.tabs(list(INDICATOR_CATEGORIES.keys()) + list(ADVANCED_INDICATORS.keys()))
-    
-    # Combine both indicator dictionaries for easier access
-    all_indicators = {**INDICATOR_CATEGORIES, **ADVANCED_INDICATORS}
-    
-    # Create a unique identifier for each category
-    category_index = 0
-    
-    for tab, category_name in zip(indicator_tabs, list(INDICATOR_CATEGORIES.keys()) + list(ADVANCED_INDICATORS.keys())):
-        with tab:
-            st.markdown(f"#### {category_name}")
-            
-            # Get indicators for this category (with safe fallback)
-            category_indicators = all_indicators.get(category_name, [])
-            
-            # Filter to only indicators that exist in the data
-            available_indicators = [ind for ind in category_indicators if ind in data.columns]
-            
-            if not available_indicators:
-                st.info(f"No {category_name} indicators available")
-                continue
-                
-            # Create multiselect for indicators in this category with unique key
-            selected_indicators = st.multiselect(
-                f"Select {category_name}",
-                options=available_indicators,
-                default=available_indicators[:2] if len(available_indicators) >= 2 else available_indicators,
-                key=f"multiselect_{category_name}_{category_index}"
-            )
-            
-            # Increment the category index for the next iteration
-            category_index += 1
-            
-            # Display selected indicators
-            for indicator in selected_indicators:
-                with st.expander(indicator):  # Removed key parameter
-                    # Show current value and trend
-                    current_value = data[indicator].iloc[-1]
-                    prev_value = data[indicator].iloc[-2]
-                    change = current_value - prev_value
-                    
-                    st.metric(
-                        indicator,
-                        f"{current_value:.2f}",
-                        f"{change:+.2f}",
-                        delta_color="normal"
-                    )
-                    
-                    # Add indicator-specific analysis
-                    if indicator.startswith('RSI'):
-                        add_rsi_analysis(indicator, data)
-                    elif indicator.startswith('MA'):
-                        add_ma_analysis(indicator, data)
-                    elif indicator.startswith('AO'):
-                        add_ao_analysis(indicator, data)
-                    elif indicator == 'Volume_MA_20':
-                        add_volume_analysis(indicator, data)
-                    elif indicator in all_indicators.get("Pattern Recognition", []):
-                        add_pattern_analysis(indicator, data)
-                    elif indicator in all_indicators.get("Fibonacci Analysis", []):
-                        add_fibonacci_analysis(indicator, data)
-                    elif indicator in all_indicators.get("Market Structure", []):
-                        add_market_structure_analysis(indicator, data)
-                    elif indicator in all_indicators.get("Market Profile", []):
-                        add_market_profile_analysis(indicator, data)
-                    elif indicator in all_indicators.get("Advanced Patterns", []):
-                        add_advanced_pattern_analysis(indicator, data)
-
-def add_pattern_analysis(indicator: str, data: pd.DataFrame) -> None:
-    """Add pattern-specific analysis."""
-    pattern_data = data[data[indicator] != 0]
-    if not pattern_data.empty:
-        st.write(f"Pattern detected {len(pattern_data)} times")
-        st.write("Last occurrence:", pattern_data.index[-1])
-        
-        # Add pattern chart
-        fig = go.Figure()
-        fig.add_trace(go.Candlestick(
-            x=data.index,
-            open=data['Open'],
-            high=data['High'],
-            low=data['Low'],
-            close=data['Close'],
-            name='Price'
-        ))
-        fig.add_trace(go.Scatter(
-            x=pattern_data.index,
-            y=pattern_data['Close'],
-            mode='markers',
-            name=indicator,
-            marker=dict(
-                symbol='star',
-                size=12,
-                color='red'
-            )
-        ))
-        # Generate a unique key using timestamp and indicator name
-        unique_key = f"pattern_chart_{indicator}_{int(time.time() * 1000)}"
-        st.plotly_chart(fig, use_container_width=True, key=unique_key)
-
-def add_fibonacci_analysis(indicator: str, data: pd.DataFrame) -> None:
-    """Add Fibonacci level analysis."""
-    level = float(indicator)
-    current_price = data['Close'].iloc[-1]
-    fibo_level = data[f'Fibo_{int(level*1000)}'].iloc[-1]
-    
-    st.write(f"Current Price: {current_price:.2f}")
-    st.write(f"Fibonacci {level} Level: {fibo_level:.2f}")
-    
-    if current_price > fibo_level:
-        st.success(f"Price is above Fibonacci {level} level")
-    else:
-        st.warning(f"Price is below Fibonacci {level} level")
-
-def add_market_structure_analysis(indicator: str, data: pd.DataFrame) -> None:
-    """Add market structure analysis."""
-    st.write(f"Market structure analysis for {indicator}")
-    # Implementation of market structure analysis
-
-def add_market_profile_analysis(indicator: str, data: pd.DataFrame) -> None:
-    """Add market profile analysis."""
-    st.write(f"Market profile analysis for {indicator}")
-    # Implementation of market profile analysis
-
-def add_advanced_pattern_analysis(indicator: str, data: pd.DataFrame) -> None:
-    """Add advanced pattern analysis."""
-    st.write(f"Advanced pattern analysis for {indicator}")
-    # Implementation of advanced pattern analysis
-
 def add_technical_overlays(fig: go.Figure, data: pd.DataFrame) -> None:
     """Add technical overlays to the chart."""
     # Add Ichimoku Cloud
@@ -1305,6 +1076,651 @@ def add_technical_overlays(fig: go.Figure, data: pd.DataFrame) -> None:
         visible='legendonly'
     ))
 
+def display_market_sentiment(sentiment: Dict[str, float]) -> None:
+    """Display market sentiment analysis."""
+    st.markdown("### Market Sentiment Analysis")
+    
+    # Calculate overall sentiment
+    overall_sentiment = sum(sentiment.values()) / len(sentiment)
+    sentiment_direction = "normal" if overall_sentiment > 0 else "inverse"
+    
+    # Display sentiment indicators
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            "RSI Sentiment",
+            "Bullish" if sentiment['RSI_Sentiment'] > 0 else "Bearish",
+            delta_color=sentiment_direction
+        )
+    
+    with col2:
+        st.metric(
+            "MA Sentiment",
+            "Bullish" if sentiment['MA_Sentiment'] > 0 else "Bearish",
+            delta_color=sentiment_direction
+        )
+    
+    with col3:
+        st.metric(
+            "Volume Sentiment",
+            "Bullish" if sentiment['Volume_Sentiment'] > 0 else "Bearish",
+            delta_color=sentiment_direction
+        )
+    
+    with col4:
+        st.metric(
+            "AO Sentiment",
+            "Bullish" if sentiment['AO_Sentiment'] > 0 else "Bearish",
+            delta_color=sentiment_direction
+        )
+
+def create_volume_chart(data: pd.DataFrame) -> go.Figure:
+    """Create enhanced volume chart with profile."""
+    fig = go.Figure()
+    
+    # Add volume bars
+    colors = ['red' if close < open else 'green' 
+              for close, open in zip(data['Close'], data['Open'])]
+    
+    fig.add_trace(go.Bar(
+        x=data.index,
+        y=data['Volume'],
+        name='Volume',
+        marker_color=colors,
+        opacity=0.5
+    ))
+    
+    # Add volume MA if available
+    if 'Volume_MA_20' in data.columns:
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=data['Volume_MA_20'],
+            name='Volume MA(20)',
+            line=dict(color='blue', width=1)
+        ))
+    
+    # Add volume profile
+    price_bins = np.linspace(data['Low'].min(), data['High'].max(), 20)
+    volume_profile = np.zeros(len(price_bins[:-1]))
+    
+    for i in range(len(price_bins) - 1):
+        mask = (data['Close'] >= price_bins[i]) & (data['Close'] < price_bins[i + 1])
+        volume_profile[i] = data.loc[mask, 'Volume'].sum()
+    
+    # Create a column for each price bin's volume
+    for i in range(len(volume_profile)):
+        data[f'Volume_Profile_Bin_{i}'] = volume_profile[i]
+    
+    # Use the middle bin as the main Volume_Profile indicator
+    middle_bin = len(volume_profile) // 2
+    data['Volume_Profile'] = data[f'Volume_Profile_Bin_{middle_bin}']
+    
+    fig.add_trace(go.Bar(
+        x=volume_profile,
+        y=[(price_bins[i] + price_bins[i+1])/2 for i in range(len(price_bins)-1)],
+        name='Volume Profile',
+        orientation='h',
+        opacity=0.3,
+        visible='legendonly'
+    ))
+    
+    # Add volume delta
+    if 'Volume_Delta' in data.columns:
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=data['Volume_Delta'],
+            name='Volume Delta',
+            line=dict(color='purple', width=1),
+            visible='legendonly'
+        ))
+    
+    # Add volume clusters
+    if 'Volume_Clusters' in data.columns:
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=data['Volume_Clusters'],
+            name='Volume Clusters',
+            mode='markers',
+            marker=dict(
+                size=8,
+                color='orange',
+                symbol='circle'
+            ),
+            visible='legendonly'
+        ))
+    
+    # Add volume trend
+    if 'Volume_Trend' in data.columns:
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=data['Volume_Trend'],
+            name='Volume Trend',
+            line=dict(color='green', width=2),
+            visible='legendonly'
+        ))
+    
+    # Update layout
+    fig.update_layout(
+        height=200,
+        template='plotly_white',
+        margin=dict(t=0, b=20, l=50, r=50),
+        showlegend=True,
+        xaxis_rangeslider_visible=False
+    )
+    
+    return fig
+
+def create_indicator_sidebar(data: pd.DataFrame) -> None:
+    """Create enhanced indicator selection sidebar."""
+    st.markdown("### Technical Indicators")
+    
+    # Create tabs for each category
+    indicator_tabs = st.tabs(list(INDICATOR_CATEGORIES.keys()) + list(ADVANCED_INDICATORS.keys()))
+    
+    # Combine both indicator dictionaries for easier access
+    all_indicators = {**INDICATOR_CATEGORIES, **ADVANCED_INDICATORS}
+    
+    # Create a unique identifier for each category
+    category_index = 0
+    
+    for tab, category_name in zip(indicator_tabs, list(INDICATOR_CATEGORIES.keys()) + list(ADVANCED_INDICATORS.keys())):
+        with tab:
+            st.markdown(f"#### {category_name}")
+            
+            # Get indicators for this category (with safe fallback)
+            category_indicators = all_indicators.get(category_name, [])
+            
+            # Filter to only indicators that exist in the data
+            available_indicators = [ind for ind in category_indicators if ind in data.columns]
+            
+            if not available_indicators:
+                st.info(f"No {category_name} indicators available")
+                continue
+                
+            # Create multiselect for indicators in this category with unique key
+            selected_indicators = st.multiselect(
+                f"Select {category_name}",
+                options=available_indicators,
+                default=available_indicators[:2] if len(available_indicators) >= 2 else available_indicators,
+                key=f"multiselect_{category_name}_{category_index}"
+            )
+            
+            # Increment the category index for the next iteration
+            category_index += 1
+            
+            # Display selected indicators
+            for indicator in selected_indicators:
+                with st.expander(indicator):
+                    # Show current value and trend
+                    current_value = data[indicator].iloc[-1]
+                    prev_value = data[indicator].iloc[-2]
+                    change = current_value - prev_value
+                    
+                    st.metric(
+                        indicator,
+                        f"{current_value:.2f}",
+                        f"{change:+.2f}",
+                        delta_color="normal"
+                    )
+                    
+                    # Add indicator-specific analysis
+                    if indicator.startswith('RSI'):
+                        add_rsi_analysis(indicator, data)
+                    elif indicator.startswith('MA'):
+                        add_ma_analysis(indicator, data)
+                    elif indicator.startswith('AO'):
+                        add_ao_analysis(indicator, data)
+                    elif indicator == 'Volume_MA_20':
+                        add_volume_analysis(indicator, data)
+                    elif indicator in INDICATOR_CATEGORIES.get("Pattern Recognition", []):
+                        add_pattern_analysis(indicator, data)
+                    elif indicator in ADVANCED_INDICATORS.get("Fibonacci Analysis", []):
+                        add_fibonacci_analysis(indicator, data)
+                    elif indicator in ADVANCED_INDICATORS.get("Market Structure", []):
+                        add_market_structure_analysis(indicator, data)
+                    elif indicator in ADVANCED_INDICATORS.get("Market Profile", []):
+                        add_market_profile_analysis(indicator, data)
+                    elif indicator in ADVANCED_INDICATORS.get("Advanced Patterns", []):
+                        add_advanced_pattern_analysis(indicator, data)
+
+def add_pattern_analysis(indicator: str, data: pd.DataFrame) -> None:
+    """Add pattern analysis with enhanced pattern detection and visualization."""
+    st.write(f"Pattern analysis for {indicator}")
+    
+    # Create the chart
+    fig = go.Figure()
+    
+    # Add candlestick chart
+    fig.add_trace(go.Candlestick(
+        x=data.index,
+        open=data['Open'],
+        high=data['High'],
+        low=data['Low'],
+        close=data['Close'],
+        name='Price'
+    ))
+    
+    # Detect patterns
+    patterns = detect_patterns(data)
+    
+    # Add pattern markers
+    for pattern_name, pattern_data in patterns.items():
+        if pattern_data['occurrences']:
+            fig.add_trace(go.Scatter(
+                x=pattern_data['dates'],
+                y=pattern_data['prices'],
+                mode='markers',
+                name=pattern_name,
+                marker=dict(
+                    symbol='star',
+                    size=12,
+                    color=pattern_data['color'],
+                    line=dict(width=2, color='black')
+                )
+            ))
+    
+    # Update layout
+    fig.update_layout(
+        title='Pattern Analysis',
+        xaxis_title='Date',
+        yaxis_title='Price',
+        showlegend=True,
+        height=600
+    )
+    
+    # Generate a unique key using timestamp and indicator name
+    unique_key = f"pattern_{indicator}_{int(time.time() * 1000)}"
+    st.plotly_chart(fig, use_container_width=True, key=unique_key)
+    
+    # Display pattern statistics
+    st.subheader("Pattern Statistics")
+    for pattern_name, pattern_data in patterns.items():
+        if pattern_data['occurrences']:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric(
+                    f"{pattern_name} Occurrences",
+                    len(pattern_data['occurrences'])
+                )
+            with col2:
+                st.metric(
+                    f"Last {pattern_name}",
+                    pattern_data['last_occurrence'].strftime('%Y-%m-%d')
+                )
+
+def detect_patterns(data: pd.DataFrame) -> dict:
+    """Detect various chart patterns in the price data."""
+    patterns = {
+        'Head and Shoulders': {'occurrences': [], 'dates': [], 'prices': [], 'color': 'red'},
+        'Double Top': {'occurrences': [], 'dates': [], 'prices': [], 'color': 'orange'},
+        'Double Bottom': {'occurrences': [], 'dates': [], 'prices': [], 'color': 'green'},
+        'Triple Top': {'occurrences': [], 'dates': [], 'prices': [], 'color': 'purple'},
+        'Triple Bottom': {'occurrences': [], 'dates': [], 'prices': [], 'color': 'blue'},
+        'Ascending Triangle': {'occurrences': [], 'dates': [], 'prices': [], 'color': 'cyan'},
+        'Descending Triangle': {'occurrences': [], 'dates': [], 'prices': [], 'color': 'magenta'}
+    }
+    
+    # Lookback window for pattern detection
+    window = 20
+    
+    for i in range(window, len(data)):
+        # Get the window of data
+        window_data = data.iloc[i-window:i+1]
+        
+        # Detect Head and Shoulders
+        if detect_head_and_shoulders(window_data):
+            patterns['Head and Shoulders']['occurrences'].append(i)
+            patterns['Head and Shoulders']['dates'].append(data.index[i])
+            patterns['Head and Shoulders']['prices'].append(data['High'].iloc[i])
+        
+        # Detect Double Top
+        if detect_double_top(window_data):
+            patterns['Double Top']['occurrences'].append(i)
+            patterns['Double Top']['dates'].append(data.index[i])
+            patterns['Double Top']['prices'].append(data['High'].iloc[i])
+        
+        # Detect Double Bottom
+        if detect_double_bottom(window_data):
+            patterns['Double Bottom']['occurrences'].append(i)
+            patterns['Double Bottom']['dates'].append(data.index[i])
+            patterns['Double Bottom']['prices'].append(data['Low'].iloc[i])
+        
+        # Detect Triple Top
+        if detect_triple_top(window_data):
+            patterns['Triple Top']['occurrences'].append(i)
+            patterns['Triple Top']['dates'].append(data.index[i])
+            patterns['Triple Top']['prices'].append(data['High'].iloc[i])
+        
+        # Detect Triple Bottom
+        if detect_triple_bottom(window_data):
+            patterns['Triple Bottom']['occurrences'].append(i)
+            patterns['Triple Bottom']['dates'].append(data.index[i])
+            patterns['Triple Bottom']['prices'].append(data['Low'].iloc[i])
+        
+        # Detect Ascending Triangle
+        if detect_ascending_triangle(window_data):
+            patterns['Ascending Triangle']['occurrences'].append(i)
+            patterns['Ascending Triangle']['dates'].append(data.index[i])
+            patterns['Ascending Triangle']['prices'].append(data['High'].iloc[i])
+        
+        # Detect Descending Triangle
+        if detect_descending_triangle(window_data):
+            patterns['Descending Triangle']['occurrences'].append(i)
+            patterns['Descending Triangle']['dates'].append(data.index[i])
+            patterns['Descending Triangle']['prices'].append(data['Low'].iloc[i])
+    
+    # Add last occurrence dates
+    for pattern in patterns.values():
+        if pattern['occurrences']:
+            pattern['last_occurrence'] = data.index[pattern['occurrences'][-1]]
+    
+    return patterns
+
+def detect_head_and_shoulders(data: pd.DataFrame) -> bool:
+    """Detect head and shoulders pattern."""
+    if len(data) < 5:
+        return False
+    
+    # Find local maxima
+    highs = data['High']
+    left_shoulder = highs.iloc[0]
+    head = highs.iloc[1]
+    right_shoulder = highs.iloc[2]
+    
+    # Check if pattern conditions are met
+    return (left_shoulder < head and right_shoulder < head and
+            abs(left_shoulder - right_shoulder) < 0.02 * head)
+
+def detect_double_top(data: pd.DataFrame) -> bool:
+    """Detect double top pattern."""
+    if len(data) < 3:
+        return False
+    
+    highs = data['High']
+    first_top = highs.iloc[0]
+    second_top = highs.iloc[1]
+    
+    return abs(first_top - second_top) < 0.02 * first_top
+
+def detect_double_bottom(data: pd.DataFrame) -> bool:
+    """Detect double bottom pattern."""
+    if len(data) < 3:
+        return False
+    
+    lows = data['Low']
+    first_bottom = lows.iloc[0]
+    second_bottom = lows.iloc[1]
+    
+    return abs(first_bottom - second_bottom) < 0.02 * first_bottom
+
+def detect_triple_top(data: pd.DataFrame) -> bool:
+    """Detect triple top pattern."""
+    if len(data) < 4:
+        return False
+    
+    highs = data['High']
+    first_top = highs.iloc[0]
+    second_top = highs.iloc[1]
+    third_top = highs.iloc[2]
+    
+    return (abs(first_top - second_top) < 0.02 * first_top and
+            abs(second_top - third_top) < 0.02 * first_top)
+
+def detect_triple_bottom(data: pd.DataFrame) -> bool:
+    """Detect triple bottom pattern."""
+    if len(data) < 4:
+        return False
+    
+    lows = data['Low']
+    first_bottom = lows.iloc[0]
+    second_bottom = lows.iloc[1]
+    third_bottom = lows.iloc[2]
+    
+    return (abs(first_bottom - second_bottom) < 0.02 * first_bottom and
+            abs(second_bottom - third_bottom) < 0.02 * first_bottom)
+
+def detect_ascending_triangle(data: pd.DataFrame) -> bool:
+    """Detect ascending triangle pattern."""
+    if len(data) < 5:
+        return False
+    
+    # Check for ascending triangle pattern
+    if not (data['High'].iloc[0] < data['High'].iloc[1] < data['High'].iloc[2] < data['High'].iloc[3] < data['High'].iloc[4]):
+        return False
+    
+    # Check for descending volume
+    if not (data['Volume'].iloc[0] > data['Volume'].iloc[1] > data['Volume'].iloc[2] > data['Volume'].iloc[3] > data['Volume'].iloc[4]):
+        return False
+    
+    return True
+
+def detect_descending_triangle(data: pd.DataFrame) -> bool:
+    """Detect descending triangle pattern."""
+    if len(data) < 5:
+        return False
+    
+    # Check for descending triangle pattern
+    if not (data['Low'].iloc[0] > data['Low'].iloc[1] > data['Low'].iloc[2] > data['Low'].iloc[3] > data['Low'].iloc[4]):
+        return False
+    
+    # Check for ascending volume
+    if not (data['Volume'].iloc[0] < data['Volume'].iloc[1] < data['Volume'].iloc[2] < data['Volume'].iloc[3] < data['Volume'].iloc[4]):
+        return False
+    
+    return True
+
+def display_charts(data: Dict[str, Any], title: str = "Stock Analysis") -> None:
+    """Main function to display charts with enhanced layout."""
+    apply_shared_styles()
+    create_custom_header(title)
+    create_custom_divider()
+    
+    if isinstance(data, dict):
+        # Database connection and stock selection
+        conn = connect_to_database(data.get("indicator_db", INDICATORS_DB_PATH))
+        if conn is None:
+            return
+        
+        stock_list = get_available_stocks(conn)
+        if not stock_list:
+            st.error("No stock data available.")
+            conn.close()
+            return
+        
+        # Stock selection and data loading
+        selected_stock = st.selectbox("Select Stock", stock_list)
+        time_range = st.slider("Time Range (days)", 30, 365, 180)
+        stock_data = get_stock_data(conn, selected_stock, time_range)
+        
+        if stock_data.empty:
+            st.error(f"No data available for {selected_stock}")
+            conn.close()
+            return
+        
+        # Calculate advanced indicators
+        stock_data = calculate_advanced_indicators(stock_data)
+        
+        # Create enhanced price and indicators layout
+        create_price_indicators_layout(stock_data, selected_stock)
+        
+        # Add correlation analysis
+        st.markdown("### Correlation Analysis")
+        correlation_df = calculate_correlation(stock_data, stock_list)
+        st.dataframe(correlation_df.sort_values('Correlation', ascending=False))
+        
+        conn.close()
+    elif not isinstance(data, pd.DataFrame):
+        st.error("Invalid data type. Expected DataFrame or config dictionary.")
+        return
+    else:
+        # If a DataFrame is provided directly, create a basic chart
+        price_chart = create_enhanced_price_chart(data)
+        create_chart_container(price_chart, "Price Chart")
+
+def main() -> None:
+    """Main function to display the charts component."""
+    apply_shared_styles()
+    st.set_page_config(page_title="PSX Advanced Charts", layout="wide")
+    
+    # Add sidebar navigation
+    st.sidebar.image("https://img.icons8.com/fluency/96/stocks.png", width=80)
+    st.sidebar.title("Chart Navigator")
+    
+    # Navigation options
+    page = st.sidebar.radio(
+        "Select View",
+        ["Chart Dashboard", "Indicator Explorer", "Market Analysis"]
+    )
+    
+    if page == "Chart Dashboard":
+        # Use the config dictionary to load data from the database
+        config = {
+            "indicator_db": INDICATORS_DB_PATH
+        }
+        display_charts(config, "PSX Stock Analysis Dashboard")
+    
+    elif page == "Indicator Explorer":
+        create_custom_header("Technical Indicator Explorer")
+        create_custom_divider()
+        
+        # Connect to database
+        conn = connect_to_database(INDICATORS_DB_PATH)
+        if conn is None:
+            st.error("Could not connect to database.")
+            return
+            
+        # Get available stocks
+        stock_list = get_available_stocks(conn)
+        if not stock_list:
+            st.error("No stock data available in the database.")
+            conn.close()
+            return
+            
+        # Let user select a stock
+        selected_stock = st.selectbox("Select Stock", stock_list)
+        
+        # Get stock data
+        time_range = st.slider("Time Range (days)", 30, 365, 180)
+        stock_data = get_stock_data(conn, selected_stock, time_range)
+        
+        if stock_data.empty:
+            st.error(f"No data available for {selected_stock}.")
+            conn.close()
+            return
+        
+        # Calculate advanced indicators
+        stock_data = calculate_advanced_indicators(stock_data)
+        
+        # Create enhanced price and indicators layout
+        create_price_indicators_layout(stock_data, selected_stock)
+        
+        conn.close()
+    
+    elif page == "Market Analysis":
+        create_custom_header("Market Analysis")
+        create_custom_divider()
+        
+        # Connect to database
+        conn = connect_to_database(INDICATORS_DB_PATH)
+        if conn is None:
+            st.error("Could not connect to database.")
+            return
+            
+        # Get available stocks
+        stock_list = get_available_stocks(conn)
+        if not stock_list:
+            st.error("No stock data available in the database.")
+            conn.close()
+            return
+        
+        # Market sentiment analysis
+        st.markdown("### Market Sentiment Analysis")
+        sentiment_data = {}
+        for stock in stock_list[:10]:  # Limit to first 10 stocks for performance
+            stock_data = get_stock_data(conn, stock, 30)  # Last 30 days
+            if not stock_data.empty:
+                sentiment_data[stock] = calculate_market_sentiment(stock_data)
+        
+        # Display market sentiment heatmap
+        sentiment_df = pd.DataFrame(sentiment_data).T
+        fig = px.imshow(
+            sentiment_df,
+            labels=dict(x="Indicator", y="Stock", color="Sentiment"),
+            x=sentiment_df.columns,
+            y=sentiment_df.index,
+            color_continuous_scale="RdYlGn"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        conn.close()
+
+def safe_talib_call(func_name, *args, default_value=0, **kwargs):
+    """Safely call a TA-Lib function, returning a default value if the function doesn't exist.
+    
+    Args:
+        func_name: Name of the TA-Lib function to call
+        *args: Positional arguments to pass to the function
+        default_value: Value to return if function fails
+        **kwargs: Keyword arguments to pass to the function
+        
+    Returns:
+        Result of the TA-Lib function or default value if function fails
+    """
+    try:
+        func = getattr(talib, func_name)
+        return func(*args, **kwargs)
+    except (AttributeError, TypeError):
+        # Return a pandas Series or numpy array of the same shape as the first argument
+        if len(args) > 0 and hasattr(args[0], 'shape'):
+            return pd.Series(default_value, index=args[0].index)
+        return default_value
+
+def add_ma_analysis(indicator: str, data: pd.DataFrame) -> None:
+    """Add Moving Average analysis."""
+    current_ma = data[indicator].iloc[-1]
+    prev_ma = data[indicator].iloc[-2]
+    current_price = data['Close'].iloc[-1]
+    
+    # MA levels
+    st.write("MA Levels:")
+    st.write(f"- Current MA: {current_ma:.2f}")
+    st.write(f"- Previous MA: {prev_ma:.2f}")
+    st.write(f"- Current Price: {current_price:.2f}")
+    
+    # Price vs MA
+    if current_price > current_ma:
+        st.success("Price above MA - Bullish")
+    else:
+        st.warning("Price below MA - Bearish")
+    
+    # MA trend
+    if current_ma > prev_ma:
+        st.info("MA trending up")
+    else:
+        st.info("MA trending down")
+    
+    # Add MA chart
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data['Close'],
+        name='Price',
+        line=dict(color='blue')
+    ))
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data[indicator],
+        name=indicator,
+        line=dict(color='orange')
+    ))
+    fig.update_layout(
+        title=f"{indicator} Analysis",
+        height=200,
+        showlegend=True
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
 def add_rsi_analysis(indicator: str, data: pd.DataFrame) -> None:
     """Add RSI-specific analysis."""
     current_rsi = data[indicator].iloc[-1]
@@ -1347,37 +1763,37 @@ def add_rsi_analysis(indicator: str, data: pd.DataFrame) -> None:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-def add_ma_analysis(indicator: str, data: pd.DataFrame) -> None:
-    """Add Moving Average analysis."""
-    current_ma = data[indicator].iloc[-1]
-    prev_ma = data[indicator].iloc[-2]
-    current_price = data['Close'].iloc[-1]
+def add_volume_analysis(indicator: str, data: pd.DataFrame) -> None:
+    """Add Volume analysis."""
+    current_volume = data['Volume'].iloc[-1]
+    current_volume_ma = data[indicator].iloc[-1]
+    prev_volume = data['Volume'].iloc[-2]
     
-    # MA levels
-    st.write("MA Levels:")
-    st.write(f"- Current MA: {current_ma:.2f}")
-    st.write(f"- Previous MA: {prev_ma:.2f}")
-    st.write(f"- Current Price: {current_price:.2f}")
+    # Volume levels
+    st.write("Volume Analysis:")
+    st.write(f"- Current Volume: {current_volume:,.0f}")
+    st.write(f"- Volume MA: {current_volume_ma:,.0f}")
+    st.write(f"- Previous Volume: {prev_volume:,.0f}")
     
-    # Price vs MA
-    if current_price > current_ma:
-        st.success("Price above MA - Bullish")
+    # Volume vs MA
+    if current_volume > current_volume_ma:
+        st.success("Volume above MA - Strong activity")
     else:
-        st.warning("Price below MA - Bearish")
+        st.warning("Volume below MA - Weak activity")
     
-    # MA trend
-    if current_ma > prev_ma:
-        st.info("MA trending up")
+    # Volume trend
+    if current_volume > prev_volume:
+        st.info("Volume increasing")
     else:
-        st.info("MA trending down")
+        st.info("Volume decreasing")
     
-    # Add MA chart
+    # Add Volume chart
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
+    fig.add_trace(go.Bar(
         x=data.index,
-        y=data['Close'],
-        name='Price',
-        line=dict(color='blue')
+        y=data['Volume'],
+        name='Volume',
+        marker_color='blue'
     ))
     fig.add_trace(go.Scatter(
         x=data.index,
@@ -1386,7 +1802,7 @@ def add_ma_analysis(indicator: str, data: pd.DataFrame) -> None:
         line=dict(color='orange')
     ))
     fig.update_layout(
-        title=f"{indicator} Analysis",
+        title="Volume Analysis",
         height=200,
         showlegend=True
     )
@@ -1597,217 +2013,6 @@ def add_ao_analysis(indicator: str, data: pd.DataFrame) -> None:
         st.success("Monthly AO: Bullish Crossover Signal")
     elif data['AO_monthly_Crossover'].iloc[-1] == -1 and data['AO_monthly_Crossover'].iloc[-2] == 1:
         st.warning("Monthly AO: Bearish Crossover Signal")
-
-def add_volume_analysis(indicator: str, data: pd.DataFrame) -> None:
-    """Add Volume analysis."""
-    current_volume = data['Volume'].iloc[-1]
-    current_volume_ma = data[indicator].iloc[-1]
-    prev_volume = data['Volume'].iloc[-2]
-    
-    # Volume levels
-    st.write("Volume Analysis:")
-    st.write(f"- Current Volume: {current_volume:,.0f}")
-    st.write(f"- Volume MA: {current_volume_ma:,.0f}")
-    st.write(f"- Previous Volume: {prev_volume:,.0f}")
-    
-    # Volume vs MA
-    if current_volume > current_volume_ma:
-        st.success("Volume above MA - Strong activity")
-    else:
-        st.warning("Volume below MA - Weak activity")
-    
-    # Volume trend
-    if current_volume > prev_volume:
-        st.info("Volume increasing")
-    else:
-        st.info("Volume decreasing")
-    
-    # Add Volume chart
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=data.index,
-        y=data['Volume'],
-        name='Volume',
-        marker_color='blue'
-    ))
-    fig.add_trace(go.Scatter(
-        x=data.index,
-        y=data[indicator],
-        name=indicator,
-        line=dict(color='orange')
-    ))
-    fig.update_layout(
-        title="Volume Analysis",
-        height=200,
-        showlegend=True
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-def display_charts(data: Dict[str, Any], title: str = "Stock Analysis") -> None:
-    """Main function to display charts with enhanced layout."""
-    apply_shared_styles()
-    create_custom_header(title)
-    create_custom_divider()
-    
-    if isinstance(data, dict):
-        # Database connection and stock selection
-        conn = connect_to_database(data.get("indicator_db", INDICATORS_DB_PATH))
-        if conn is None:
-            return
-        
-        stock_list = get_available_stocks(conn)
-        if not stock_list:
-            st.error("No stock data available.")
-            conn.close()
-            return
-        
-        # Stock selection and data loading
-        selected_stock = st.selectbox("Select Stock", stock_list)
-        time_range = st.slider("Time Range (days)", 30, 365, 180)
-        stock_data = get_stock_data(conn, selected_stock, time_range)
-        
-        if stock_data.empty:
-            st.error(f"No data available for {selected_stock}")
-            conn.close()
-            return
-        
-        # Calculate advanced indicators
-        stock_data = calculate_advanced_indicators(stock_data)
-        
-        # Create enhanced price and indicators layout
-        create_price_indicators_layout(stock_data, selected_stock)
-        
-        # Add correlation analysis
-        st.markdown("### Correlation Analysis")
-        correlation_df = calculate_correlation(stock_data, stock_list)
-        st.dataframe(correlation_df.sort_values('Correlation', ascending=False))
-        
-        conn.close()
-    elif not isinstance(data, pd.DataFrame):
-        st.error("Invalid data type. Expected DataFrame or config dictionary.")
-        return
-    else:
-        # If a DataFrame is provided directly, create a basic chart
-        price_chart = create_enhanced_price_chart(data)
-        create_chart_container(price_chart, "Price Chart")
-
-def main() -> None:
-    """Main function to display the charts component."""
-    apply_shared_styles()
-    st.set_page_config(page_title="PSX Advanced Charts", layout="wide")
-    
-    # Add sidebar navigation
-    st.sidebar.image("https://img.icons8.com/fluency/96/stocks.png", width=80)
-    st.sidebar.title("Chart Navigator")
-    
-    # Navigation options
-    page = st.sidebar.radio(
-        "Select View",
-        ["Chart Dashboard", "Indicator Explorer", "Market Analysis"]
-    )
-    
-    if page == "Chart Dashboard":
-        # Use the config dictionary to load data from the database
-        config = {
-            "indicator_db": INDICATORS_DB_PATH
-        }
-        display_charts(config, "PSX Stock Analysis Dashboard")
-    
-    elif page == "Indicator Explorer":
-        create_custom_header("Technical Indicator Explorer")
-        create_custom_divider()
-        
-        # Connect to database
-        conn = connect_to_database(INDICATORS_DB_PATH)
-        if conn is None:
-            st.error("Could not connect to database.")
-            return
-            
-        # Get available stocks
-        stock_list = get_available_stocks(conn)
-        if not stock_list:
-            st.error("No stock data available in the database.")
-            conn.close()
-            return
-            
-        # Let user select a stock
-        selected_stock = st.selectbox("Select Stock", stock_list)
-        
-        # Get stock data
-        time_range = st.slider("Time Range (days)", 30, 365, 180)
-        stock_data = get_stock_data(conn, selected_stock, time_range)
-        
-        if stock_data.empty:
-            st.error(f"No data available for {selected_stock}.")
-            conn.close()
-            return
-        
-        # Calculate advanced indicators
-        stock_data = calculate_advanced_indicators(stock_data)
-        
-        # Create enhanced price and indicators layout
-        create_price_indicators_layout(stock_data, selected_stock)
-        
-        conn.close()
-    
-    elif page == "Market Analysis":
-        create_custom_header("Market Analysis")
-        create_custom_divider()
-        
-        # Connect to database
-        conn = connect_to_database(INDICATORS_DB_PATH)
-        if conn is None:
-            st.error("Could not connect to database.")
-            return
-            
-        # Get available stocks
-        stock_list = get_available_stocks(conn)
-        if not stock_list:
-            st.error("No stock data available in the database.")
-            conn.close()
-            return
-        
-        # Market sentiment analysis
-        st.markdown("### Market Sentiment Analysis")
-        sentiment_data = {}
-        for stock in stock_list[:10]:  # Limit to first 10 stocks for performance
-            stock_data = get_stock_data(conn, stock, 30)  # Last 30 days
-            if not stock_data.empty:
-                sentiment_data[stock] = calculate_market_sentiment(stock_data)
-        
-        # Display market sentiment heatmap
-        sentiment_df = pd.DataFrame(sentiment_data).T
-        fig = px.imshow(
-            sentiment_df,
-            labels=dict(x="Indicator", y="Stock", color="Sentiment"),
-            x=sentiment_df.columns,
-            y=sentiment_df.index,
-            color_continuous_scale="RdYlGn"
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
-        conn.close()
-
-def safe_talib_call(func_name, *args, default_value=0, **kwargs):
-    """Safely call a TA-Lib function, returning a default value if the function doesn't exist.
-    
-    Args:
-        func_name: Name of the TA-Lib function to call
-        *args: Positional arguments to pass to the function
-        default_value: Value to return if function fails
-        **kwargs: Keyword arguments to pass to the function
-        
-    Returns:
-        Result of the TA-Lib function or default value if function fails
-    """
-    try:
-        func = getattr(talib, func_name)
-        return func(*args, **kwargs)
-    except (AttributeError, TypeError):
-        # Return a pandas Series or numpy array of the same shape as the first argument
-        if len(args) > 0 and hasattr(args[0], 'shape'):
-            return pd.Series(default_value, index=args[0].index)
-        return default_value
 
 if __name__ == "__main__":
     main() 

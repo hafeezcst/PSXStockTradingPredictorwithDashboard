@@ -21,6 +21,14 @@ load_dotenv()
 # Initialize session state for API keys
 if 'huggingface_api_key' not in st.session_state:
     st.session_state.huggingface_api_key = os.getenv('HUGGINGFACE_API_KEY', '')
+if 'anthropic_api_key' not in st.session_state:
+    st.session_state.anthropic_api_key = os.getenv('ANTHROPIC_API_KEY', '')
+if 'openai_api_key' not in st.session_state:
+    st.session_state.openai_api_key = os.getenv('OPENAI_API_KEY', '')
+if 'deepseek_api_key' not in st.session_state:
+    st.session_state.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY', '')
+if 'google_api_key' not in st.session_state:
+    st.session_state.google_api_key = os.getenv('GOOGLE_API_KEY', '')
 
 # Set page config as the first Streamlit command
 st.set_page_config(

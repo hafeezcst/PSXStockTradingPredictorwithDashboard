@@ -52,6 +52,76 @@ DEFAULT_CONFIG = {
     )
 }
 
+# Initialize API keys from environment
+DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
+ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+HUGGINGFACE_API_KEY = os.getenv('HUGGINGFACE_API_KEY')
+
+# Version lock configuration
+VERSION = "1.0.0"
+VERSION_LOCKED = True
+
+def check_version_lock():
+    """Silently check if the version is locked without affecting functionality."""
+    return VERSION_LOCKED
+
+# Default model configuration
+DEFAULT_MODEL = "DeepSeek"
+MODEL_OPTIONS = {
+    "DeepSeek": {
+        "url": "https://api.deepseek.com/v1/chat/completions",
+        "description": "Best for in-depth financial analysis and technical insights",
+        "max_tokens": 2000,
+        "model_name": "deepseek-chat",
+        "strengths": ["Deep financial expertise", "Technical analysis", "Complex reasoning"],
+        "api_type": "deepseek"
+    },
+    "Claude-3": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "description": "Best for advanced reasoning and comprehensive analysis",
+        "max_tokens": 4000,
+        "model_name": "claude-3-opus-20240229",
+        "strengths": ["Advanced reasoning", "Comprehensive analysis", "Context understanding"],
+        "api_type": "anthropic"
+    },
+    "Mistral-7B": {
+        "url": "mistralai/Mistral-7B-Instruct-v0.2",
+        "description": "Best for detailed financial analysis, good balance of speed and accuracy",
+        "max_tokens": 1500,
+        "strengths": ["Detailed analysis", "Good financial understanding", "Fast responses"],
+        "api_type": "huggingface"
+    }
+}
+
+# Optional imports with fallback
+try:
+    import PyPDF2
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
+    if not hasattr(st.session_state, 'showed_pdf_warning'):
+        st.warning("""
+        PDF support is not available. To enable PDF analysis, please install PyPDF2:
+        ```
+        pip install PyPDF2
+        ```
+        """)
+        st.session_state.showed_pdf_warning = True
+
+try:
+    import docx
+    DOCX_SUPPORT = True
+except ImportError:
+    DOCX_SUPPORT = False
+    if not hasattr(st.session_state, 'showed_docx_warning'):
+        st.warning("""
+        DOCX support is not available. To enable DOCX analysis, please install python-docx:
+        ```
+        pip install python-docx
+        ```
+        """)
+        st.session_state.showed_docx_warning = True
+
 def get_config():
     """Get configuration with defaults."""
     config_path = os.path.join(project_root, "config", "financial_reports_config.json")
@@ -84,60 +154,8 @@ def get_config():
     
     return config
 
-# Initialize Hugging Face API
-HUGGINGFACE_API_KEY = os.getenv('HUGGINGFACE_API_KEY')
-# Change to a more accessible model
-MODEL_ENDPOINTS = {
-    "primary": "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2",
-    "backup": "https://api-inference.huggingface.co/models/meta-llama/Llama-2-7b-chat-hf",
-    "fallback": "https://api-inference.huggingface.co/models/google/flan-t5-large"
-}
-
-# Optional imports with fallback
-try:
-    import PyPDF2
-    PDF_SUPPORT = True
-except ImportError:
-    PDF_SUPPORT = False
-    if not hasattr(st.session_state, 'showed_pdf_warning'):
-        st.warning("""
-        PDF support is not available. To enable PDF analysis, please install PyPDF2:
-        ```
-        pip install PyPDF2
-        ```
-        """)
-        st.session_state.showed_pdf_warning = True
-
-try:
-    import docx
-    DOCX_SUPPORT = True
-except ImportError:
-    DOCX_SUPPORT = False
-    if not hasattr(st.session_state, 'showed_docx_warning'):
-        st.warning("""
-        DOCX support is not available. To enable DOCX analysis, please install python-docx:
-        ```
-        pip install python-docx
-        ```
-        """)
-        st.session_state.showed_docx_warning = True
-
-# Add version lock at the top of the file
-VERSION = "1.0.0"
-VERSION_LOCKED = True
-
-def check_version_lock():
-    """Silently check if the version is locked without affecting functionality."""
-    return VERSION_LOCKED
-
-def get_config_path():
-    """Get the path to the configuration file."""
-    config_dir = os.path.join(os.path.dirname(__file__), "..", "..", "config")
-    os.makedirs(config_dir, exist_ok=True)
-    return os.path.join(config_dir, "api_keys.json")
-
 def load_api_keys():
-    """Load API keys from configuration file."""
+    """Load API keys from configuration file and environment variables."""
     config_path = get_config_path()
     if os.path.exists(config_path):
         try:
@@ -149,18 +167,28 @@ def load_api_keys():
     else:
         keys = {}
     
-    # Get DeepSeek API key from .env as fallback
-    deepseek_key = os.getenv('DEEPSEEK_API_KEY', '')
+    # Get API keys from environment variables as fallback
+    if DEEPSEEK_API_KEY and (not keys.get('deepseek') or keys.get('deepseek') == ''):
+        keys['deepseek'] = DEEPSEEK_API_KEY
     
-    if deepseek_key and (not keys.get('deepseek') or keys.get('deepseek') == ''):
-        keys['deepseek'] = deepseek_key
+    if ANTHROPIC_API_KEY and (not keys.get('anthropic') or keys.get('anthropic') == ''):
+        keys['anthropic'] = ANTHROPIC_API_KEY
+    
+    if HUGGINGFACE_API_KEY and (not keys.get('huggingface') or keys.get('huggingface') == ''):
+        keys['huggingface'] = HUGGINGFACE_API_KEY
     
     # Ensure all keys exist in the dictionary
-    for key_type in ['huggingface', 'deepseek', 'anthropic', 'openai', 'google', 'xai']:
+    for key_type in ['deepseek', 'anthropic', 'huggingface']:
         if key_type not in keys:
             keys[key_type] = ''
     
     return keys
+
+def get_config_path():
+    """Get the path to the configuration file."""
+    config_dir = os.path.join(os.path.dirname(__file__), "..", "..", "config")
+    os.makedirs(config_dir, exist_ok=True)
+    return os.path.join(config_dir, "api_keys.json")
 
 def save_api_keys(keys):
     """Save API keys to configuration file."""
@@ -640,120 +668,18 @@ def display_financial_reports(config: Dict[str, Any]):
         """)
         return
     
-    with st.sidebar:
-        st.markdown("### 🔑 AI Analysis Configuration")
-        
-        # Get API keys from .env first, then fallback to saved keys
-        api_keys = load_api_keys()
-        env_keys = {
-            'deepseek': os.getenv('DEEPSEEK_API_KEY', ''),
-            'anthropic': os.getenv('ANTHROPIC_API_KEY', ''),
-            'openai': os.getenv('OPENAI_API_KEY', ''),
-            'xai': os.getenv('XAI_API_KEY', ''),
-            'google': os.getenv('GOOGLE_API_KEY', ''),
-            'huggingface': os.getenv('HUGGINGFACE_API_KEY', '')
-        }
-        
-        # Update api_keys with env values if they exist
-        for key_type, env_key in env_keys.items():
-            if env_key and env_key != 'your_' + key_type + '_api_key_here':
-                api_keys[key_type] = env_key
-        
-        # Determine available models based on API keys
-        available_models = []
-        for model_name, model_info in MODEL_OPTIONS.items():
-            api_type = model_info['api_type']
-            api_key = api_keys.get(api_type, '')
-            
-            # Test the API key if it exists
-            if api_key:
-                success, _, _ = test_model_access(api_key, api_type)
-                if success:
-                    available_models.append(model_name)
-                elif api_type == 'deepseek' and model_name == "DeepSeek":
-                    # If DeepSeek key is invalid, prompt for new key
-                    st.warning("⚠️ DeepSeek API key has expired or is invalid")
-                    new_key = st.text_input(
-                        "Enter new DeepSeek API key:",
-                        type="password",
-                        key="new_deepseek_key"
-                    )
-                    if new_key:
-                        success, _, message = test_model_access(new_key, "deepseek")
-                        if success:
-                            api_keys['deepseek'] = new_key
-                            save_api_keys(api_keys)
-                            st.success("✅ New DeepSeek API key saved successfully!")
-                            available_models.append(model_name)
-                        else:
-                            st.error(f"❌ Invalid API key: {message}")
-        
-        # If no models are available, show all but with warnings
-        if not available_models:
-            available_models = list(MODEL_OPTIONS.keys())
-            st.warning("⚠️ No API keys configured. Please configure at least one API key to use the analysis features.")
-        
-        # Model selection with DeepSeek as default if available
-        st.markdown("#### 🤖 Select Analysis Model")
-        default_model = "DeepSeek" if "DeepSeek" in available_models else available_models[0]
-        
-        selected_model = st.selectbox(
-            "Select Primary Model:",
-            options=available_models,
-            format_func=lambda x: f"{x} - {MODEL_OPTIONS[x]['description']}" +
-                               (" ✨" if MODEL_OPTIONS[x].get("beta_status", False) else "") +
-                               (" ✅" if MODEL_OPTIONS[x]['api_type'] in api_keys and api_keys[MODEL_OPTIONS[x]['api_type']] else " ⚠️"),
-            help="Select the primary model for analysis. Each model has different strengths and capabilities.",
-            index=available_models.index(default_model)
-        )
-        
-        # Store selected model in session state
-        st.session_state.selected_model = selected_model
-        
-        # Show model strengths
-        st.markdown("**Model Strengths:**")
-        for strength in MODEL_OPTIONS[selected_model]['strengths']:
-            st.markdown(f"- {strength}")
-        
-        # Show model status
-        model_info = MODEL_OPTIONS[selected_model]
-        api_type = model_info['api_type']
-        if api_type in api_keys and api_keys[api_type]:
-            success, _, _ = test_model_access(api_keys[api_type], api_type)
-            if success:
-                st.success(f"✅ {selected_model} is configured and ready to use")
-            else:
-                st.warning(f"⚠️ {selected_model} API key needs to be updated")
-                if api_type == 'deepseek':
-                    new_key = st.text_input(
-                        "Enter new DeepSeek API key:",
-                        type="password",
-                        key="new_deepseek_key_status"
-                    )
-                    if new_key:
-                        success, _, message = test_model_access(new_key, "deepseek")
-                        if success:
-                            api_keys['deepseek'] = new_key
-                            save_api_keys(api_keys)
-                            st.success("✅ New DeepSeek API key saved successfully!")
-                        else:
-                            st.error(f"❌ Invalid API key: {message}")
-        else:
-            st.warning(f"⚠️ {selected_model} requires API key configuration")
-
-    # Get file path from config
-    file_path = config.get("announcements_file")
-    
-    if not file_path:
-        st.error("Announcements file path not configured.")
-        return
-    
-    if not os.path.exists(file_path):
-        st.error(f"Announcements data file not found: {file_path}")
-        return
+    # Create tabs for different views
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📊 Summary", 
+        "📰 Recent", 
+        "🏢 Company", 
+        "📈 Analysis", 
+        "🤖 AI Analysis",
+        "⚙️ Settings"
+    ])
     
     # Load data
-    df = load_announcements_data(file_path)
+    df = load_announcements_data(config["announcements_file"])
     if df is None or df.empty:
         st.error("Failed to load announcements data or the file is empty.")
         return
@@ -768,472 +694,660 @@ def display_financial_reports(config: Dict[str, Any]):
         earliest_date = df[date_col].min()
         date_range = f"{earliest_date.strftime('%Y-%m-%d')} to {latest_date.strftime('%Y-%m-%d')}"
         
-        # Create metrics row
+        # Create metrics row with enhanced styling
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("📊 Total", len(df))
+            create_metric_card(
+                "📊 Total Announcements",
+                len(df),
+                "Total number of announcements in the database"
+            )
         with col2:
-            st.metric("🏢 Companies", len(df['Symbol'].unique()) if 'Symbol' in df.columns else "N/A")
+            create_metric_card(
+                "🏢 Companies",
+                len(df['Symbol'].unique()) if 'Symbol' in df.columns else "N/A",
+                "Number of unique companies"
+            )
         with col3:
-            st.metric("📁 Categories", len(df['Category'].unique()) if 'Category' in df.columns else "N/A")
+            create_metric_card(
+                "📁 Categories",
+                len(df['Category'].unique()) if 'Category' in df.columns else "N/A",
+                "Number of announcement categories"
+            )
         with col4:
-            st.metric("📅 Date Range", date_range)
-    
-    # Create tabs for different views
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Summary", "📰 Recent", "🏢 Company", "📈 Analysis", "🤖 AI Analysis"])
+            create_metric_card(
+                "📅 Date Range",
+                date_range,
+                "Coverage period of announcements"
+            )
     
     with tab1:
-        st.markdown("### 📊 Announcements Summary")
-        
-        # Create two columns for layout
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Display recent announcements count
-            if date_col:
-                days_back = 7
-                cutoff_date = datetime.now() - timedelta(days=days_back)
-                recent_count = len(df[df[date_col] >= cutoff_date])
-                st.metric(f"Announcements in last {days_back} days", recent_count)
-            
-            # Display top categories
-            if 'Category' in df.columns:
-                st.markdown("**Top Announcement Categories**")
-                category_counts = df['Category'].value_counts().head(5).reset_index()
-                category_counts.columns = ['Category', 'Count']
-                
-                fig = px.bar(
-                    category_counts,
-                    x='Count',
-                    y='Category',
-                    orientation='h',
-                    title='Top 5 Categories',
-                    labels={'Count': 'Number of Announcements', 'Category': 'Category'}
-                )
-                st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            # Display top companies
-            if 'Symbol' in df.columns:
-                st.markdown("**Top Companies by Announcements**")
-                company_counts = df['Symbol'].value_counts().head(5).reset_index()
-                company_counts.columns = ['Symbol', 'Count']
-                
-                fig = px.bar(
-                    company_counts,
-                    x='Count',
-                    y='Symbol',
-                    orientation='h',
-                    title='Top 5 Companies',
-                    labels={'Count': 'Number of Announcements', 'Symbol': 'Company'}
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Display announcements over time (last 30 days)
-            if date_col:
-                st.markdown("**Announcements Over Time (Last 30 Days)**")
-                days_back = 30
-                cutoff_date = datetime.now() - timedelta(days=days_back)
-                recent_df = df[df[date_col] >= cutoff_date].copy()
-                
-                if not recent_df.empty:
-                    recent_df['Date_Only'] = recent_df[date_col].dt.date
-                    time_series = recent_df.groupby('Date_Only').size().reset_index()
-                    time_series.columns = ['Date', 'Count']
-                    
-                    fig = px.line(
-                        time_series,
-                        x='Date',
-                        y='Count',
-                        title='Announcements Over Time',
-                        labels={'Date': 'Date', 'Count': 'Number of Announcements'}
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("No announcements in the last 30 days.")
+        display_summary_tab(df, date_col)
     
     with tab2:
-        st.markdown("### 📰 Recent Announcements")
-        
-        # Create search and filter section
-        with st.expander("🔍 Search & Filters", expanded=False):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Date range filter
-                if date_col:
-                    days_back = st.slider("Show announcements from the last N days:", 1, 90, 7, key="recent_days_slider")
-                    cutoff_date = datetime.now() - timedelta(days=days_back)
-                else:
-                    days_back = None
-                    cutoff_date = None
-                
-                # Category filter
-                if 'Category' in df.columns:
-                    categories = ['All'] + sorted(df['Category'].unique().tolist())
-                    selected_category = st.selectbox("Filter by category:", categories, key="recent_category_filter")
-                else:
-                    selected_category = None
-            
-            with col2:
-                # Company filter
-                if 'Symbol' in df.columns:
-                    companies = ['All'] + sorted(df['Symbol'].unique().tolist())
-                    selected_company = st.selectbox("Filter by company:", companies, key="recent_company_filter")
-                else:
-                    selected_company = None
-                
-                # Text search
-                search_term = st.text_input("Search in announcements:", key="recent_search_input")
-        
-        # Apply filters
-        filtered_df = df.copy()
-        
-        if date_col and cutoff_date:
-            filtered_df = filtered_df[filtered_df[date_col] >= cutoff_date]
-        
-        if selected_category and selected_category != 'All':
-            filtered_df = filtered_df[filtered_df['Category'] == selected_category]
-        
-        if selected_company and selected_company != 'All':
-            filtered_df = filtered_df[filtered_df['Symbol'] == selected_company]
-        
-        if search_term:
-            filtered_df = filter_announcements(filtered_df, search_term=search_term)
-        
-        # Sort by date
-        if date_col:
-            filtered_df = filtered_df.sort_values(by=date_col, ascending=False)
-        
-        # Display results
-        if not filtered_df.empty:
-            st.markdown(f"**Found {len(filtered_df)} announcements**")
-            
-            # Create a more user-friendly display
-            for idx, row in filtered_df.iterrows():
-                with st.expander(f"{row['Symbol'] if 'Symbol' in row.index else 'Unknown'} - {row[date_col].strftime('%Y-%m-%d') if date_col else 'No date'}", expanded=False):
-                    display_announcement_details(row, date_col)
-        else:
-            st.info("No announcements found with the selected filters.")
+        display_recent_tab(df, date_col)
     
     with tab3:
-        st.markdown("### 🏢 Company Specific Announcements")
-        
-        # Company selection
-        if 'Symbol' in df.columns:
-            companies = sorted(df['Symbol'].unique().tolist())
-            selected_company = st.selectbox("Select company:", companies, key="company_specific_company")
-            
-            # Date range selection
-            if date_col:
-                col1, col2 = st.columns(2)
-                with col1:
-                    start_date = st.date_input("From date:", value=earliest_date, key="company_specific_start_date")
-                with col2:
-                    end_date = st.date_input("To date:", value=latest_date, key="company_specific_end_date")
-            else:
-                start_date = None
-                end_date = None
-            
-            # Category filter
-            if 'Category' in df.columns:
-                categories = ['All'] + sorted(df['Category'].unique().tolist())
-                selected_category = st.selectbox("Filter by category:", categories, key="company_specific_category")
-            else:
-                selected_category = None
-            
-            # Apply filters
-            company_df = filter_announcements(
-                df, 
-                company=selected_company,
-                category=selected_category if selected_category != 'All' else None,
-                start_date=start_date,
-                end_date=end_date
-            )
-            
-            # Display company summary
-            if not company_df.empty:
-                st.markdown(f"**{selected_company} - Announcement Summary**")
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Announcements", len(company_df))
-                with col2:
-                    if date_col:
-                        latest = company_df[date_col].max()
-                        st.metric("Latest Announcement", latest.strftime('%Y-%m-%d'))
-                with col3:
-                    if 'Category' in company_df.columns:
-                        categories = company_df['Category'].unique()
-                        st.metric("Categories", len(categories))
-                
-                # Display announcements
-                st.markdown("**Announcements**")
-                for idx, row in company_df.iterrows():
-                    with st.expander(f"{row[date_col].strftime('%Y-%m-%d') if date_col else 'No date'} - {row['Category'] if 'Category' in row.index else 'No category'}", expanded=False):
-                        display_announcement_details(row, date_col)
-            else:
-                st.info(f"No announcements found for {selected_company} with the selected filters.")
-        else:
-            st.error("Company data not available in the announcements file.")
+        display_company_tab(df, date_col)
     
     with tab4:
-        st.markdown("### 📈 Announcements Analysis")
-        
-        if not df.empty:
-            # Create tabs for different analyses
-            analysis_tab1, analysis_tab2, analysis_tab3 = st.tabs(["Categories", "Companies", "Time Series"])
-            
-            with analysis_tab1:
-                # Analyze announcements by category
-                if 'Category' in df.columns:
-                    st.markdown("**Announcements by Category**")
-                    
-                    # Allow user to select number of categories to display
-                    top_n = st.slider("Number of categories to display:", 5, 30, 10, key="category_analysis_top_n")
-                    
-                    category_counts = df['Category'].value_counts().nlargest(top_n).reset_index()
-                    category_counts.columns = ['Category', 'Count']
-                    
-                    # Create a pie chart
-                    fig_pie = px.pie(
-                        category_counts, 
-                        values='Count', 
-                        names='Category',
-                        title=f'Top {top_n} Announcement Categories'
-                    )
-                    st.plotly_chart(fig_pie, use_container_width=True)
-                    
-                    # Create a bar chart
-                    fig_bar = px.bar(
-                        category_counts,
-                        x='Category',
-                        y='Count',
-                        title=f'Top {top_n} Announcement Categories',
-                        labels={'Category': 'Category', 'Count': 'Number of Announcements'}
-                    )
-                    st.plotly_chart(fig_bar, use_container_width=True)
-                else:
-                    st.info("Category data not available for analysis.")
-            
-            with analysis_tab2:
-                # Analyze announcements by company
-                if 'Symbol' in df.columns:
-                    st.markdown("**Announcements by Company**")
-                    
-                    # Allow user to select number of companies to display
-                    top_n = st.slider("Number of companies to display:", 5, 30, 10, key="company_analysis_top_n")
-                    
-                    company_counts = df['Symbol'].value_counts().nlargest(top_n).reset_index()
-                    company_counts.columns = ['Symbol', 'Count']
-                    
-                    # Create a bar chart
-                    fig = px.bar(
-                        company_counts,
-                        x='Symbol',
-                        y='Count',
-                        title=f'Top {top_n} Companies by Number of Announcements',
-                        labels={'Symbol': 'Company Symbol', 'Count': 'Number of Announcements'}
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Display table of top companies
-                    st.markdown("**Top Companies Table**")
-                    st.dataframe(company_counts, use_container_width=True)
-                else:
-                    st.info("Company data not available for analysis.")
-            
-            with analysis_tab3:
-                # Analyze announcements over time
-                if date_col:
-                    st.markdown("**Announcements Over Time**")
-                    
-                    # Allow user to select time period
-                    time_period = st.selectbox(
-                        "Select time period:",
-                        ["Daily", "Weekly", "Monthly", "Yearly"],
-                        key="time_series_period"
-                    )
-                    
-                    # Group by date and count
-                    df['Date_Only'] = df[date_col].dt.date
-                    
-                    if time_period == "Daily":
-                        time_series = df.groupby('Date_Only').size().reset_index(name='Count')
-                        time_series.columns = ['Date', 'Count']
-                    elif time_period == "Weekly":
-                        df['Week'] = df[date_col].dt.isocalendar().week
-                        df['Year'] = df[date_col].dt.isocalendar().year
-                        time_series = df.groupby(['Year', 'Week']).size().reset_index(name='Count')
-                        time_series['Date'] = time_series.apply(
-                            lambda x: f"{x['Year']}-W{x['Week']}", axis=1
-                        )
-                        time_series = time_series[['Date', 'Count']]
-                    elif time_period == "Monthly":
-                        df['Month'] = df[date_col].dt.to_period('M')
-                        time_series = df.groupby('Month').size().reset_index(name='Count')
-                        time_series['Date'] = time_series['Month'].astype(str)
-                        time_series = time_series[['Date', 'Count']]
-                    else:  # Yearly
-                        df['Year'] = df[date_col].dt.year
-                        time_series = df.groupby('Year').size().reset_index(name='Count')
-                        time_series['Date'] = time_series['Year'].astype(str)
-                        time_series = time_series[['Date', 'Count']]
-                    
-                    # Create a line chart
-                    fig = px.line(
-                        time_series,
-                        x='Date',
-                        y='Count',
-                        title=f'Announcements Over Time ({time_period})',
-                        labels={'Date': 'Date', 'Count': 'Number of Announcements'}
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Display table of time series data
-                    st.markdown("**Time Series Data**")
-                    st.dataframe(time_series, use_container_width=True)
-                else:
-                    st.info("Date data not available for time series analysis.")
-        else:
-            st.info("No data available for analysis.")
-
+        display_analysis_tab(df, date_col)
+    
     with tab5:
-        st.markdown("### 🤖 AI Financial Report Analysis")
+        display_ai_analysis_tab(df, date_col)
+    
+    with tab6:
+        display_settings_tab()
+
+def display_summary_tab(df: pd.DataFrame, date_col: str):
+    """Display summary tab with enhanced visualizations."""
+    st.markdown("### 📊 Announcements Summary")
+    
+    # Create two columns for layout
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Display recent announcements count with trend
+        if date_col:
+            days_back = 7
+            cutoff_date = datetime.now() - timedelta(days=days_back)
+            recent_count = len(df[df[date_col] >= cutoff_date])
+            prev_count = len(df[(df[date_col] >= cutoff_date - timedelta(days=days_back)) & 
+                              (df[date_col] < cutoff_date)])
+            trend = recent_count - prev_count
+            trend_icon = "📈" if trend > 0 else "📉" if trend < 0 else "➡️"
+            
+            create_metric_card(
+                f"Announcements in last {days_back} days",
+                f"{recent_count} {trend_icon}",
+                f"Change from previous period: {trend:+d}"
+            )
         
-        if not st.session_state.get('huggingface_api_key'):
-            st.warning("Please configure your Hugging Face API key in the sidebar to use the AI analysis feature.")
-            st.markdown("""
-            To get a Hugging Face API key:
-            1. Go to [Hugging Face](https://huggingface.co/)
-            2. Create an account or sign in
-            3. Go to your profile settings
-            4. Navigate to "Access Tokens"
-            5. Create a new token with read access
-            6. Copy the token and paste it in the sidebar
-            """)
-            return
+        # Display top categories with interactive chart
+        if 'Category' in df.columns:
+            st.markdown("**Top Announcement Categories**")
+            category_counts = df['Category'].value_counts().head(5).reset_index()
+            category_counts.columns = ['Category', 'Count']
+            
+            fig = px.bar(
+                category_counts,
+                x='Count',
+                y='Category',
+                orientation='h',
+                title='Top 5 Categories',
+                labels={'Count': 'Number of Announcements', 'Category': 'Category'},
+                color='Count',
+                color_continuous_scale='Viridis'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # Display top companies with enhanced visualization
+        if 'Symbol' in df.columns:
+            st.markdown("**Top Companies by Announcements**")
+            company_counts = df['Symbol'].value_counts().head(5).reset_index()
+            company_counts.columns = ['Symbol', 'Count']
+            
+            fig = px.bar(
+                company_counts,
+                x='Count',
+                y='Symbol',
+                orientation='h',
+                title='Top 5 Companies',
+                labels={'Count': 'Number of Announcements', 'Symbol': 'Company'},
+                color='Count',
+                color_continuous_scale='Plasma'
+            )
+            st.plotly_chart(fig, use_container_width=True)
         
-        # Get enhanced company options with signals
-        company_options, default_companies = enhance_company_selection(df)
-        
-        # Display buy signals summary
-        buy_signals = get_latest_buy_signals()
-        if buy_signals:
-            st.markdown("#### 📈 Latest Buy Signals")
-            signals_summary = ""
-            for symbol, signal in list(buy_signals.items())[:5]:  # Show top 5 signals
-                strength = "🔥" if signal['signal_type'] == 'Strong Buy' else "✨"
-                confidence = "⭐" * ({"High": 3, "Medium": 2, "Low": 1}.get(signal['confidence'], 2))
-                price_target = f" (Target: {signal.get('price_target', 'N/A')})" if signal.get('price_target') else ""
-                signals_summary += f"- {strength} **{symbol}**: {signal['signal_type']}{price_target} {confidence}\n"
-            st.markdown(signals_summary)
-        
-        st.markdown("#### 📊 Select Companies for Analysis")
+        # Display announcements over time with enhanced visualization
+        if date_col:
+            st.markdown("**Announcements Over Time (Last 30 Days)**")
+            days_back = 30
+            cutoff_date = datetime.now() - timedelta(days=days_back)
+            recent_df = df[df[date_col] >= cutoff_date].copy()
+            
+            if not recent_df.empty:
+                recent_df['Date_Only'] = recent_df[date_col].dt.date
+                time_series = recent_df.groupby('Date_Only').size().reset_index()
+                time_series.columns = ['Date', 'Count']
+                
+                # Add 7-day moving average
+                time_series['MA7'] = time_series['Count'].rolling(window=7).mean()
+                
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=time_series['Date'],
+                    y=time_series['Count'],
+                    name='Daily Count',
+                    marker_color='#636EFA'
+                ))
+                fig.add_trace(go.Scatter(
+                    x=time_series['Date'],
+                    y=time_series['MA7'],
+                    name='7-Day MA',
+                    line=dict(color='#FFA15A', width=2)
+                ))
+                
+                fig.update_layout(
+                    title='Announcements Over Time',
+                    xaxis_title='Date',
+                    yaxis_title='Number of Announcements',
+                    hovermode='x unified',
+                    showlegend=True
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No announcements in the last 30 days.")
+
+def display_recent_tab(df: pd.DataFrame, date_col: str):
+    """Display recent announcements tab with enhanced filtering."""
+    st.markdown("### 📰 Recent Announcements")
+    
+    # Create search and filter section with enhanced UI
+    with st.expander("🔍 Advanced Search & Filters", expanded=True):
         col1, col2 = st.columns(2)
         
         with col1:
-            default_idx1 = next(
-                (i for i, opt in enumerate(company_options) 
-                 if opt["value"] == default_companies[0]
-                ), 0) if default_companies else 0
+            # Date range filter with enhanced options
+            if date_col:
+                days_back = st.slider(
+                    "Show announcements from the last N days:",
+                    1, 90, 7,
+                    key="recent_days_slider",
+                    help="Select the number of days to look back"
+                )
+                cutoff_date = datetime.now() - timedelta(days=days_back)
+            else:
+                days_back = None
+                cutoff_date = None
             
-            company1 = st.selectbox(
-                "First Company:",
-                options=[opt["value"] for opt in company_options],
-                format_func=lambda x: next(
-                    opt["label"] for opt in company_options if opt["value"] == x
-                ),
-                index=default_idx1,
-                key="ai_company1"
-            )
+            # Category filter with search
+            if 'Category' in df.columns:
+                categories = ['All'] + sorted(df['Category'].unique().tolist())
+                selected_category = st.selectbox(
+                    "Filter by category:",
+                    categories,
+                    key="recent_category_filter",
+                    help="Select a specific category or view all"
+                )
+            else:
+                selected_category = None
         
         with col2:
-            # Allow selecting the same company for second report
-            default_idx2 = next(
-                (i for i, opt in enumerate(company_options) 
-                 if len(default_companies) > 1 and opt["value"] == default_companies[1]
-                ), None)
+            # Company filter with search
+            if 'Symbol' in df.columns:
+                companies = ['All'] + sorted(df['Symbol'].unique().tolist())
+                selected_company = st.selectbox(
+                    "Filter by company:",
+                    companies,
+                    key="recent_company_filter",
+                    help="Select a specific company or view all"
+                )
+            else:
+                selected_company = None
             
-            company2 = st.selectbox(
-                "Second Company (Optional):",
-                options=["None"] + [opt["value"] for opt in company_options],
-                format_func=lambda x: "None" if x == "None" else next(
-                    opt["label"] for opt in company_options if opt["value"] == x
-                ),
-                index=1 if default_idx2 is not None else 0,
-                key="ai_company2"
+            # Enhanced text search
+            search_term = st.text_input(
+                "Search in announcements:",
+                key="recent_search_input",
+                help="Search for specific terms in announcement content"
+            )
+    
+    # Apply filters
+    filtered_df = df.copy()
+    
+    if date_col and cutoff_date:
+        filtered_df = filtered_df[filtered_df[date_col] >= cutoff_date]
+    
+    if selected_category and selected_category != 'All':
+        filtered_df = filtered_df[filtered_df['Category'] == selected_category]
+    
+    if selected_company and selected_company != 'All':
+        filtered_df = filtered_df[filtered_df['Symbol'] == selected_company]
+    
+    if search_term:
+        filtered_df = filter_announcements(filtered_df, search_term=search_term)
+    
+    # Sort by date
+    if date_col:
+        filtered_df = filtered_df.sort_values(by=date_col, ascending=False)
+    
+    # Display results with enhanced UI
+    if not filtered_df.empty:
+        st.markdown(f"**Found {len(filtered_df)} announcements**")
+        
+        # Add export button
+        if st.button("📥 Export Results", key="export_recent"):
+            csv = filtered_df.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name="filtered_announcements.csv",
+                mime="text/csv"
             )
         
-        # Add information about comparing same company
-        if company1 == company2:
-            st.info("📌 You've selected the same company for both reports. This allows you to compare different reports from the same company.")
+        # Create a more user-friendly display with enhanced styling
+        for idx, row in filtered_df.iterrows():
+            with st.expander(
+                f"{row['Symbol'] if 'Symbol' in row.index else 'Unknown'} - {row[date_col].strftime('%Y-%m-%d') if date_col else 'No date'}",
+                expanded=False
+            ):
+                display_announcement_details(row, date_col)
+    else:
+        st.info("No announcements found with the selected filters.")
+
+def display_company_tab(df: pd.DataFrame, date_col: str):
+    """Display company-specific tab with enhanced analysis."""
+    st.markdown("### 🏢 Company Specific Announcements")
+    
+    # Company selection with enhanced UI
+    if 'Symbol' in df.columns:
+        companies = sorted(df['Symbol'].unique().tolist())
+        selected_company = st.selectbox(
+            "Select company:",
+            companies,
+            key="company_specific_company",
+            help="Select a company to view its announcements"
+        )
         
-        # Auto-select reports for company1
-        company1_reports, report1_idx = auto_select_reports(df, company1)
-        if not company1_reports.empty:
-            st.markdown(f"#### 📄 Reports for {company1}")
-            
-            report1_options = company1_reports.apply(
-                lambda x: f"{x[date_col].strftime('%Y-%m-%d')} - {x['Subject'] if 'Subject' in x.index and pd.notna(x['Subject']) else 'No Subject'}",
-                axis=1
-            ).tolist()
-            
-            # Convert indices to regular Python integers for Streamlit
-            report_indices = list(range(len(report1_options)))
-            
-            # Ensure report1_idx is valid
-            report1_idx = max(0, min(report1_idx, len(report1_options) - 1))
-            
-            selected_report1_idx = st.selectbox(
-                f"Select report (auto-selected most recent):",
-                options=report_indices,
-                format_func=lambda x: "📌 " + report1_options[x] if x == report1_idx else report1_options[x],
-                index=report1_idx,
-                key="ai_report1"
+        # Date range selection with enhanced UI
+        if date_col:
+            col1, col2 = st.columns(2)
+            with col1:
+                start_date = st.date_input(
+                    "From date:",
+                    value=df[date_col].min(),
+                    key="company_specific_start_date",
+                    help="Select the start date for the analysis"
+                )
+            with col2:
+                end_date = st.date_input(
+                    "To date:",
+                    value=df[date_col].max(),
+                    key="company_specific_end_date",
+                    help="Select the end date for the analysis"
+                )
+        else:
+            start_date = None
+            end_date = None
+        
+        # Category filter with enhanced UI
+        if 'Category' in df.columns:
+            categories = ['All'] + sorted(df['Category'].unique().tolist())
+            selected_category = st.selectbox(
+                "Filter by category:",
+                categories,
+                key="company_specific_category",
+                help="Filter announcements by category"
             )
+        else:
+            selected_category = None
+        
+        # Apply filters
+        company_df = filter_announcements(
+            df, 
+            company=selected_company,
+            category=selected_category if selected_category != 'All' else None,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        # Display company summary with enhanced metrics
+        if not company_df.empty:
+            st.markdown(f"**{selected_company} - Announcement Summary**")
             
-            # Show report preview with full Subject
-            with st.expander("📄 Preview Selected Report", expanded=False):
-                display_announcement_details(company1_reports.iloc[selected_report1_idx], date_col)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                create_metric_card(
+                    "Total Announcements",
+                    len(company_df),
+                    "Total number of announcements for this company"
+                )
+            with col2:
+                if date_col:
+                    latest = company_df[date_col].max()
+                    create_metric_card(
+                        "Latest Announcement",
+                        latest.strftime('%Y-%m-%d'),
+                        "Date of the most recent announcement"
+                    )
+            with col3:
+                if 'Category' in company_df.columns:
+                    categories = company_df['Category'].unique()
+                    create_metric_card(
+                        "Categories",
+                        len(categories),
+                        "Number of different announcement categories"
+                    )
             
-            # Auto-select reports for company2 if selected
-            if company2 != "None":
-                company2_reports, report2_idx = auto_select_reports(df, company2)
-                if not company2_reports.empty:
-                    st.markdown(f"#### 📄 Reports for {company2}")
-                    
-                    # If same company is selected, exclude the first selected report
-                    if company1 == company2:
-                        company2_reports = company2_reports.drop(company2_reports.index[selected_report1_idx])
-                        if not company2_reports.empty:
-                            report2_options = company2_reports.apply(
-                                lambda x: f"{x[date_col].strftime('%Y-%m-%d')} - {x['Subject'] if 'Subject' in x.index and pd.notna(x['Subject']) else 'No Subject'}",
-                                axis=1
-                            ).tolist()
-                            
-                            # Convert indices to regular Python integers for Streamlit
-                            report2_indices = list(range(len(report2_options)))
-                            
-                            # Ensure report2_idx is valid
-                            report2_idx = max(0, min(report2_idx, len(report2_options) - 1))
-                            
-                            selected_report2_idx = st.selectbox(
-                                f"Select report (auto-selected most recent):",
-                                options=report2_indices,
-                                format_func=lambda x: "📌 " + report2_options[x] if x == report2_idx else report2_options[x],
-                                index=report2_idx,
-                                key="ai_report2"
-                            )
-                            
-                            # Show report preview with full Subject
-                            with st.expander("📄 Preview Selected Report", expanded=False):
-                                display_announcement_details(company2_reports.iloc[selected_report2_idx], date_col)
-                        else:
-                            st.warning("No additional reports available for comparison.")
-                            selected_report2_idx = None
-                    else:
-                        # Regular flow for different companies
+            # Add export button
+            if st.button("📥 Export Company Data", key="export_company"):
+                csv = company_df.to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name=f"{selected_company}_announcements.csv",
+                    mime="text/csv"
+                )
+            
+            # Display announcements with enhanced UI
+            st.markdown("**Announcements**")
+            for idx, row in company_df.iterrows():
+                with st.expander(
+                    f"{row[date_col].strftime('%Y-%m-%d') if date_col else 'No date'} - {row['Category'] if 'Category' in row.index else 'No category'}",
+                    expanded=False
+                ):
+                    display_announcement_details(row, date_col)
+        else:
+            st.info(f"No announcements found for {selected_company} with the selected filters.")
+    else:
+        st.error("Company data not available in the announcements file.")
+
+def display_analysis_tab(df: pd.DataFrame, date_col: str):
+    """Display analysis tab with enhanced visualizations."""
+    st.markdown("### 📈 Announcements Analysis")
+    
+    if not df.empty:
+        # Create tabs for different analyses
+        analysis_tab1, analysis_tab2, analysis_tab3 = st.tabs([
+            "Categories", 
+            "Companies", 
+            "Time Series"
+        ])
+        
+        with analysis_tab1:
+            display_category_analysis(df)
+        
+        with analysis_tab2:
+            display_company_analysis(df)
+        
+        with analysis_tab3:
+            display_time_series_analysis(df, date_col)
+    else:
+        st.info("No data available for analysis.")
+
+def display_category_analysis(df: pd.DataFrame):
+    """Display category analysis with enhanced visualizations."""
+    if 'Category' in df.columns:
+        st.markdown("**Announcements by Category**")
+        
+        # Allow user to select number of categories to display
+        top_n = st.slider(
+            "Number of categories to display:",
+            5, 30, 10,
+            key="category_analysis_top_n",
+            help="Select how many categories to show in the analysis"
+        )
+        
+        category_counts = df['Category'].value_counts().nlargest(top_n).reset_index()
+        category_counts.columns = ['Category', 'Count']
+        
+        # Create a pie chart with enhanced styling
+        fig_pie = px.pie(
+            category_counts, 
+            values='Count', 
+            names='Category',
+            title=f'Top {top_n} Announcement Categories',
+            color_discrete_sequence=px.colors.qualitative.Set3
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
+        
+        # Create a bar chart with enhanced styling
+        fig_bar = px.bar(
+            category_counts,
+            x='Category',
+            y='Count',
+            title=f'Top {top_n} Announcement Categories',
+            labels={'Category': 'Category', 'Count': 'Number of Announcements'},
+            color='Count',
+            color_continuous_scale='Viridis'
+        )
+        st.plotly_chart(fig_bar, use_container_width=True)
+    else:
+        st.info("Category data not available for analysis.")
+
+def display_company_analysis(df: pd.DataFrame):
+    """Display company analysis with enhanced visualizations."""
+    if 'Symbol' in df.columns:
+        st.markdown("**Announcements by Company**")
+        
+        # Allow user to select number of companies to display
+        top_n = st.slider(
+            "Number of companies to display:",
+            5, 30, 10,
+            key="company_analysis_top_n",
+            help="Select how many companies to show in the analysis"
+        )
+        
+        company_counts = df['Symbol'].value_counts().nlargest(top_n).reset_index()
+        company_counts.columns = ['Symbol', 'Count']
+        
+        # Create a bar chart with enhanced styling
+        fig = px.bar(
+            company_counts,
+            x='Symbol',
+            y='Count',
+            title=f'Top {top_n} Companies by Number of Announcements',
+            labels={'Symbol': 'Company Symbol', 'Count': 'Number of Announcements'},
+            color='Count',
+            color_continuous_scale='Plasma'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Display table of top companies with enhanced styling
+        st.markdown("**Top Companies Table**")
+        st.dataframe(
+            company_counts,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                'Symbol': st.column_config.TextColumn("Symbol", width="small"),
+                'Count': st.column_config.NumberColumn("Count", width="small")
+            }
+        )
+    else:
+        st.info("Company data not available for analysis.")
+
+def display_time_series_analysis(df: pd.DataFrame, date_col: str):
+    """Display time series analysis with enhanced visualizations."""
+    if date_col:
+        st.markdown("**Announcements Over Time**")
+        
+        # Allow user to select time period
+        time_period = st.selectbox(
+            "Select time period:",
+            ["Daily", "Weekly", "Monthly", "Yearly"],
+            key="time_series_period",
+            help="Select the time period for the analysis"
+        )
+        
+        # Group by date and count
+        df['Date_Only'] = df[date_col].dt.date
+        
+        if time_period == "Daily":
+            time_series = df.groupby('Date_Only').size().reset_index(name='Count')
+            time_series.columns = ['Date', 'Count']
+        elif time_period == "Weekly":
+            df['Week'] = df[date_col].dt.isocalendar().week
+            df['Year'] = df[date_col].dt.isocalendar().year
+            time_series = df.groupby(['Year', 'Week']).size().reset_index(name='Count')
+            time_series['Date'] = time_series.apply(
+                lambda x: f"{x['Year']}-W{x['Week']}", axis=1
+            )
+            time_series = time_series[['Date', 'Count']]
+        elif time_period == "Monthly":
+            df['Month'] = df[date_col].dt.to_period('M')
+            time_series = df.groupby('Month').size().reset_index(name='Count')
+            time_series['Date'] = time_series['Month'].astype(str)
+            time_series = time_series[['Date', 'Count']]
+        else:  # Yearly
+            df['Year'] = df[date_col].dt.year
+            time_series = df.groupby('Year').size().reset_index(name='Count')
+            time_series['Date'] = time_series['Year'].astype(str)
+            time_series = time_series[['Date', 'Count']]
+        
+        # Create a line chart with enhanced styling
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=time_series['Date'],
+            y=time_series['Count'],
+            mode='lines+markers',
+            name='Count',
+            line=dict(color='#636EFA', width=2),
+            marker=dict(size=8)
+        ))
+        
+        # Add moving average
+        if len(time_series) > 7:
+            time_series['MA7'] = time_series['Count'].rolling(window=7).mean()
+            fig.add_trace(go.Scatter(
+                x=time_series['Date'],
+                y=time_series['MA7'],
+                name='7-Period MA',
+                line=dict(color='#FFA15A', width=2, dash='dash')
+            ))
+        
+        fig.update_layout(
+            title=f'Announcements Over Time ({time_period})',
+            xaxis_title='Date',
+            yaxis_title='Number of Announcements',
+            hovermode='x unified',
+            showlegend=True,
+            template='plotly_white'
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Display table of time series data with enhanced styling
+        st.markdown("**Time Series Data**")
+        st.dataframe(
+            time_series,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                'Date': st.column_config.TextColumn("Date", width="medium"),
+                'Count': st.column_config.NumberColumn("Count", width="small")
+            }
+        )
+    else:
+        st.info("Date data not available for time series analysis.")
+
+def display_ai_analysis_tab(df: pd.DataFrame, date_col: str):
+    """Display AI analysis tab with enhanced features."""
+    st.markdown("### 🤖 AI Financial Report Analysis")
+    
+    if not st.session_state.get('huggingface_api_key'):
+        st.warning("Please configure your Hugging Face API key in the sidebar to use the AI analysis feature.")
+        st.markdown("""
+        To get a Hugging Face API key:
+        1. Go to [Hugging Face](https://huggingface.co/)
+        2. Create an account or sign in
+        3. Go to your profile settings
+        4. Navigate to "Access Tokens"
+        5. Create a new token with read access
+        6. Copy the token and paste it in the sidebar
+        """)
+        return
+    
+    # Get enhanced company options with signals
+    company_options, default_companies = enhance_company_selection(df)
+    
+    # Display buy signals summary with enhanced UI
+    buy_signals = get_latest_buy_signals()
+    if buy_signals:
+        st.markdown("#### 📈 Latest Buy Signals")
+        signals_summary = ""
+        for symbol, signal in list(buy_signals.items())[:5]:  # Show top 5 signals
+            strength = "🔥" if signal['signal_type'] == 'Strong Buy' else "✨"
+            confidence = "⭐" * ({"High": 3, "Medium": 2, "Low": 1}.get(signal['confidence'], 2))
+            price_target = f" (Target: {signal.get('price_target', 'N/A')})" if signal.get('price_target') else ""
+            signals_summary += f"- {strength} **{symbol}**: {signal['signal_type']}{price_target} {confidence}\n"
+        st.markdown(signals_summary)
+    
+    # Company selection with enhanced UI
+    st.markdown("#### 📊 Select Companies for Analysis")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        default_idx1 = next(
+            (i for i, opt in enumerate(company_options) 
+             if opt["value"] == default_companies[0]
+            ), 0) if default_companies else 0
+        
+        company1 = st.selectbox(
+            "First Company:",
+            options=[opt["value"] for opt in company_options],
+            format_func=lambda x: next(
+                opt["label"] for opt in company_options if opt["value"] == x
+            ),
+            index=default_idx1,
+            key="ai_company1",
+            help="Select the first company for analysis"
+        )
+    
+    with col2:
+        # Allow selecting the same company for second report
+        default_idx2 = next(
+            (i for i, opt in enumerate(company_options) 
+             if len(default_companies) > 1 and opt["value"] == default_companies[1]
+            ), None)
+        
+        company2 = st.selectbox(
+            "Second Company (Optional):",
+            options=["None"] + [opt["value"] for opt in company_options],
+            format_func=lambda x: "None" if x == "None" else next(
+                opt["label"] for opt in company_options if opt["value"] == x
+            ),
+            index=1 if default_idx2 is not None else 0,
+            key="ai_company2",
+            help="Select a second company for comparison (optional)"
+        )
+    
+    # Add information about comparing same company
+    if company1 == company2:
+        st.info("📌 You've selected the same company for both reports. This allows you to compare different reports from the same company.")
+    
+    # Auto-select reports for company1
+    company1_reports, report1_idx = auto_select_reports(df, company1)
+    if not company1_reports.empty:
+        st.markdown(f"#### 📄 Reports for {company1}")
+        
+        report1_options = company1_reports.apply(
+            lambda x: f"{x[date_col].strftime('%Y-%m-%d')} - {x['Subject'] if 'Subject' in x.index and pd.notna(x['Subject']) else 'No Subject'}",
+            axis=1
+        ).tolist()
+        
+        # Convert indices to regular Python integers for Streamlit
+        report_indices = list(range(len(report1_options)))
+        
+        # Ensure report1_idx is valid
+        report1_idx = max(0, min(report1_idx, len(report1_options) - 1))
+        
+        selected_report1_idx = st.selectbox(
+            f"Select report (auto-selected most recent):",
+            options=report_indices,
+            format_func=lambda x: "📌 " + report1_options[x] if x == report1_idx else report1_options[x],
+            index=report1_idx,
+            key="ai_report1",
+            help="Select a report for analysis"
+        )
+        
+        # Show report preview with full Subject
+        with st.expander("📄 Preview Selected Report", expanded=False):
+            display_announcement_details(company1_reports.iloc[selected_report1_idx], date_col)
+        
+        # Auto-select reports for company2 if selected
+        if company2 != "None":
+            company2_reports, report2_idx = auto_select_reports(df, company2)
+            if not company2_reports.empty:
+                st.markdown(f"#### 📄 Reports for {company2}")
+                
+                # If same company is selected, exclude the first selected report
+                if company1 == company2:
+                    company2_reports = company2_reports.drop(company2_reports.index[selected_report1_idx])
+                    if not company2_reports.empty:
                         report2_options = company2_reports.apply(
                             lambda x: f"{x[date_col].strftime('%Y-%m-%d')} - {x['Subject'] if 'Subject' in x.index and pd.notna(x['Subject']) else 'No Subject'}",
                             axis=1
@@ -1250,385 +1364,417 @@ def display_financial_reports(config: Dict[str, Any]):
                             options=report2_indices,
                             format_func=lambda x: "📌 " + report2_options[x] if x == report2_idx else report2_options[x],
                             index=report2_idx,
-                            key="ai_report2"
+                            key="ai_report2",
+                            help="Select a report for comparison"
                         )
                         
                         # Show report preview with full Subject
                         with st.expander("📄 Preview Selected Report", expanded=False):
                             display_announcement_details(company2_reports.iloc[selected_report2_idx], date_col)
-                else:
-                    st.info(f"No reports found for {company2}")
-                    selected_report2_idx = None
-            else:
-                selected_report2_idx = None
-            
-            # Analysis button with loading state
-            if st.button("🔍 Analyze Reports", key="analyze_button", use_container_width=True):
-                analysis_placeholder = st.empty()
-                with st.spinner("🤖 AI is analyzing the reports... This may take a few moments."):
-                    try:
-                        # Get company 1 info
-                        company1_row = company1_reports.iloc[selected_report1_idx]
-                        company1_info = {
-                            'symbol': company1,
-                            'date': company1_row[date_col].strftime('%Y-%m-%d'),
-                            'category': company1_row['Category'],
-                            'report_type': company1_row.get('Report_Type', 'Financial Report'),
-                            'signal': buy_signals.get(company1, {})
-                        }
-                        
-                        # Get report contents
-                        report1_content = get_report_content(company1_row)
-                        
-                        # Get company 2 info if selected
-                        company2_info = None
-                        report2_content = None
-                        if selected_report2_idx is not None:
-                            company2_row = company2_reports.iloc[selected_report2_idx]
-                            company2_info = {
-                                'symbol': company2,
-                                'date': company2_row[date_col].strftime('%Y-%m-%d'),
-                                'category': company2_row['Category'],
-                                'report_type': company2_row.get('Report_Type', 'Financial Report'),
-                                'signal': buy_signals.get(company2, {})
-                            }
-                            report2_content = get_report_content(company2_row)
-                        
-                        # Get AI analysis
-                        analysis = analyze_financial_reports(
-                            report1_content,
-                            report2_content,
-                            company1_info=company1_info,
-                            company2_info=company2_info
-                        )
-                        
-                        # Display analysis results
-                        with analysis_placeholder.container():
-                            st.markdown(analysis)
-                            
-                            # Add download button for the analysis
-                            analysis_filename = f"financial_analysis_{company1}"
-                            if company2 != "None":
-                                analysis_filename += f"_vs_{company2}"
-                            analysis_filename += f"_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-                            
-                            st.download_button(
-                                label="📥 Download Analysis",
-                                data=analysis.encode(),
-                                file_name=analysis_filename,
-                                mime="text/markdown",
-                                key="download_analysis"
-                            )
-                    
-                    except Exception as e:
-                        st.error(f"Error during analysis: {str(e)}")
-                        st.error("Please try again or select different reports.")
-        else:
-            st.info(f"No reports found for {company1}")
-
-    with st.expander("🔧 Advanced Analysis Settings"):
-        # Model Selection
-        st.markdown("### 🤖 Model Selection")
-        
-        # Primary Model Selection with descriptions
-        st.markdown("#### Primary Analysis Model")
-        primary_model = st.selectbox(
-            "Select Primary Model:",
-            options=list(MODEL_OPTIONS.keys()),
-            format_func=lambda x: f"{x} - {MODEL_OPTIONS[x]['description']}",
-            help="Main model for comprehensive analysis"
-        )
-        
-        # Display model strengths
-        st.markdown("**Model Strengths:**")
-        for strength in MODEL_OPTIONS[primary_model]['strengths']:
-            st.markdown(f"- {strength}")
-        
-        # API Key configuration based on selected model
-        model_info = MODEL_OPTIONS[primary_model]
-        api_keys = load_api_keys()
-        
-        if model_info['api_type'] == "deepseek":
-            st.markdown("#### 🔑 DeepSeek API Configuration")
-            current_api_key = st.session_state.get('deepseek_api_key', api_keys.get('deepseek', ''))
-            
-            if current_api_key:
-                st.success("✅ DeepSeek API key is already configured")
-                if st.button("Change DeepSeek API Key", key="change_deepseek_key_advanced"):
-                    st.session_state.deepseek_api_key = ''
-                    api_keys['deepseek'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
-            else:
-                api_key = st.text_input(
-                    "DeepSeek API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your DeepSeek API key",
-                    key="deepseek_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    st.session_state.deepseek_api_key = api_key
-                    if api_key:
-                        success, _, message = test_model_access(api_key, "deepseek")
-                        if success:
-                            st.success(message)
-                            api_keys['deepseek'] = api_key
-                            save_api_keys(api_keys)
-                        else:
-                            st.error(message)
-        
-        elif model_info['api_type'] == "anthropic":
-            st.markdown("#### 🔑 Anthropic API Configuration")
-            current_api_key = st.session_state.get('anthropic_api_key', api_keys.get('anthropic', ''))
-            
-            if current_api_key:
-                st.success("✅ Anthropic API key is already configured")
-                if st.button("Change Anthropic API Key", key="change_anthropic_key_advanced"):
-                    st.session_state.anthropic_api_key = ''
-                    api_keys['anthropic'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
-            else:
-                api_key = st.text_input(
-                    "Anthropic API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your Anthropic API key",
-                    key="anthropic_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    st.session_state.anthropic_api_key = api_key
-                    if api_key:
-                        success, _, message = test_model_access(api_key, "anthropic")
-                        if success:
-                            st.success(message)
-                            api_keys['anthropic'] = api_key
-                            save_api_keys(api_keys)
-                        else:
-                            st.error(message)
-        
-        elif model_info['api_type'] == "openai":
-            st.markdown("#### 🔑 OpenAI API Configuration")
-            current_api_key = st.session_state.get('openai_api_key', api_keys.get('openai', ''))
-            
-            if current_api_key:
-                st.success("✅ OpenAI API key is already configured")
-                if st.button("Change OpenAI API Key", key="change_openai_key_advanced"):
-                    st.session_state.openai_api_key = ''
-                    api_keys['openai'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
-            else:
-                api_key = st.text_input(
-                    "OpenAI API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your OpenAI API key",
-                    key="openai_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    st.session_state.openai_api_key = api_key
-                    if api_key:
-                        success, _, message = test_model_access(api_key, "openai")
-                        if success:
-                            st.success(message)
-                            api_keys['openai'] = api_key
-                            save_api_keys(api_keys)
-                        else:
-                            st.error(message)
-        
-        elif model_info['api_type'] == "google":
-            st.markdown("#### 🔑 Google API Configuration")
-            current_api_key = st.session_state.get('google_api_key', api_keys.get('google', ''))
-            
-            if current_api_key:
-                st.success("✅ Google API key is already configured")
-                if st.button("Change Google API Key", key="change_google_key_advanced"):
-                    st.session_state.google_api_key = ''
-                    api_keys['google'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
-            else:
-                api_key = st.text_input(
-                    "Google API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your Google API key",
-                    key="google_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    st.session_state.google_api_key = api_key
-                    if api_key:
-                        success, _, message = test_model_access(api_key, "google")
-                        if success:
-                            st.success(message)
-                            api_keys['google'] = api_key
-                            save_api_keys(api_keys)
-                        else:
-                            st.error(message)
-        
-        elif model_info['api_type'] == "xai":
-            st.markdown("#### 🔑 xAI API Configuration")
-            
-            # Display beta status and availability note
-            if model_info.get("beta_status", False):
-                st.warning("⚠️ This model is currently in beta and requires special access")
-            
-            if "availability_note" in model_info:
-                st.info(model_info["availability_note"])
-            
-            # Add a link to join the waitlist
-            st.markdown("""
-            **To get access to the Grok model:**
-            1. Visit [xAI's website](https://x.ai/)
-            2. Join the waitlist
-            3. Once approved, you'll receive instructions to get an API key
-            """)
-            
-            current_api_key = st.session_state.get('xai_api_key', api_keys.get('xai', ''))
-            
-            if current_api_key:
-                st.success("✅ xAI API key is already configured")
-                if st.button("Change xAI API Key", key="change_xai_key_advanced"):
-                    st.session_state.xai_api_key = ''
-                    api_keys['xai'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
-            else:
-                api_key = st.text_input(
-                    "xAI API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your xAI API key",
-                    key="xai_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    st.session_state.xai_api_key = api_key
-                    if api_key:
-                        success, _, message = test_model_access(api_key, "xai")
-                        if success:
-                            st.success(message)
-                            api_keys['xai'] = api_key
-                            save_api_keys(api_keys)
-                        else:
-                            st.error(message)
-                            if "waitlist" in message.lower():
-                                st.markdown("""
-                                **It looks like you need to join the waitlist first:**
-                                1. Visit [xAI's website](https://x.ai/)
-                                2. Join the waitlist
-                                3. Once approved, you'll receive instructions to get an API key
-                                """)
-        
-        else:  # HuggingFace models
-            st.markdown("#### 🔑 Hugging Face API Configuration")
-            current_api_key = st.session_state.get('huggingface_api_key', api_keys.get('huggingface', ''))
-            
-            if current_api_key:
-                st.success("✅ Hugging Face API key is already configured")
-                if st.button("Change Hugging Face API Key", key="change_huggingface_key_advanced"):
-                    st.session_state.huggingface_api_key = ''
-                    api_keys['huggingface'] = ''
-                    save_api_keys(api_keys)
-                    st.rerun()
-            else:
-                api_key = st.text_input(
-                    "Hugging Face API Key",
-                    value=current_api_key,
-                    type="password",
-                    help="Enter your Hugging Face API key",
-                    key="huggingface_api_key_input"
-                )
-                
-                if api_key != current_api_key:
-                    if not api_key.startswith('hf_') and api_key != '':
-                        st.error("❌ Invalid API key format. Hugging Face API keys should start with 'hf_'")
                     else:
-                        st.session_state.huggingface_api_key = api_key
-                        if api_key:
-                            success, _, message = test_model_access(api_key)
-                            if success:
-                                st.success(message)
-                                api_keys['huggingface'] = api_key
-                                save_api_keys(api_keys)
-                            else:
-                                st.error(message)
+                        st.warning("No additional reports available for comparison.")
+                        selected_report2_idx = None
+                else:
+                    # Regular flow for different companies
+                    report2_options = company2_reports.apply(
+                        lambda x: f"{x[date_col].strftime('%Y-%m-%d')} - {x['Subject'] if 'Subject' in x.index and pd.notna(x['Subject']) else 'No Subject'}",
+                        axis=1
+                    ).tolist()
+                    
+                    # Convert indices to regular Python integers for Streamlit
+                    report2_indices = list(range(len(report2_options)))
+                    
+                    # Ensure report2_idx is valid
+                    report2_idx = max(0, min(report2_idx, len(report2_options) - 1))
+                    
+                    selected_report2_idx = st.selectbox(
+                        f"Select report (auto-selected most recent):",
+                        options=report2_indices,
+                        format_func=lambda x: "📌 " + report2_options[x] if x == report2_idx else report2_options[x],
+                        index=report2_idx,
+                        key="ai_report2",
+                        help="Select a report for comparison"
+                    )
+                    
+                    # Show report preview with full Subject
+                    with st.expander("📄 Preview Selected Report", expanded=False):
+                        display_announcement_details(company2_reports.iloc[selected_report2_idx], date_col)
+            else:
+                st.info(f"No reports found for {company2}")
+                selected_report2_idx = None
+        else:
+            selected_report2_idx = None
+        
+        # Analysis button with loading state and enhanced UI
+        if st.button("🔍 Analyze Reports", key="analyze_button", use_container_width=True):
+            analysis_placeholder = st.empty()
+            with st.spinner("🤖 AI is analyzing the reports... This may take a few moments."):
+                try:
+                    # Get company 1 info
+                    company1_row = company1_reports.iloc[selected_report1_idx]
+                    company1_info = {
+                        'symbol': company1,
+                        'date': company1_row[date_col].strftime('%Y-%m-%d'),
+                        'category': company1_row['Category'],
+                        'report_type': company1_row.get('Report_Type', 'Financial Report'),
+                        'signal': buy_signals.get(company1, {})
+                    }
+                    
+                    # Get report contents
+                    report1_content = get_report_content(company1_row)
+                    
+                    # Get company 2 info if selected
+                    company2_info = None
+                    report2_content = None
+                    if selected_report2_idx is not None:
+                        company2_row = company2_reports.iloc[selected_report2_idx]
+                        company2_info = {
+                            'symbol': company2,
+                            'date': company2_row[date_col].strftime('%Y-%m-%d'),
+                            'category': company2_row['Category'],
+                            'report_type': company2_row.get('Report_Type', 'Financial Report'),
+                            'signal': buy_signals.get(company2, {})
+                        }
+                        report2_content = get_report_content(company2_row)
+                    
+                    # Get AI analysis
+                    analysis = analyze_financial_reports(
+                        report1_content,
+                        report2_content,
+                        company1_info=company1_info,
+                        company2_info=company2_info
+                    )
+                    
+                    # Display analysis results with enhanced UI
+                    with analysis_placeholder.container():
+                        st.markdown(analysis)
+                        
+                        # Add download button for the analysis
+                        analysis_filename = f"financial_analysis_{company1}"
+                        if company2 != "None":
+                            analysis_filename += f"_vs_{company2}"
+                        analysis_filename += f"_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                        
+                        st.download_button(
+                            label="📥 Download Analysis",
+                            data=analysis.encode(),
+                            file_name=analysis_filename,
+                            mime="text/markdown",
+                            key="download_analysis"
+                        )
+                
+                except Exception as e:
+                    st.error(f"Error during analysis: {str(e)}")
+                    st.error("Please try again or select different reports.")
+    else:
+        st.info(f"No reports found for {company1}")
 
-        # Analysis Depth
-        st.markdown("#### Analysis Configuration")
-        analysis_depth = st.select_slider(
-            "Analysis Depth",
-            options=["Basic", "Standard", "Detailed"],
-            value="Standard",
-            help="Controls the level of detail in the analysis"
-        )
+def display_settings_tab():
+    """Display settings tab with enhanced configuration options."""
+    st.markdown("### ⚙️ Advanced Settings")
+    
+    # Model Selection
+    st.markdown("#### 🤖 Model Selection")
+    
+    # Primary Model Selection with descriptions
+    st.markdown("#### Primary Analysis Model")
+    primary_model = st.selectbox(
+        "Select Primary Model:",
+        options=list(MODEL_OPTIONS.keys()),
+        format_func=lambda x: f"{x} - {MODEL_OPTIONS[x]['description']}",
+        help="Main model for comprehensive analysis"
+    )
+    
+    # Display model strengths
+    st.markdown("**Model Strengths:**")
+    for strength in MODEL_OPTIONS[primary_model]['strengths']:
+        st.markdown(f"- {strength}")
+    
+    # API Key configuration based on selected model
+    model_info = MODEL_OPTIONS[primary_model]
+    api_keys = load_api_keys()
+    
+    if model_info['api_type'] == "deepseek":
+        st.markdown("#### 🔑 DeepSeek API Configuration")
+        current_api_key = st.session_state.get('deepseek_api_key', api_keys.get('deepseek', ''))
         
-        # Custom Prompting
-        enable_custom_prompt = st.checkbox(
-            "Enable Custom Analysis Focus",
-            help="Customize what aspects of the reports to focus on"
-        )
-        
-        if enable_custom_prompt:
-            analysis_focus = st.multiselect(
-                "Focus Areas",
-                ["Financial Metrics", "Market Position", "Risk Analysis",
-                 "Growth Potential", "Competitive Analysis", "Technical Indicators",
-                 "Valuation Metrics", "Industry Trends", "Management Quality"],
-                default=["Financial Metrics", "Risk Analysis"],
-                help="Select specific areas to focus the analysis on"
+        if current_api_key:
+            st.success("✅ DeepSeek API key is already configured")
+            if st.button("Change DeepSeek API Key", key="change_deepseek_key_advanced"):
+                st.session_state.deepseek_api_key = ''
+                api_keys['deepseek'] = ''
+                save_api_keys(api_keys)
+                st.rerun()
+        else:
+            api_key = st.text_input(
+                "DeepSeek API Key",
+                value=current_api_key,
+                type="password",
+                help="Enter your DeepSeek API key",
+                key="deepseek_api_key_input"
             )
+            
+            if api_key != current_api_key:
+                st.session_state.deepseek_api_key = api_key
+                if api_key:
+                    success, _, message = test_model_access(api_key, "deepseek")
+                    if success:
+                        st.success(message)
+                        api_keys['deepseek'] = api_key
+                        save_api_keys(api_keys)
+                    else:
+                        st.error(message)
+    
+    elif model_info['api_type'] == "anthropic":
+        st.markdown("#### 🔑 Anthropic API Configuration")
+        current_api_key = st.session_state.get('anthropic_api_key', api_keys.get('anthropic', ''))
+        
+        if current_api_key:
+            st.success("✅ Anthropic API key is already configured")
+            if st.button("Change Anthropic API Key", key="change_anthropic_key_advanced"):
+                st.session_state.anthropic_api_key = ''
+                api_keys['anthropic'] = ''
+                save_api_keys(api_keys)
+                st.rerun()
+        else:
+            api_key = st.text_input(
+                "Anthropic API Key",
+                value=current_api_key,
+                type="password",
+                help="Enter your Anthropic API key",
+                key="anthropic_api_key_input"
+            )
+            
+            if api_key != current_api_key:
+                st.session_state.anthropic_api_key = api_key
+                if api_key:
+                    success, _, message = test_model_access(api_key, "anthropic")
+                    if success:
+                        st.success(message)
+                        api_keys['anthropic'] = api_key
+                        save_api_keys(api_keys)
+                    else:
+                        st.error(message)
+    
+    elif model_info['api_type'] == "openai":
+        st.markdown("#### 🔑 OpenAI API Configuration")
+        current_api_key = st.session_state.get('openai_api_key', api_keys.get('openai', ''))
+        
+        if current_api_key:
+            st.success("✅ OpenAI API key is already configured")
+            if st.button("Change OpenAI API Key", key="change_openai_key_advanced"):
+                st.session_state.openai_api_key = ''
+                api_keys['openai'] = ''
+                save_api_keys(api_keys)
+                st.rerun()
+        else:
+            api_key = st.text_input(
+                "OpenAI API Key",
+                value=current_api_key,
+                type="password",
+                help="Enter your OpenAI API key",
+                key="openai_api_key_input"
+            )
+            
+            if api_key != current_api_key:
+                st.session_state.openai_api_key = api_key
+                if api_key:
+                    success, _, message = test_model_access(api_key, "openai")
+                    if success:
+                        st.success(message)
+                        api_keys['openai'] = api_key
+                        save_api_keys(api_keys)
+                    else:
+                        st.error(message)
+    
+    elif model_info['api_type'] == "google":
+        st.markdown("#### 🔑 Google API Configuration")
+        current_api_key = st.session_state.get('google_api_key', api_keys.get('google', ''))
+        
+        if current_api_key:
+            st.success("✅ Google API key is already configured")
+            if st.button("Change Google API Key", key="change_google_key_advanced"):
+                st.session_state.google_api_key = ''
+                api_keys['google'] = ''
+                save_api_keys(api_keys)
+                st.rerun()
+        else:
+            api_key = st.text_input(
+                "Google API Key",
+                value=current_api_key,
+                type="password",
+                help="Enter your Google API key",
+                key="google_api_key_input"
+            )
+            
+            if api_key != current_api_key:
+                st.session_state.google_api_key = api_key
+                if api_key:
+                    success, _, message = test_model_access(api_key, "google")
+                    if success:
+                        st.success(message)
+                        api_keys['google'] = api_key
+                        save_api_keys(api_keys)
+                    else:
+                        st.error(message)
+    
+    elif model_info['api_type'] == "xai":
+        st.markdown("#### 🔑 xAI API Configuration")
+        
+        # Display beta status and availability note
+        if model_info.get("beta_status", False):
+            st.warning("⚠️ This model is currently in beta and requires special access")
+        
+        if "availability_note" in model_info:
+            st.info(model_info["availability_note"])
+        
+        # Add a link to join the waitlist
+        st.markdown("""
+        **To get access to the Grok model:**
+        1. Visit [xAI's website](https://x.ai/)
+        2. Join the waitlist
+        3. Once approved, you'll receive instructions to get an API key
+        """)
+        
+        current_api_key = st.session_state.get('xai_api_key', api_keys.get('xai', ''))
+        
+        if current_api_key:
+            st.success("✅ xAI API key is already configured")
+            if st.button("Change xAI API Key", key="change_xai_key_advanced"):
+                st.session_state.xai_api_key = ''
+                api_keys['xai'] = ''
+                save_api_keys(api_keys)
+                st.rerun()
+        else:
+            api_key = st.text_input(
+                "xAI API Key",
+                value=current_api_key,
+                type="password",
+                help="Enter your xAI API key",
+                key="xai_api_key_input"
+            )
+            
+            if api_key != current_api_key:
+                st.session_state.xai_api_key = api_key
+                if api_key:
+                    success, _, message = test_model_access(api_key, "xai")
+                    if success:
+                        st.success(message)
+                        api_keys['xai'] = api_key
+                        save_api_keys(api_keys)
+                    else:
+                        st.error(message)
+                        if "waitlist" in message.lower():
+                            st.markdown("""
+                            **It looks like you need to join the waitlist first:**
+                            1. Visit [xAI's website](https://x.ai/)
+                            2. Join the waitlist
+                            3. Once approved, you'll receive instructions to get an API key
+                            """)
+    
+    else:  # HuggingFace models
+        st.markdown("#### 🔑 Hugging Face API Configuration")
+        current_api_key = st.session_state.get('huggingface_api_key', api_keys.get('huggingface', ''))
+        
+        if current_api_key:
+            st.success("✅ Hugging Face API key is already configured")
+            if st.button("Change Hugging Face API Key", key="change_huggingface_key_advanced"):
+                st.session_state.huggingface_api_key = ''
+                api_keys['huggingface'] = ''
+                save_api_keys(api_keys)
+                st.rerun()
+        else:
+            api_key = st.text_input(
+                "Hugging Face API Key",
+                value=current_api_key,
+                type="password",
+                help="Enter your Hugging Face API key",
+                key="huggingface_api_key_input"
+            )
+            
+            if api_key != current_api_key:
+                if not api_key.startswith('hf_') and api_key != '':
+                    st.error("❌ Invalid API key format. Hugging Face API keys should start with 'hf_'")
+                else:
+                    st.session_state.huggingface_api_key = api_key
+                    if api_key:
+                        success, _, message = test_model_access(api_key)
+                        if success:
+                            st.success(message)
+                            api_keys['huggingface'] = api_key
+                            save_api_keys(api_keys)
+                        else:
+                            st.error(message)
 
-        # Output Format
-        st.markdown("#### Output Configuration")
-        output_format = st.radio(
-            "Output Format",
-            ["Concise", "Detailed", "Technical"],
-            horizontal=True,
-            help="Choose the style of the analysis output"
+    # Analysis Depth
+    st.markdown("#### Analysis Configuration")
+    analysis_depth = st.select_slider(
+        "Analysis Depth",
+        options=["Basic", "Standard", "Detailed"],
+        value="Standard",
+        help="Controls the level of detail in the analysis"
+    )
+    
+    # Custom Prompting
+    enable_custom_prompt = st.checkbox(
+        "Enable Custom Analysis Focus",
+        help="Customize what aspects of the reports to focus on"
+    )
+    
+    if enable_custom_prompt:
+        analysis_focus = st.multiselect(
+            "Focus Areas",
+            ["Financial Metrics", "Market Position", "Risk Analysis",
+             "Growth Potential", "Competitive Analysis", "Technical Indicators",
+             "Valuation Metrics", "Industry Trends", "Management Quality"],
+            default=["Financial Metrics", "Risk Analysis"],
+            help="Select specific areas to focus the analysis on"
         )
-        
-        # Additional Settings
-        st.markdown("#### Additional Settings")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            temperature = st.slider(
-                "Analysis Creativity",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.7,
-                step=0.1,
-                help="Higher values make the analysis more creative but potentially less focused"
-            )
-        
-        with col2:
-            max_tokens = st.slider(
-                "Maximum Response Length",
-                min_value=500,
-                max_value=4000,
-                value=MODEL_OPTIONS[primary_model]["max_tokens"],
-                step=100,
-                help="Maximum length of the analysis response"
-            )
-        
-        # Save settings to session state
-        st.session_state.analysis_settings = {
-            "primary_model": primary_model,
-            "use_secondary": False,
-            "secondary_model": None,
-            "analysis_depth": analysis_depth,
-            "custom_focus": analysis_focus if enable_custom_prompt else None,
-            "output_format": output_format,
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
+
+    # Output Format
+    st.markdown("#### Output Configuration")
+    output_format = st.radio(
+        "Output Format",
+        ["Concise", "Detailed", "Technical"],
+        horizontal=True,
+        help="Choose the style of the analysis output"
+    )
+    
+    # Additional Settings
+    st.markdown("#### Additional Settings")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        temperature = st.slider(
+            "Analysis Creativity",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.7,
+            step=0.1,
+            help="Higher values make the analysis more creative but potentially less focused"
+        )
+    
+    with col2:
+        max_tokens = st.slider(
+            "Maximum Response Length",
+            min_value=500,
+            max_value=4000,
+            value=MODEL_OPTIONS[primary_model]["max_tokens"],
+            step=100,
+            help="Maximum length of the analysis response"
+        )
+    
+    # Save settings to session state
+    st.session_state.analysis_settings = {
+        "primary_model": primary_model,
+        "use_secondary": False,
+        "secondary_model": None,
+        "analysis_depth": analysis_depth,
+        "custom_focus": analysis_focus if enable_custom_prompt else None,
+        "output_format": output_format,
+        "temperature": temperature,
+        "max_tokens": max_tokens
+    }
 
 def test_model_access(api_key: str, model_type: str = "huggingface") -> tuple[bool, str, str]:
     """
@@ -1845,7 +1991,7 @@ def analyze_financial_reports(report1_text: str, report2_text: str = None,
     check_version_lock()
     
     # Get selected model from session state
-    selected_model = st.session_state.get('selected_model', 'Claude-3')
+    selected_model = st.session_state.get('selected_model', 'DeepSeek')
     model_info = MODEL_OPTIONS[selected_model]
     
     # Get API keys
@@ -1933,10 +2079,48 @@ Provide a detailed analysis in the following format:
 - Price targets and timeline (if applicable)
 """
         
-        if model_info["api_type"] == "anthropic":
+        if model_info["api_type"] == "deepseek":
+            # Call DeepSeek API
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": model_info["model_name"],
+                "messages": [
+                    {"role": "system", "content": "You are a professional financial analyst."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": model_info["max_tokens"],
+                "temperature": 0.7
+            }
+            
+            response = requests.post(
+                model_info["url"],
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                try:
+                    analysis = response.json()['choices'][0]['message']['content']
+                except Exception as e:
+                    return f"❌ Error parsing DeepSeek response: {str(e)}\nResponse: {response.text}"
+            else:
+                error_msg = f"⚠️ DeepSeek API request failed with status code {response.status_code}"
+                try:
+                    error_details = response.json()
+                    error_msg += f"\nDetails: {error_details}"
+                except:
+                    error_msg += f"\nResponse: {response.text}"
+                return error_msg
+        
+        elif model_info["api_type"] == "anthropic":
             # Call Anthropic API with correct format
             headers = {
-                "Authorization": f"Bearer {api_key}",  # Changed from x-api-key to Authorization
+                "x-api-key": api_key,
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json"
             }
@@ -1949,7 +2133,8 @@ Provide a detailed analysis in the following format:
                         "content": prompt
                     }
                 ],
-                "max_tokens": model_info["max_tokens"]
+                "max_tokens": model_info["max_tokens"],
+                "temperature": 0.7
             }
             
             try:
@@ -1988,44 +2173,6 @@ Provide a detailed analysis in the following format:
                 return "⏱️ Request to Anthropic API timed out. Please try again."
             except requests.exceptions.RequestException as e:
                 return f"🌐 Error making request to Anthropic API: {str(e)}"
-        
-        elif model_info["api_type"] == "deepseek":
-            # Call DeepSeek API
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            payload = {
-                "model": model_info["model_name"],
-                "messages": [
-                    {"role": "system", "content": "You are a professional financial analyst."},
-                    {"role": "user", "content": prompt}
-                ],
-                "max_tokens": model_info["max_tokens"],
-                "temperature": 0.7
-            }
-            
-            response = requests.post(
-                model_info["url"],
-                headers=headers,
-                json=payload,
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                try:
-                    analysis = response.json()['choices'][0]['message']['content']
-                except Exception as e:
-                    return f"❌ Error parsing DeepSeek response: {str(e)}\nResponse: {response.text}"
-            else:
-                error_msg = f"⚠️ DeepSeek API request failed with status code {response.status_code}"
-                try:
-                    error_details = response.json()
-                    error_msg += f"\nDetails: {error_details}"
-                except:
-                    error_msg += f"\nResponse: {response.text}"
-                return error_msg
         
         else:  # HuggingFace models
             headers = {
