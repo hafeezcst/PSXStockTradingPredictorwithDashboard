@@ -41,6 +41,7 @@ PSX_DB_PATH = PRODUCTION_DB_DIR / "psx_consolidated_data_indicators_PSX.db"
 PSX_SYM_PATH = PRODUCTION_DB_DIR / "psx_symbols.db"
 PSX_IND_DB_PATH = PRODUCTION_DB_DIR / "psx_indicators.db"
 PSX_INVESTING_DB_PATH = PRODUCTION_DB_DIR / "PSX_investing_Stocks_KMI30.db"
+PSX_SIGNALS_DB_PATH = PRODUCTION_DB_DIR / "psx_consolidated_data_indicators_PSX.db"  # Same as PSX_DB_PATH since signals are stored there
 
 # Config files
 CONFIG_JSON = CONFIG_DIR / "config.json"

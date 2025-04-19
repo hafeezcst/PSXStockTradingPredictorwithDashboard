@@ -478,7 +478,7 @@ def display_indicator_analysis(config: Dict[str, Any]):
     selected_stock = st.sidebar.selectbox("Select Stock", stock_list)
     
     # Time range selection
-    time_range = st.sidebar.slider("Time Range (days)", 30, 365, 180)
+    time_range = st.sidebar.slider("Time Range (days)", 30, 365, 180, key="indicator_time_range")
     
     # Fetch data
     stock_data = get_indicator_data(conn, selected_stock, time_range)
@@ -582,8 +582,8 @@ def display_indicator_analysis(config: Dict[str, Any]):
             create_chart_container(market_fig, "Market Condition Scores")
             
             # Market breadth
-            breadth_df = market_conditions[['date', 'advancing', 'declining', 'unchanged']]
-            breadth_df['advance_decline_ratio'] = breadth_df['advancing'] / breadth_df['declining']
+            breadth_df = market_conditions[['date', 'advancing', 'declining', 'unchanged']].copy()
+            breadth_df.loc[:, 'advance_decline_ratio'] = breadth_df['advancing'] / breadth_df['declining']
             
             breadth_fig = px.bar(
                 breadth_df,

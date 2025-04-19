@@ -2,9 +2,17 @@
 Main dashboard application for PSX Stock Trading Predictor
 """
 
-# Import streamlit first
-import streamlit as st
+# Import necessary modules for path setup first
 import os
+import sys
+from pathlib import Path
+
+# Add project root to Python path (MUST be done before any other imports)
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+# Import streamlit next
+import streamlit as st
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -28,17 +36,13 @@ st.set_page_config(
 )
 
 # Now import all other modules
-from pathlib import Path
-import sys
 from datetime import datetime, time, timedelta
 import pytz
 
-# Add project root to Python path
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
 # Import components after setting page config
+# Use absolute imports to be explicit and avoid any potential issues
 from src.data_processing.dashboard.config.settings import initialize_config
+from src.data_processing.dashboard.components.database_manager import DatabaseManager
 from src.data_processing.dashboard.components.portfolio import display_portfolio_analysis
 from src.data_processing.dashboard.components.market import display_market
 from src.data_processing.dashboard.components.charts import display_charts
@@ -568,6 +572,24 @@ def main():
     
     elif selected_page == "Analysis Tool":
         create_analysis_tool_dashboard()
+
+def initialize_config():
+    """Initialize dashboard configuration"""
+    config = {
+        "theme": "light",
+        "layout": "wide",
+        "menu_items": {
+            "Get Help": "https://github.com/yourusername/PSXStockTradingPredictorwithDashboard/issues",
+            "Report a bug": "https://github.com/yourusername/PSXStockTradingPredictorwithDashboard/issues/new",
+            "About": "PSX Stock Trading Predictor Dashboard v2.0.0"
+        },
+        "databases": {
+            "main_db_path": str(PROJECT_ROOT / "psx_consolidated_data_indicators_PSX.db"),
+            "signals_db_path": str(PROJECT_ROOT / "data" / "databases" / "production" / "PSX_investing_Stocks_KMI30.db"),
+        },
+        "database_path": str(PROJECT_ROOT / "data" / "databases" / "production" / "PSX_investing_Stocks_KMI30.db"),
+    }
+    return config
 
 if __name__ == "__main__":
     main() 

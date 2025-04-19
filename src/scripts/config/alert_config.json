@@ -6,7 +6,7 @@
         "signal_transitions": true,
         "profit_threshold": 5.0,
         "loss_threshold": -5.0,
-        "days_in_signal_threshold": 14
+        "days_in_signal_threshold": 30
     },
     "analysis": {
         "trend_detection": true,

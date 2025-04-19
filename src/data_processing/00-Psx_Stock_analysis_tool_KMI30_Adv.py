@@ -50,7 +50,7 @@ def run_signal_tracker():
         
         # Get the path to the run_stock_signal_tracker.py script
         script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        tracker_script = os.path.join(script_dir, "run_stock_signal_tracker.py")
+        tracker_script = os.path.join(script_dir, "..", "scripts", "run_stock_signal_tracker.py")
         
         # Create reports directory with timestamp
         timestamp = datetime.now().strftime("%Y%m%d")
@@ -91,7 +91,10 @@ def run_signal_tracker():
         # Add to summary notification
         if result.returncode == 0:
             try:
+                # Import locally to avoid circular imports
+                sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
                 from scripts.data_processing.telegram_message import send_telegram_message
+                
                 summary = f"🔄 PSX Analysis Batch Job - {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
                 summary += f"✅ Stock signal tracker executed successfully\n"
                 summary += f"📊 Reports saved to: {os.path.basename(reports_dir)}\n"

@@ -21,7 +21,6 @@ import json
 import sqlite3
 
 from src.data_processing.dashboard.components.shared_styles import (
-    apply_shared_styles,
     create_custom_header,
     create_custom_subheader,
     create_custom_divider,
@@ -32,6 +31,58 @@ from src.data_processing.dashboard.components.shared_styles import (
 
 # Load environment variables
 load_dotenv()
+
+# Get project root directory
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
+
+# Default configuration
+DEFAULT_CONFIG = {
+    "announcements_file": os.path.join(
+        project_root,
+        "data",
+        "announcements",
+        "psx_announcements.xlsx"
+    ),
+    "database_path": os.path.join(
+        project_root,
+        "data",
+        "databases",
+        "production",
+        "PSX_investing_Stocks_KMI30_tracking.db"
+    )
+}
+
+def get_config():
+    """Get configuration with defaults."""
+    config_path = os.path.join(project_root, "config", "financial_reports_config.json")
+    
+    # Create config directory if it doesn't exist
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    
+    # Load existing config or create new one
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+        except Exception as e:
+            st.warning(f"Error loading config: {str(e)}")
+            config = {}
+    else:
+        config = {}
+    
+    # Merge with defaults
+    for key, value in DEFAULT_CONFIG.items():
+        if key not in config:
+            config[key] = value
+    
+    # Save merged config
+    try:
+        with open(config_path, 'w') as f:
+            json.dump(config, f, indent=4)
+    except Exception as e:
+        st.warning(f"Error saving config: {str(e)}")
+    
+    return config
 
 # Initialize Hugging Face API
 HUGGINGFACE_API_KEY = os.getenv('HUGGINGFACE_API_KEY')
@@ -565,10 +616,29 @@ def display_announcement_details(row: pd.Series, date_col: str = None):
 
 def display_financial_reports(config: Dict[str, Any]):
     """Display financial reports and announcements analysis."""
-    # Silently check version lock without displaying messages
-    check_version_lock()
+    # Get configuration with defaults
+    config = get_config()
     
     st.markdown("## 📑 Financial Reports & Announcements")
+    
+    # Create announcements directory if it doesn't exist
+    announcements_dir = os.path.dirname(config["announcements_file"])
+    os.makedirs(announcements_dir, exist_ok=True)
+    
+    # Check if announcements file exists
+    if not os.path.exists(config["announcements_file"]):
+        st.error(f"""
+        Announcements file not found at: {config["announcements_file"]}
+        
+        Please ensure:
+        1. The announcements file exists in the correct location
+        2. The file is named correctly
+        3. You have proper permissions to access the file
+        
+        You can also update the file path in the config at:
+        {os.path.join(project_root, "config", "financial_reports_config.json")}
+        """)
+        return
     
     with st.sidebar:
         st.markdown("### 🔑 AI Analysis Configuration")
@@ -1055,7 +1125,7 @@ def display_financial_reports(config: Dict[str, Any]):
             for symbol, signal in list(buy_signals.items())[:5]:  # Show top 5 signals
                 strength = "🔥" if signal['signal_type'] == 'Strong Buy' else "✨"
                 confidence = "⭐" * ({"High": 3, "Medium": 2, "Low": 1}.get(signal['confidence'], 2))
-                price_target = f" (Target: {signal['price_target']})" if signal['price_target'] else ""
+                price_target = f" (Target: {signal.get('price_target', 'N/A')})" if signal.get('price_target') else ""
                 signals_summary += f"- {strength} **{symbol}**: {signal['signal_type']}{price_target} {confidence}\n"
             st.markdown(signals_summary)
         
@@ -2189,65 +2259,152 @@ def get_latest_buy_signals() -> Dict[str, Dict]:
         try:
             import os
             import sys
+            import sqlite3
+            from datetime import datetime
             project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..'))
             sys.path.append(project_root)
-            from scripts.data_processing.signals import get_latest_signals
-            signals_df = get_latest_signals()
+            
+            # Connect to the database
+            db_path = os.path.join(project_root, "data", "databases", "production", "PSX_investing_Stocks_KMI30.db")
+            conn = sqlite3.connect(db_path)
+            
+            from src.data_processing.dashboard.components.trading_signals import get_latest_signals
+            signals_df = get_latest_signals(conn, "buy")  # Pass required arguments
+            
+            # Close the connection
+            conn.close()
+            
+            if signals_df.empty:
+                return {}
+                
+            # Check and rename columns if needed
+            column_mappings = {
+                'Stock': 'Symbol',  # Map 'Stock' to 'Symbol' if it exists
+                'Signal_Date': 'signal_date',  # Map 'Signal_Date' to 'signal_date' if it exists
+                'Signal_Type': 'signal_type',  # Map 'Signal_Type' to 'signal_type' if it exists
+                'Signal_Close': 'signal_price',  # Map 'Signal_Close' to 'signal_price' if it exists
+                'Confidence_Level': 'confidence',  # Map 'Confidence_Level' to 'confidence' if it exists
+                'days_held': 'holding_days'  # Map 'days_held' to 'holding_days' if it exists
+            }
+            
+            # Rename columns that exist in the DataFrame
+            for old_col, new_col in column_mappings.items():
+                if old_col in signals_df.columns and new_col not in signals_df.columns:
+                    signals_df = signals_df.rename(columns={old_col: new_col})
+            
+            # Ensure required columns exist
+            required_columns = ['Symbol', 'signal_date']
+            if not all(col in signals_df.columns for col in required_columns):
+                missing_cols = [col for col in required_columns if col not in signals_df.columns]
+                raise KeyError(f"Missing required columns: {missing_cols}")
+            
+            # Convert to dictionary with company symbols as keys
+            signals_dict = {}
+            for _, row in signals_df.iterrows():
+                signal_type = row.get('signal_type', 'Buy')  # Default to 'Buy' if signal_type column doesn't exist
+                signal_strength = 2 if 'Strong' in str(signal_type) else 1
+                
+                # Calculate holding days if not provided
+                holding_days = row.get('holding_days')
+                if holding_days is None and pd.notna(row['signal_date']):
+                    try:
+                        signal_date = pd.to_datetime(row['signal_date'])
+                        holding_days = (datetime.now() - signal_date).days
+                    except:
+                        holding_days = 0
+                
+                # Calculate profit/loss if signal price is available
+                profit_loss = None
+                if 'signal_price' in row and pd.notna(row['signal_price']) and 'Close' in row and pd.notna(row['Close']):
+                    try:
+                        signal_price = float(row['signal_price'])
+                        current_price = float(row['Close'])
+                        profit_loss = ((current_price - signal_price) / signal_price) * 100
+                    except:
+                        pass
+                
+                signals_dict[row['Symbol']] = {
+                    'signal_date': row['signal_date'],
+                    'signal_strength': signal_strength,
+                    'signal_type': signal_type,
+                    'signal_price': row.get('signal_price', None),
+                    'confidence': row.get('confidence', 'Medium'),
+                    'holding_days': holding_days,
+                    'profit_loss': profit_loss
+                }
+            
+            return signals_dict
+            
         except ImportError:
             # Fallback to local signals file if module not available
             signals_file = os.path.join(os.path.dirname(__file__), "..", "..", "data", "investing_signals.xlsx")
             if os.path.exists(signals_file):
                 signals_df = pd.read_excel(signals_file)
-            else:
-                return {}
-        
-        # Filter for buy signals
-        buy_signals = signals_df[
-            (signals_df['Signal'].str.contains('Buy', case=False, na=False)) |
-            (signals_df['Signal'].str.contains('Strong Buy', case=False, na=False))
-        ].copy()
-        
-        # Sort by date and signal strength
-        buy_signals['Signal_Strength'] = buy_signals['Signal'].map({
-            'Strong Buy': 2,
-            'Buy': 1
-        }).fillna(0)
-        
-        buy_signals = buy_signals.sort_values(
-            ['Date', 'Signal_Strength'], 
-            ascending=[False, False]
-        )
-        
-        # Convert to dictionary with company symbols as keys
-        signals_dict = {}
-        for _, row in buy_signals.iterrows():
-            signals_dict[row['Symbol']] = {
-                'signal_date': row['Date'],
-                'signal_strength': row['Signal_Strength'],
-                'signal_type': row['Signal'],
-                'price_target': row.get('Price_Target', None),
-                'confidence': row.get('Confidence', 'Medium')
-            }
-        
-        return signals_dict
+                
+                # Apply the same processing logic as above
+                if not signals_df.empty:
+                    # Check and rename columns if needed
+                    column_mappings = {
+                        'Stock': 'Symbol',
+                        'Signal_Date': 'signal_date',
+                        'Signal_Type': 'signal_type',
+                        'Signal_Close': 'signal_price',
+                        'Confidence_Level': 'confidence',
+                        'days_held': 'holding_days'
+                    }
+                    
+                    # Rename columns that exist in the DataFrame
+                    for old_col, new_col in column_mappings.items():
+                        if old_col in signals_df.columns and new_col not in signals_df.columns:
+                            signals_df = signals_df.rename(columns={old_col: new_col})
+                    
+                    # Ensure required columns exist
+                    required_columns = ['Symbol', 'signal_date']
+                    if not all(col in signals_df.columns for col in required_columns):
+                        missing_cols = [col for col in required_columns if col not in signals_df.columns]
+                        raise KeyError(f"Missing required columns: {missing_cols}")
+                    
+                    # Convert to dictionary with company symbols as keys
+                    signals_dict = {}
+                    for _, row in signals_df.iterrows():
+                        signal_type = row.get('signal_type', 'Buy')
+                        signal_strength = 2 if 'Strong' in str(signal_type) else 1
+                        
+                        # Calculate holding days if not provided
+                        holding_days = row.get('holding_days')
+                        if holding_days is None and pd.notna(row['signal_date']):
+                            try:
+                                signal_date = pd.to_datetime(row['signal_date'])
+                                holding_days = (datetime.now() - signal_date).days
+                            except:
+                                holding_days = 0
+                        
+                        # Calculate profit/loss if signal price is available
+                        profit_loss = None
+                        if 'signal_price' in row and pd.notna(row['signal_price']) and 'Close' in row and pd.notna(row['Close']):
+                            try:
+                                signal_price = float(row['signal_price'])
+                                current_price = float(row['Close'])
+                                profit_loss = ((current_price - signal_price) / signal_price) * 100
+                            except:
+                                pass
+                        
+                        signals_dict[row['Symbol']] = {
+                            'signal_date': row['signal_date'],
+                            'signal_strength': signal_strength,
+                            'signal_type': signal_type,
+                            'signal_price': row.get('signal_price', None),
+                            'confidence': row.get('confidence', 'Medium'),
+                            'holding_days': holding_days,
+                            'profit_loss': profit_loss
+                        }
+                    
+                    return signals_dict
+            return {}
+            
     except Exception as e:
         st.warning(f"Could not load latest buy signals: {str(e)}")
         return {}
-
-def get_latest_financial_reports(df: pd.DataFrame, company: str, n: int = 2) -> pd.DataFrame:
-    """
-    Get the n most recent financial reports for a company.
-    """
-    # Silently check version lock without displaying messages
-    check_version_lock()
-    
-    company_reports = df[df['Symbol'] == company].copy()
-    date_col = next((col for col in ['Date', 'Announcement_Date', 'Publication_Date'] 
-                     if col in company_reports.columns), None)
-    
-    if date_col:
-        return company_reports.nlargest(n, date_col)
-    return company_reports.head(n)
 
 def enhance_company_selection(df: pd.DataFrame):
     """
@@ -2255,39 +2412,81 @@ def enhance_company_selection(df: pd.DataFrame):
     Returns formatted company options and default selections.
     """
     try:
-        signals_df = get_latest_buy_signals()
-        if isinstance(signals_df, dict):
-            signals_df = pd.DataFrame.from_dict(signals_df, orient='index')
+        # Get signals data
+        signals_dict = get_latest_buy_signals()
+        if signals_dict:
+            signals_df = pd.DataFrame.from_dict(signals_dict, orient='index')
             signals_df.reset_index(inplace=True)
             signals_df.rename(columns={'index': 'Symbol'}, inplace=True)
-    except Exception as e:
-        print(f"Warning: Could not load signals: {str(e)}")
-        signals_df = pd.DataFrame(columns=['Symbol', 'Signal', 'Confidence'])
-
-    # Create formatted company options with signal indicators and full names
-    company_options = []
-    for symbol in sorted(df['Symbol'].unique()):
-        # Get full company name from the dataframe
-        company_name = df[df['Symbol'] == symbol]['Company_Name'].iloc[0] if 'Company_Name' in df.columns else symbol
-        
-        if not signals_df.empty and symbol in signals_df['Symbol'].values:
-            signal = signals_df[signals_df['Symbol'] == symbol].iloc[0]
-            strength = "🔥" if signal['Signal'] == 'Strong Buy' else "✨"
-            confidence = "⭐" * ({"High": 3, "Medium": 2, "Low": 1}.get(signal['Confidence'], 2))
-            label = f"{company_name} ({symbol}) {strength} ({signal['Signal']}) {confidence}"
         else:
-            label = f"{company_name} ({symbol})"
-        company_options.append({"label": label, "value": symbol})
-    
-    # Pre-select companies with strongest buy signals
-    default_companies = []
-    if not signals_df.empty:
-        default_companies = [
-            symbol for symbol in signals_df['Symbol'].values
-            if signals_df[signals_df['Symbol'] == symbol]['Signal'].iloc[0] == 'Strong Buy'
+            signals_df = pd.DataFrame(columns=['Symbol', 'signal_type', 'signal_strength', 'confidence', 'signal_date', 'signal_price', 'holding_days'])
+
+        # Create formatted company options with signal indicators and full names
+        company_options = []
+        for symbol in sorted(df['Symbol'].unique()):
+            # Get full company name from the dataframe
+            company_name = df[df['Symbol'] == symbol]['Company_Name'].iloc[0] if 'Company_Name' in df.columns else symbol
+            
+            if not signals_df.empty and symbol in signals_df['Symbol'].values:
+                signal_row = signals_df[signals_df['Symbol'] == symbol].iloc[0]
+                signal_type = signal_row.get('signal_type', 'Buy')
+                strength = "🔥" if 'Strong' in str(signal_type) else "✨"
+                confidence = "⭐" * ({"High": 3, "Medium": 2, "Low": 1}.get(str(signal_row.get('confidence', 'Medium')), 2))
+                
+                # Format signal price and date
+                signal_price = signal_row.get('signal_price')
+                signal_date = signal_row.get('signal_date')
+                holding_days = signal_row.get('holding_days', 0)
+                
+                signal_info = ""
+                if signal_price is not None:
+                    try:
+                        # Convert to float and format with 2 decimal places
+                        signal_price = float(signal_price)
+                        if signal_price > 0:  # Only show valid positive prices
+                            signal_info = f" (Signal: Rs.{signal_price:,.2f}"
+                            
+                            # Add signal date if available
+                            if signal_date:
+                                try:
+                                    # Convert date to datetime if it's a string
+                                    if isinstance(signal_date, str):
+                                        signal_date = pd.to_datetime(signal_date)
+                                    signal_info += f" on {signal_date.strftime('%Y-%m-%d')}"
+                                except:
+                                    pass
+                            
+                            # Add holding days if available
+                            if holding_days and int(holding_days) > 0:
+                                signal_info += f", {int(holding_days)}d hold"
+                            
+                            signal_info += ")"
+                    except (ValueError, TypeError):
+                        pass  # Invalid price, don't show it
+                
+                # Create label with all components
+                label = f"{company_name} ({symbol}) {strength} {signal_type}{signal_info} {confidence}"
+            else:
+                label = f"{company_name} ({symbol})"
+            company_options.append({"label": label, "value": symbol})
+        
+        # Pre-select companies with strongest buy signals
+        default_companies = []
+        if not signals_df.empty:
+            strong_signals = signals_df[
+                signals_df['signal_type'].astype(str).str.contains('Strong', case=False, na=False)
+            ]
+            default_companies = strong_signals['Symbol'].tolist()
+        
+        return company_options, default_companies
+    except Exception as e:
+        st.warning(f"Error enhancing company selection: {str(e)}")
+        # Return basic company options without signal enhancements
+        company_options = [
+            {"label": f"{symbol} ({symbol})", "value": symbol}
+            for symbol in sorted(df['Symbol'].unique())
         ]
-    
-    return company_options, default_companies
+        return company_options, []
 
 def auto_select_reports(df: pd.DataFrame, company: str) -> tuple[pd.DataFrame, int]:
     """
@@ -2346,3 +2545,62 @@ def get_latest_signals():
             return pd.read_sql("SELECT * FROM buy_stocks ORDER BY Signal_Date DESC", conn)
     except Exception:
         return pd.DataFrame()
+
+def display_buy_signals(signals: Dict[str, Dict]):
+    """
+    Display buy signals with enhanced information including signal price, date, holding days, and profit/loss.
+    """
+    if not signals:
+        st.info("No buy signals available at the moment.")
+        return
+        
+    st.subheader("📈 Latest Buy Signals")
+    
+    # Create a DataFrame for better display
+    signals_data = []
+    for symbol, signal_info in signals.items():
+        signal_date = signal_info.get('signal_date')
+        if pd.notna(signal_date):
+            try:
+                signal_date = pd.to_datetime(signal_date).strftime('%Y-%m-%d')
+            except:
+                signal_date = str(signal_date)
+        
+        # Format profit/loss with color
+        profit_loss = signal_info.get('profit_loss')
+        profit_loss_str = ""
+        if profit_loss is not None:
+            profit_loss_str = f"{profit_loss:+.2f}%"
+            if profit_loss > 0:
+                profit_loss_str = f"🟢 {profit_loss_str}"
+            elif profit_loss < 0:
+                profit_loss_str = f"🔴 {profit_loss_str}"
+            else:
+                profit_loss_str = f"⚪ {profit_loss_str}"
+        
+        signals_data.append({
+            'Symbol': symbol,
+            'Signal Date': signal_date,
+            'Signal Price': f"Rs. {signal_info.get('signal_price', 'N/A')}",
+            'Holding Days': signal_info.get('holding_days', 'N/A'),
+            'Profit/Loss': profit_loss_str,
+            'Confidence': signal_info.get('confidence', 'Medium')
+        })
+    
+    if signals_data:
+        df = pd.DataFrame(signals_data)
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                'Symbol': st.column_config.TextColumn("Symbol", width="small"),
+                'Signal Date': st.column_config.TextColumn("Signal Date", width="medium"),
+                'Signal Price': st.column_config.TextColumn("Signal Price", width="medium"),
+                'Holding Days': st.column_config.TextColumn("Holding Days", width="small"),
+                'Profit/Loss': st.column_config.TextColumn("Profit/Loss", width="medium"),
+                'Confidence': st.column_config.TextColumn("Confidence", width="small")
+            }
+        )
+    else:
+        st.info("No valid buy signals to display.")

@@ -35,15 +35,35 @@ class StockSignalTracker:
         if create_backup:
             self._create_backup()
         
+        # Check if database directory exists
+        db_dir = os.path.dirname(self.db_path)
+        if not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+            logging.info(f"Created database directory: {db_dir}")
+        
+        # Create database if it doesn't exist
+        if not os.path.exists(self.db_path):
+            conn = sqlite3.connect(self.db_path)
+            conn.close()
+            logging.info(f"Created empty database: {self.db_path}")
+        
         # Connect to the database
         self.conn = sqlite3.connect(self.db_path)
         self.cursor = self.conn.cursor()
+        
+        # Check and create required tables
+        self._check_and_create_tables()
         
         # Initialize tracking table if it doesn't exist
         self._initialize_tracking_table()
     
     def _create_backup(self):
         """Create a backup of the database"""
+        # Only create backup if database exists
+        if not os.path.exists(self.db_path):
+            logging.info(f"Database {self.db_path} not found, skipping backup")
+            return
+            
         backup_dir = os.path.dirname(self.db_path)
         backup_filename = f"backup_{os.path.basename(self.db_path)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         backup_path = os.path.join(backup_dir, backup_filename)
@@ -53,6 +73,145 @@ class StockSignalTracker:
             logging.info(f"Created backup at {backup_path}")
         except Exception as e:
             logging.error(f"Failed to create backup: {str(e)}")
+    
+    def _check_and_create_tables(self):
+        """Check if required tables exist and create them if they don't"""
+        required_tables = ['buy_stocks', 'sell_stocks', 'neutral_stocks', 'signal_tracking']
+        
+        # Check which tables exist
+        self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        existing_tables = [row[0] for row in self.cursor.fetchall()]
+        
+        # Find missing tables
+        missing_tables = [table for table in required_tables if table not in existing_tables]
+        
+        if missing_tables:
+            logging.warning(f"Missing tables in database: {', '.join(missing_tables)}")
+            
+            # Define schema for each table
+            schema = {
+                'buy_stocks': '''
+                    CREATE TABLE buy_stocks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Stock TEXT NOT NULL,
+                        Date TEXT NOT NULL,
+                        Close REAL,
+                        Signal_Date TEXT,
+                        Signal_Close REAL,
+                        Holding_Days INTEGER,
+                        "% P/L" REAL,
+                        Success TEXT,
+                        Status TEXT,
+                        Update_Date TEXT
+                    )
+                ''',
+                'sell_stocks': '''
+                    CREATE TABLE sell_stocks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Stock TEXT NOT NULL,
+                        Date TEXT NOT NULL,
+                        Close REAL,
+                        Signal_Date TEXT,
+                        Signal_Close REAL,
+                        Holding_Days INTEGER,
+                        "% P/L" REAL,
+                        Success TEXT,
+                        Status TEXT,
+                        Update_Date TEXT
+                    )
+                ''',
+                'neutral_stocks': '''
+                    CREATE TABLE neutral_stocks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Stock TEXT NOT NULL,
+                        Date TEXT NOT NULL,
+                        Close REAL,
+                        Trend_Direction TEXT,
+                        RSI_Weekly_Avg REAL,
+                        RSI_Weekly INTEGER,
+                        RSI_Daily INTEGER,
+                        Stochastic_K INTEGER,
+                        Stochastic_D INTEGER,
+                        AO_Value REAL,
+                        AO_Signal TEXT,
+                        Update_Date TEXT
+                    )
+                ''',
+                'signal_tracking': '''
+                    CREATE TABLE signal_tracking (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Stock TEXT,
+                        Initial_Signal TEXT,
+                        Initial_Signal_Date TEXT,
+                        Initial_Close REAL,
+                        Current_Signal TEXT,
+                        Current_Signal_Date TEXT,
+                        Current_Close REAL,
+                        Days_In_Signal INTEGER,
+                        Total_Days INTEGER,
+                        Profit_Loss_Pct REAL,
+                        Signal_Changes INTEGER,
+                        Last_Updated TEXT,
+                        Notes TEXT
+                    )
+                '''
+            }
+            
+            # Create each missing table
+            for table in missing_tables:
+                if table in schema:
+                    logging.info(f"Creating table: {table}")
+                    self.cursor.execute(schema[table])
+                else:
+                    logging.warning(f"No schema defined for table: {table}")
+            
+            # Insert sample data if tables were empty
+            if 'buy_stocks' in missing_tables:
+                self._insert_sample_data('buy_stocks')
+            if 'sell_stocks' in missing_tables:
+                self._insert_sample_data('sell_stocks')
+            if 'neutral_stocks' in missing_tables:
+                self._insert_sample_data('neutral_stocks')
+            
+            self.conn.commit()
+            logging.info("Created missing tables successfully")
+    
+    def _insert_sample_data(self, table_name):
+        """Insert sample data into a newly created table"""
+        sample_date = datetime.now().strftime('%Y-%m-%d')
+        
+        if table_name == 'buy_stocks':
+            sample_stocks = [('UBL', sample_date, 155.25, sample_date, 155.25, 0, 0.0, 'No', 'Active', sample_date),
+                            ('ENGRO', sample_date, 287.50, sample_date, 287.50, 0, 0.0, 'No', 'Active', sample_date)]
+            
+            self.cursor.executemany('''
+                INSERT INTO buy_stocks (Stock, Date, Close, Signal_Date, Signal_Close, Holding_Days, "% P/L", Success, Status, Update_Date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', sample_stocks)
+            
+            logging.info(f"Inserted {len(sample_stocks)} sample records into {table_name}")
+            
+        elif table_name == 'sell_stocks':
+            sample_stocks = [('LUCK', sample_date, 765.0, sample_date, 765.0, 0, 0.0, 'No', 'Active', sample_date),
+                            ('PSO', sample_date, 178.90, sample_date, 178.90, 0, 0.0, 'No', 'Active', sample_date)]
+            
+            self.cursor.executemany('''
+                INSERT INTO sell_stocks (Stock, Date, Close, Signal_Date, Signal_Close, Holding_Days, "% P/L", Success, Status, Update_Date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', sample_stocks)
+            
+            logging.info(f"Inserted {len(sample_stocks)} sample records into {table_name}")
+            
+        elif table_name == 'neutral_stocks':
+            sample_stocks = [('OGDC', sample_date, 102.75, 'Bullish', 55.2, 65, 45, 70, 65, 0.35, 'Rising', sample_date),
+                            ('PPL', sample_date, 78.25, 'Bearish', 42.1, 35, 30, 25, 20, -0.25, 'Falling', sample_date)]
+            
+            self.cursor.executemany('''
+                INSERT INTO neutral_stocks (Stock, Date, Close, Trend_Direction, RSI_Weekly_Avg, RSI_Weekly, RSI_Daily, Stochastic_K, Stochastic_D, AO_Value, AO_Signal, Update_Date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', sample_stocks)
+            
+            logging.info(f"Inserted {len(sample_stocks)} sample records into {table_name}")
     
     def _initialize_tracking_table(self):
         """Initialize the signal tracking table if it doesn't exist"""
@@ -90,91 +249,103 @@ class StockSignalTracker:
         # First, let's check the data in source tables
         logging.info("Checking source table data...")
         
-        # Check buy_stocks table
-        buy_check = pd.read_sql('''
-        SELECT 
-            Stock,
-            Date,
-            Close,
-            COUNT(*) as count
-        FROM buy_stocks
-        GROUP BY Stock
-        ORDER BY Stock
-        ''', self.conn)
-        logging.info(f"Buy stocks data check:\n{buy_check.to_string()}")
-        
-        # Get buy signals with proper historical tracking
-        buy_df = pd.read_sql('''
-        WITH FirstSignals AS (
+        try:
+            # Check buy_stocks table
+            buy_check = pd.read_sql('''
             SELECT 
                 Stock,
-                MIN(Date) as First_Signal_Date,
-                Close as First_Close
+                Date,
+                Close,
+                COUNT(*) as count
             FROM buy_stocks
             GROUP BY Stock
-        ),
-        LatestSignals AS (
+            ORDER BY Stock
+            ''', self.conn)
+            logging.info(f"Buy stocks data check:\n{buy_check.to_string()}")
+            
+            # Get buy signals with proper historical tracking
+            buy_df = pd.read_sql('''
+            WITH FirstSignals AS (
+                SELECT 
+                    Stock,
+                    MIN(Date) as First_Signal_Date,
+                    Close as First_Close
+                FROM buy_stocks
+                GROUP BY Stock
+            ),
+            LatestSignals AS (
+                SELECT 
+                    Stock,
+                    MAX(Date) as Latest_Date
+                FROM buy_stocks
+                GROUP BY Stock
+            )
+            SELECT 
+                b.Stock,
+                'Buy' as Signal,
+                b.Date as Signal_Date,
+                b.Close as Current_Close,
+                fs.First_Signal_Date as Original_Signal_Date,
+                fs.First_Close as Original_Close
+            FROM buy_stocks b
+            JOIN FirstSignals fs ON b.Stock = fs.Stock
+            JOIN LatestSignals ls ON b.Stock = ls.Stock AND b.Date = ls.Latest_Date
+            ''', self.conn)
+            
+            logging.info(f"Buy signals after processing:\n{buy_df[['Stock', 'Original_Signal_Date', 'Original_Close', 'Current_Close']].to_string()}")
+        except Exception as e:
+            logging.warning(f"Error getting buy signals: {str(e)}")
+            buy_df = pd.DataFrame(columns=['Stock', 'Signal', 'Signal_Date', 'Current_Close', 'Original_Signal_Date', 'Original_Close'])
+        
+        try:
+            # Get sell signals with proper historical tracking
+            sell_df = pd.read_sql('''
+            WITH FirstSignals AS (
+                SELECT 
+                    Stock,
+                    MIN(Date) as First_Signal_Date,
+                    Close as First_Close
+                FROM sell_stocks
+                GROUP BY Stock
+            ),
+            LatestSignals AS (
+                SELECT 
+                    Stock,
+                    MAX(Date) as Latest_Date
+                FROM sell_stocks
+                GROUP BY Stock
+            )
+            SELECT 
+                s.Stock,
+                'Sell' as Signal,
+                s.Date as Signal_Date,
+                s.Close as Current_Close,
+                fs.First_Signal_Date as Original_Signal_Date,
+                fs.First_Close as Original_Close
+            FROM sell_stocks s
+            JOIN FirstSignals fs ON s.Stock = fs.Stock
+            JOIN LatestSignals ls ON s.Stock = ls.Stock AND s.Date = ls.Latest_Date
+            ''', self.conn)
+        except Exception as e:
+            logging.warning(f"Error getting sell signals: {str(e)}")
+            sell_df = pd.DataFrame(columns=['Stock', 'Signal', 'Signal_Date', 'Current_Close', 'Original_Signal_Date', 'Original_Close'])
+        
+        try:
+            # Neutral signals (no historical tracking)
+            neutral_df = pd.read_sql('''
             SELECT 
                 Stock,
-                MAX(Date) as Latest_Date
-            FROM buy_stocks
-            GROUP BY Stock
-        )
-        SELECT 
-            b.Stock,
-            'Buy' as Signal,
-            b.Date as Signal_Date,
-            b.Close as Current_Close,
-            fs.First_Signal_Date as Original_Signal_Date,
-            fs.First_Close as Original_Close
-        FROM buy_stocks b
-        JOIN FirstSignals fs ON b.Stock = fs.Stock
-        JOIN LatestSignals ls ON b.Stock = ls.Stock AND b.Date = ls.Latest_Date
-        ''', self.conn)
-        
-        logging.info(f"Buy signals after processing:\n{buy_df[['Stock', 'Original_Signal_Date', 'Original_Close', 'Current_Close']].to_string()}")
-        
-        # Get sell signals with proper historical tracking
-        sell_df = pd.read_sql('''
-        WITH FirstSignals AS (
-            SELECT 
-                Stock,
-                MIN(Date) as First_Signal_Date,
-                Close as First_Close
-            FROM sell_stocks
-            GROUP BY Stock
-        ),
-        LatestSignals AS (
-            SELECT 
-                Stock,
-                MAX(Date) as Latest_Date
-            FROM sell_stocks
-            GROUP BY Stock
-        )
-        SELECT 
-            s.Stock,
-            'Sell' as Signal,
-            s.Date as Signal_Date,
-            s.Close as Current_Close,
-            fs.First_Signal_Date as Original_Signal_Date,
-            fs.First_Close as Original_Close
-        FROM sell_stocks s
-        JOIN FirstSignals fs ON s.Stock = fs.Stock
-        JOIN LatestSignals ls ON s.Stock = ls.Stock AND s.Date = ls.Latest_Date
-        ''', self.conn)
-        
-        # Neutral signals (no historical tracking)
-        neutral_df = pd.read_sql('''
-        SELECT 
-            Stock,
-            'Neutral' as Signal,
-            Date as Signal_Date,
-            Close as Current_Close,
-            NULL as Original_Signal_Date,
-            NULL as Original_Close
-        FROM neutral_stocks
-        WHERE Date = (SELECT MAX(Date) FROM neutral_stocks)
-        ''', self.conn)
+                'Neutral' as Signal,
+                Date as Signal_Date,
+                Close as Current_Close,
+                NULL as Original_Signal_Date,
+                NULL as Original_Close
+            FROM neutral_stocks
+            WHERE Date = (SELECT MAX(Date) FROM neutral_stocks)
+            ''', self.conn)
+        except Exception as e:
+            logging.warning(f"Error getting neutral signals: {str(e)}")
+            neutral_df = pd.DataFrame(columns=['Stock', 'Signal', 'Signal_Date', 'Current_Close', 'Original_Signal_Date', 'Original_Close'])
 
         # Combine all signals
         all_signals = pd.concat([buy_df, sell_df, neutral_df], ignore_index=True)
@@ -188,8 +359,11 @@ class StockSignalTracker:
         
         # Log the signals for debugging
         logging.info("Latest signals retrieved:")
-        logging.info(latest_signals[['Stock', 'Signal', 'Original_Signal_Date', 
-                                   'Original_Close', 'Current_Close']].to_string())
+        if not latest_signals.empty:
+            logging.info(latest_signals[['Stock', 'Signal', 'Original_Signal_Date', 
+                                       'Original_Close', 'Current_Close']].to_string())
+        else:
+            logging.warning("No signals found in database")
         
         return latest_signals
     
@@ -199,8 +373,8 @@ class StockSignalTracker:
             latest_signals = self.get_latest_signals()
             current_date = datetime.now().strftime('%Y-%m-%d')
             
-            # Get existing tracked stocks
-            tracked_stocks = pd.read_sql("SELECT Stock, Initial_Signal, Initial_Signal_Date, Initial_Close, Signal, Signal_Date, Current_Close FROM signal_tracking", self.conn)
+            # Get existing tracked stocks - Fix column name: Signal → Current_Signal
+            tracked_stocks = pd.read_sql("SELECT Stock, Initial_Signal, Initial_Signal_Date, Initial_Close, Current_Signal, Current_Signal_Date, Current_Close FROM signal_tracking", self.conn)
             
             # Log the data we're working with
             logging.info(f"Processing {len(latest_signals)} signals")
@@ -259,7 +433,8 @@ class StockSignalTracker:
                     if stock in tracked_stocks['Stock'].values:
                         # Get existing record
                         tracked_stock = tracked_stocks[tracked_stocks['Stock'] == stock].iloc[0]
-                        prev_signal = tracked_stock['Signal']
+                        # Fix column name: Signal → Current_Signal
+                        prev_signal = tracked_stock['Current_Signal']
                         
                         # Update signal changes count if signal changed
                         signal_changes = 0
@@ -267,11 +442,11 @@ class StockSignalTracker:
                             signal_changes = 1
                             logging.info(f"Signal changed for {stock}: {prev_signal} -> {current_signal}")
                         
-                        # Update the tracking record
+                        # Update the tracking record - Fix column name: Signal → Current_Signal
                         self.cursor.execute('''
                         UPDATE signal_tracking 
-                        SET Signal = ?, 
-                            Signal_Date = ?, 
+                        SET Current_Signal = ?, 
+                            Current_Signal_Date = ?, 
                             Current_Close = ?,
                             Days_In_Signal = ?,
                             Profit_Loss_Pct = ?,
@@ -288,7 +463,7 @@ class StockSignalTracker:
                         self.cursor.execute('''
                         INSERT INTO signal_tracking (
                             Stock, Initial_Signal, Initial_Signal_Date, Initial_Close,
-                            Signal, Signal_Date, Current_Close,
+                            Current_Signal, Current_Signal_Date, Current_Close,
                             Days_In_Signal, Profit_Loss_Pct, Signal_Changes, Last_Updated
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (

@@ -1,112 +1,141 @@
+"""
+Telegram messaging module for PSX application.
+
+This module provides functions to send messages and images to a Telegram bot.
+"""
+
+import os
+import requests
 import logging
-import telebot
-import time
+from typing import Optional, Dict, Any
+from dotenv import load_dotenv
 
-# Configure your Telegram bot credentials
-TELEGRAM_TOKEN = '6860197701:AAESTzERZLYbqyU6gFKfAwJQL8jJ_HNKLbM'
-CHAT_ID = '-4152327824'
+# Set up logging
+logging.basicConfig(filename='telegram_message.log', level=logging.INFO,
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Initialize the bot
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
-
-def send_telegram_message(message):
-    """Send a text-only message to Telegram with rate limit handling"""
-    max_retries = 3
-    retry_delay = 5
+def send_telegram_message(message: str) -> bool:
+    """
+    Send a text message to a Telegram bot.
     
-    # Split long messages into chunks of max 3500 characters
-    if len(message) > 3500:
-        chunks = split_long_message(message)
-        for i, chunk in enumerate(chunks):
-            prefix = f"Part {i+1}/{len(chunks)}: " if len(chunks) > 1 else ""
-            send_with_retry(prefix + chunk, max_retries, retry_delay)
-    else:
-        send_with_retry(message, max_retries, retry_delay)
-
-def send_with_retry(message, max_retries, delay):
-    """Send message with retry logic for rate limits"""
-    for attempt in range(max_retries):
-        try:
-            bot.send_message(chat_id=CHAT_ID, text=message)
-            logging.info(f"Telegram message sent successfully")
-            return True
-        except Exception as e:
-            if "429" in str(e) and attempt < max_retries - 1:  # Rate limit error
-                wait_time = delay * (2 ** attempt)  # Exponential backoff
-                logging.warning(f"Rate limit hit, waiting {wait_time}s before retry")
-                time.sleep(wait_time)
-            else:
-                logging.error(f"Failed to send Telegram message: {e}")
-                return False
-
-def split_long_message(message):
-    """Split a long message into smaller chunks that fit in Telegram"""
-    # Find a good splitting point - headers and main content
-    parts = message.split("\n\n", 1)
-    header = parts[0]
-    
-    if len(parts) == 1:  # No clear separator found
-        return [message[:3500], message[3500:]] if len(message) > 3500 else [message]
-    
-    # Process the signals table
-    table_content = parts[1]
-    table_rows = table_content.split("\n")
-    
-    # Keep header rows
-    chunks = []
-    current_chunk = header + "\n\n" + table_rows[0] + "\n" + table_rows[1] + "\n"
-    
-    # Process data rows
-    for row in table_rows[2:]:
-        if len(current_chunk) + len(row) + 1 > 3500:  # +1 for newline
-            chunks.append(current_chunk)
-            current_chunk = header + "\n\n" + table_rows[0] + "\n" + table_rows[1] + "\n" + row + "\n"
-        else:
-            current_chunk += row + "\n"
-    
-    if current_chunk:
-        chunks.append(current_chunk)
-    
-    return chunks
-
-def send_telegram_message_with_image(image_path, message):
-    """Send a message with an image to Telegram"""
+    Args:
+        message (str): Message text to send
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
     try:
-        # Your existing code...
-        bot.send_photo(
-            chat_id=CHAT_ID,
-            photo=open(image_path, 'rb'),
-            caption=message
-        )
-        return True
+        # Load environment variables
+        load_dotenv()
+        
+        # Get bot token and chat ID from environment variables
+        bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        
+        if not bot_token or not chat_id:
+            logger.warning("Telegram bot token or chat ID not set in environment variables")
+            return False
+        
+        # Construct the API URL
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        
+        # Prepare the payload
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': 'HTML'
+        }
+        
+        # Send the request
+        response = requests.post(url, data=payload, timeout=10)
+        
+        # Check if the request was successful
+        if response.status_code == 200:
+            logger.info("Message sent successfully")
+            return True
+        else:
+            logger.error(f"Failed to send message: {response.text}")
+            return False
+            
     except Exception as e:
-        logging.error(f"Error sending Telegram message with image: {e}")
-        # Define a base delay value for exponential backoff (in seconds)
-        delay = 1  # Start with 1 second delay
-        max_retries = 3
-        
-        for attempt in range(max_retries):
-            try:
-                wait_time = delay * (2 ** attempt)  # Exponential backoff
-                logging.info(f"Retrying in {wait_time} seconds (attempt {attempt+1}/{max_retries})...")
-                time.sleep(wait_time)
-                
-                # Retry sending the message
-                bot.send_photo(
-                    chat_id=CHAT_ID,
-                    photo=open(image_path, 'rb'),
-                    caption=message
-                )
-                return True
-            except Exception as retry_e:
-                logging.error(f"Retry attempt {attempt+1} failed: {retry_e}")
-        
+        logger.error(f"Error sending Telegram message: {str(e)}")
         return False
 
-def send_telegram_message_with_image_and_message(image_path, message_text):
-    """Send an image with a separate text message to Telegram"""
-    # First send the image
-    send_telegram_message_with_image(image_path, "")
+def send_telegram_message_with_image(image_path: str, caption: str = "") -> bool:
+    """
+    Send an image with optional caption to a Telegram bot.
     
-    # Then send the text message separately
-    send_telegram_message(message_text)
+    Args:
+        image_path (str): Path to the image file
+        caption (str): Optional caption text
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Load environment variables
+        load_dotenv()
+        
+        # Get bot token and chat ID from environment variables
+        bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        
+        if not bot_token or not chat_id:
+            logger.warning("Telegram bot token or chat ID not set in environment variables")
+            return False
+        
+        # Check if image exists
+        if not os.path.exists(image_path):
+            logger.error(f"Image file not found: {image_path}")
+            send_telegram_message(f"Error: Image file not found: {image_path}")
+            return False
+        
+        # Construct the API URL
+        url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+        
+        # Prepare the payload
+        payload = {
+            'chat_id': chat_id,
+            'caption': caption,
+            'parse_mode': 'HTML'
+        }
+        
+        # Prepare the files
+        files = {
+            'photo': open(image_path, 'rb')
+        }
+        
+        # Send the request
+        response = requests.post(url, data=payload, files=files, timeout=30)
+        
+        # Close the file
+        files['photo'].close()
+        
+        # Check if the request was successful
+        if response.status_code == 200:
+            logger.info(f"Image sent successfully: {image_path}")
+            return True
+        else:
+            logger.error(f"Failed to send image: {response.text}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error sending Telegram image: {str(e)}")
+        return False
+
+def send_telegram_message_with_image_and_message(image_path: str, message_text: str) -> bool:
+    """
+    Send both an image and a separate text message to Telegram.
+    
+    Args:
+        image_path (str): Path to the image file
+        message_text (str): Text message to send
+        
+    Returns:
+        bool: True if both operations successful, False otherwise
+    """
+    image_sent = send_telegram_message_with_image(image_path, "")
+    message_sent = send_telegram_message(message_text)
+    
+    return image_sent and message_sent

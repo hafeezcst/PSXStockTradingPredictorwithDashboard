@@ -3,16 +3,26 @@ Trading signals component for the PSX dashboard.
 """
 
 import streamlit as st
-import sqlite3
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from typing import Dict, Any, List, Optional
-import os
 from datetime import datetime, timedelta
+import sqlite3
+import os
+import sys
+from typing import Dict, Any, List, Optional, Tuple
+from pathlib import Path
+import logging
+import hashlib
 
-from src.data_processing.dashboard.components.shared_styles import (
+# Add the project root directory to the Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# Import local components
+from .database_manager import DatabaseManager
+from .shared_styles import (
     apply_shared_styles,
     create_custom_header,
     create_custom_subheader,
@@ -21,6 +31,358 @@ from src.data_processing.dashboard.components.shared_styles import (
     create_metric_card,
     create_alert
 )
+
+# Constants for database paths
+SIGNALS_DB_PATH = "/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/data/databases/production/PSX_investing_Stocks_KMI30.db"
+TRACKING_DB_PATH = "/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/data/databases/production/PSX_investing_Stocks_KMI30_tracking.db"
+
+class SignalTracker:
+    def __init__(self):
+        self.signals_db_path = SIGNALS_DB_PATH
+        self.tracking_db_path = TRACKING_DB_PATH
+        self.signals_conn = None
+        self.tracking_conn = None
+        self.logger = logging.getLogger(__name__)
+        self.db_manager = DatabaseManager()  # Initialize DatabaseManager
+
+    def connect(self) -> bool:
+        """Establish connections to both databases."""
+        try:
+            self.signals_conn = sqlite3.connect(self.signals_db_path)
+            self.tracking_conn = sqlite3.connect(self.tracking_db_path)
+            self._initialize_tracking_tables()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error connecting to databases: {str(e)}")
+            return False
+
+    def disconnect(self):
+        """Close database connections."""
+        if self.signals_conn:
+            self.signals_conn.close()
+        if self.tracking_conn:
+            self.tracking_conn.close()
+
+    def _initialize_tracking_tables(self):
+        """Initialize tracking database tables."""
+        try:
+            cursor = self.tracking_conn.cursor()
+            
+            # Create signal_transitions table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS signal_transitions (
+                transition_id TEXT PRIMARY KEY,
+                stock_symbol TEXT NOT NULL,
+                from_signal TEXT NOT NULL,
+                to_signal TEXT NOT NULL,
+                transition_date TIMESTAMP NOT NULL,
+                entry_price REAL,
+                exit_price REAL,
+                pl_percentage REAL,
+                holding_days INTEGER,
+                status TEXT DEFAULT 'ACTIVE',
+                risk_level TEXT,
+                confidence_level TEXT,
+                volume INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+            
+            # Create signal_metrics table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS signal_metrics (
+                metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transition_id TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                metric_value REAL NOT NULL,
+                metric_date TIMESTAMP NOT NULL,
+                FOREIGN KEY (transition_id) REFERENCES signal_transitions(transition_id)
+            )
+            """)
+            
+            # Create signal_notes table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS signal_notes (
+                note_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transition_id TEXT NOT NULL,
+                note_text TEXT NOT NULL,
+                note_type TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (transition_id) REFERENCES signal_transitions(transition_id)
+            )
+            """)
+            
+            # Create signal_history table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS signal_history (
+                history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transition_id TEXT NOT NULL,
+                stock_symbol TEXT NOT NULL,
+                signal_type TEXT NOT NULL,
+                signal_date TIMESTAMP NOT NULL,
+                price REAL,
+                volume INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (transition_id) REFERENCES signal_transitions(transition_id)
+            )
+            """)
+            
+            self.tracking_conn.commit()
+        except Exception as e:
+            self.logger.error(f"Error initializing tracking tables: {str(e)}")
+            raise
+
+    def _generate_transition_id(self, stock_symbol: str, from_signal: str, to_signal: str, date: str) -> str:
+        """Generate a unique transition ID."""
+        unique_string = f"{stock_symbol}_{from_signal}_{to_signal}_{date}"
+        return hashlib.md5(unique_string.encode()).hexdigest()
+
+    def track_signal_transition(self, stock_symbol: str, from_signal: str, to_signal: str, 
+                              date: str, entry_price: float = None, volume: int = None,
+                              risk_level: str = None, confidence_level: str = None) -> Optional[str]:
+        """Track a signal transition and return the transition ID."""
+        try:
+            # Generate transition ID
+            transition_id = self._generate_transition_id(stock_symbol, from_signal, to_signal, date)
+            
+            # Check if transition already exists
+            cursor = self.tracking_conn.cursor()
+            cursor.execute("""
+            SELECT transition_id FROM signal_transitions 
+            WHERE transition_id = ? AND status = 'ACTIVE'
+            """, (transition_id,))
+            
+            if cursor.fetchone():
+                self.logger.info(f"Signal transition already exists for {stock_symbol}")
+                return None
+            
+            # Insert new transition
+            cursor.execute("""
+            INSERT INTO signal_transitions (
+                transition_id, stock_symbol, from_signal, to_signal, 
+                transition_date, entry_price, volume, risk_level, confidence_level
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (transition_id, stock_symbol, from_signal, to_signal, 
+                  date, entry_price, volume, risk_level, confidence_level))
+            
+            # Add to history
+            cursor.execute("""
+            INSERT INTO signal_history (
+                transition_id, stock_symbol, signal_type, signal_date, price, volume
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (transition_id, stock_symbol, to_signal, date, entry_price, volume))
+            
+            self.tracking_conn.commit()
+            return transition_id
+            
+        except Exception as e:
+            self.logger.error(f"Error tracking signal transition: {str(e)}")
+            self.tracking_conn.rollback()
+            return None
+
+    def update_signal_metrics(self, transition_id: str, metrics: Dict[str, float], date: str = None):
+        """Update metrics for a signal transition."""
+        try:
+            if date is None:
+                date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            cursor = self.tracking_conn.cursor()
+            for metric_name, metric_value in metrics.items():
+                cursor.execute("""
+                INSERT INTO signal_metrics (transition_id, metric_name, metric_value, metric_date)
+                VALUES (?, ?, ?, ?)
+                """, (transition_id, metric_name, metric_value, date))
+            
+            self.tracking_conn.commit()
+            
+        except Exception as e:
+            self.logger.error(f"Error updating signal metrics: {str(e)}")
+            self.tracking_conn.rollback()
+
+    def close_signal_transition(self, transition_id: str, exit_price: float, exit_date: str):
+        """Close a signal transition with exit information."""
+        try:
+            cursor = self.tracking_conn.cursor()
+            
+            # Get transition details
+            cursor.execute("""
+            SELECT entry_price, transition_date 
+            FROM signal_transitions 
+            WHERE transition_id = ? AND status = 'ACTIVE'
+            """, (transition_id,))
+            
+            result = cursor.fetchone()
+            if not result:
+                self.logger.warning(f"No active transition found for ID {transition_id}")
+                return
+            
+            entry_price, entry_date = result
+            
+            # Calculate metrics
+            pl_percentage = ((exit_price - entry_price) / entry_price * 100) if entry_price else None
+            holding_days = (datetime.strptime(exit_date, '%Y-%m-%d %H:%M:%S') - 
+                          datetime.strptime(entry_date, '%Y-%m-%d %H:%M:%S')).days
+            
+            # Update transition
+            cursor.execute("""
+            UPDATE signal_transitions 
+            SET status = 'CLOSED',
+                exit_price = ?,
+                pl_percentage = ?,
+                holding_days = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE transition_id = ?
+            """, (exit_price, pl_percentage, holding_days, transition_id))
+            
+            self.tracking_conn.commit()
+            
+        except Exception as e:
+            self.logger.error(f"Error closing signal transition: {str(e)}")
+            self.tracking_conn.rollback()
+
+    def add_signal_note(self, transition_id: str, note_text: str, note_type: str = "general"):
+        """Add a note to a signal transition."""
+        try:
+            cursor = self.tracking_conn.cursor()
+            cursor.execute("""
+            INSERT INTO signal_notes (transition_id, note_text, note_type)
+            VALUES (?, ?, ?)
+            """, (transition_id, note_text, note_type))
+            
+            self.tracking_conn.commit()
+            
+        except Exception as e:
+            self.logger.error(f"Error adding signal note: {str(e)}")
+            self.tracking_conn.rollback()
+
+    def get_active_transitions(self) -> pd.DataFrame:
+        """Get all active signal transitions."""
+        try:
+            query = """
+            SELECT 
+                t.*,
+                n.note_text as latest_note,
+                m.metric_value as latest_metric_value,
+                m.metric_name as latest_metric_name
+            FROM signal_transitions t
+            LEFT JOIN signal_notes n ON t.transition_id = n.transition_id
+            LEFT JOIN signal_metrics m ON t.transition_id = m.transition_id
+            WHERE t.status = 'ACTIVE'
+            ORDER BY t.transition_date DESC
+            """
+            return pd.read_sql_query(query, self.tracking_conn)
+            
+        except Exception as e:
+            self.logger.error(f"Error getting active transitions: {str(e)}")
+            return pd.DataFrame()
+
+    def get_transition_history(self, stock_symbol: str = None) -> pd.DataFrame:
+        """Get signal transition history for a stock or all stocks."""
+        try:
+            query = """
+            SELECT * FROM signal_transitions
+            WHERE status = 'CLOSED'
+            """
+            if stock_symbol:
+                query += f" AND stock_symbol = '{stock_symbol}'"
+            query += " ORDER BY transition_date DESC"
+            
+            return pd.read_sql_query(query, self.tracking_conn)
+            
+        except Exception as e:
+            self.logger.error(f"Error getting transition history: {str(e)}")
+            return pd.DataFrame()
+
+    def get_performance_metrics(self, stock_symbol: str = None) -> Dict[str, float]:
+        """Get performance metrics for a stock or all stocks."""
+        try:
+            where_clause = "WHERE status = 'CLOSED'"
+            if stock_symbol:
+                where_clause += f" AND stock_symbol = '{stock_symbol}'"
+            
+            query = f"""
+            SELECT 
+                COUNT(*) as total_trades,
+                AVG(pl_percentage) as avg_pl,
+                AVG(holding_days) as avg_holding_days,
+                COUNT(CASE WHEN pl_percentage > 0 THEN 1 END) * 100.0 / COUNT(*) as success_rate
+            FROM signal_transitions
+            {where_clause}
+            """
+            
+            df = pd.read_sql_query(query, self.tracking_conn)
+            return df.iloc[0].to_dict()
+            
+        except Exception as e:
+            self.logger.error(f"Error getting performance metrics: {str(e)}")
+            return {}
+
+    def sync_signals(self):
+        """Sync signals from main database to tracking database."""
+        try:
+            # Get latest signals from main database
+            signals_cursor = self.signals_conn.cursor()
+            signals_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            signal_tables = [table[0] for table in signals_cursor.fetchall()]
+            
+            for table in signal_tables:
+                if table.endswith('_stocks'):
+                    signal_type = table.replace('_stocks', '')
+                    query = f"SELECT * FROM {table} ORDER BY Date DESC"
+                    signals_df = pd.read_sql_query(query, self.signals_conn)
+                    
+                    for _, row in signals_df.iterrows():
+                        # Check if signal already tracked
+                        transition_id = self._generate_transition_id(
+                            row['Stock'], 
+                            'NEW', 
+                            signal_type.upper(),
+                            row['Date']
+                        )
+                        
+                        # Track new signal if not exists
+                        self.track_signal_transition(
+                            stock_symbol=row['Stock'],
+                            from_signal='NEW',
+                            to_signal=signal_type.upper(),
+                            date=row['Date'],
+                            entry_price=row.get('Close', None),
+                            volume=row.get('Volume', None),
+                            risk_level=row.get('Risk_Level', 'MEDIUM'),
+                            confidence_level=row.get('Confidence', 'MEDIUM')
+                        )
+            
+            self.tracking_conn.commit()
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error syncing signals: {str(e)}")
+            self.tracking_conn.rollback()
+            return False
+
+class TradingSignals:
+    def __init__(self):
+        self.db_path = SIGNALS_DB_PATH
+        self.db_manager = DatabaseManager()
+        self.conn = None
+        self.cursor = None
+
+    def connect(self):
+        """Connect to the database and ensure tables exist."""
+        try:
+            if self.db_manager.connect(self.db_path):
+                self.conn = self.db_manager.conn
+                self.cursor = self.db_manager.cursor
+                return True
+            return False
+        except Exception as e:
+            logging.error(f"Error connecting to database: {str(e)}")
+            return False
+
+    def disconnect(self):
+        """Close database connection."""
+        self.db_manager.disconnect()
 
 def connect_to_database(db_path: str) -> sqlite3.Connection:
     """
@@ -74,39 +436,67 @@ def get_signal_counts(conn: sqlite3.Connection, days_back: int = 7) -> pd.DataFr
         # Get the count of signals for each day in the past N days
         cutoff_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
         
-        # Query for buy signals
-        buy_query = f"""
-        SELECT Date, COUNT(*) as Buy_Count 
-        FROM buy_stocks 
-        WHERE Date >= '{cutoff_date}' 
-        GROUP BY Date 
-        ORDER BY Date
-        """
-        buy_df = pd.read_sql_query(buy_query, conn)
+        # Check if tables exist
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        existing_tables = [table[0] for table in cursor.fetchall()]
         
-        # Query for sell signals
-        sell_query = f"""
-        SELECT Date, COUNT(*) as Sell_Count 
-        FROM sell_stocks 
-        WHERE Date >= '{cutoff_date}' 
-        GROUP BY Date 
-        ORDER BY Date
-        """
-        sell_df = pd.read_sql_query(sell_query, conn)
+        # Initialize empty DataFrames
+        buy_df = pd.DataFrame()
+        sell_df = pd.DataFrame()
+        neutral_df = pd.DataFrame()
         
-        # Query for neutral signals
-        neutral_query = f"""
-        SELECT Date, COUNT(*) as Neutral_Count 
-        FROM neutral_stocks 
-        WHERE Date >= '{cutoff_date}' 
-        GROUP BY Date 
-        ORDER BY Date
-        """
-        neutral_df = pd.read_sql_query(neutral_query, conn)
+        # Query for buy signals if table exists
+        if 'buy_stocks' in existing_tables:
+            buy_query = f"""
+            SELECT Date, COUNT(*) as Buy_Count 
+            FROM buy_stocks 
+            WHERE Date >= '{cutoff_date}' 
+            GROUP BY Date 
+            ORDER BY Date
+            """
+            buy_df = pd.read_sql_query(buy_query, conn)
+        else:
+            st.warning("Buy signals table not found in database")
+        
+        # Query for sell signals if table exists
+        if 'sell_stocks' in existing_tables:
+            sell_query = f"""
+            SELECT Date, COUNT(*) as Sell_Count 
+            FROM sell_stocks 
+            WHERE Date >= '{cutoff_date}' 
+            GROUP BY Date 
+            ORDER BY Date
+            """
+            sell_df = pd.read_sql_query(sell_query, conn)
+        else:
+            st.warning("Sell signals table not found in database")
+        
+        # Query for neutral signals if table exists
+        if 'neutral_stocks' in existing_tables:
+            neutral_query = f"""
+            SELECT Date, COUNT(*) as Neutral_Count 
+            FROM neutral_stocks 
+            WHERE Date >= '{cutoff_date}' 
+            GROUP BY Date 
+            ORDER BY Date
+            """
+            neutral_df = pd.read_sql_query(neutral_query, conn)
+        else:
+            st.warning("Neutral signals table not found in database")
+        
+        # If no tables exist, return empty DataFrame with expected columns
+        if all(df.empty for df in [buy_df, sell_df, neutral_df]):
+            return pd.DataFrame(columns=['Date', 'Buy_Count', 'Sell_Count', 'Neutral_Count'])
         
         # Merge the dataframes
-        result = pd.merge(buy_df, sell_df, on='Date', how='outer')
-        result = pd.merge(result, neutral_df, on='Date', how='outer')
+        result = pd.DataFrame()
+        if not buy_df.empty:
+            result = buy_df
+        if not sell_df.empty:
+            result = pd.merge(result, sell_df, on='Date', how='outer') if not result.empty else sell_df
+        if not neutral_df.empty:
+            result = pd.merge(result, neutral_df, on='Date', how='outer') if not result.empty else neutral_df
         
         # Fill NaN values with 0
         result = result.fillna(0)
@@ -119,7 +509,8 @@ def get_signal_counts(conn: sqlite3.Connection, days_back: int = 7) -> pd.DataFr
         return result
     except Exception as e:
         st.error(f"Error getting signal counts: {str(e)}")
-        return pd.DataFrame()
+        # Return empty DataFrame with expected columns
+        return pd.DataFrame(columns=['Date', 'Buy_Count', 'Sell_Count', 'Neutral_Count'])
 
 def get_signal_performance(conn: sqlite3.Connection, signal_type: str) -> pd.DataFrame:
     """
@@ -392,13 +783,13 @@ def get_latest_signals(conn: sqlite3.Connection, signal_type: str, limit: int = 
 
 def display_trading_signals(config: Dict[str, Any]):
     """Display trading signals dashboard."""
+    # Apply shared styles
     apply_shared_styles()
     create_custom_header("Trading Signals")
     create_custom_divider()
     
     # Get database path from config or use default
-    db_path = config.get("trading_signals_db", 
-                        "/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/data/databases/production/PSX_investing_Stocks_KMI30.db")
+    db_path = config.get("databases", {}).get("signals_db_path", SIGNALS_DB_PATH)
     
     # Check if database exists
     if not os.path.exists(db_path):
@@ -406,8 +797,8 @@ def display_trading_signals(config: Dict[str, Any]):
         return
     
     # Connect to the database
-    conn = connect_to_database(db_path)
-    if conn is None:
+    trading_signals = TradingSignals()
+    if not trading_signals.connect():
         return
     
     # Create tabs for different views
@@ -416,7 +807,7 @@ def display_trading_signals(config: Dict[str, Any]):
     with tab1:
         # Get signal counts for trend chart
         days_back = st.slider("Number of days to analyze", 3, 30, 7, key="summary_days_back")
-        signal_counts = get_signal_counts(conn, days_back)
+        signal_counts = get_signal_counts(trading_signals.conn, days_back)
         
         if not signal_counts.empty:
             # Get the latest date in the data
@@ -494,8 +885,8 @@ def display_trading_signals(config: Dict[str, Any]):
             st.markdown("### Signal Performance Summary")
             
             # Get performance data for buy and sell signals
-            buy_performance = get_signal_performance(conn, "buy")
-            sell_performance = get_signal_performance(conn, "sell")
+            buy_performance = get_signal_performance(trading_signals.conn, "buy")
+            sell_performance = get_signal_performance(trading_signals.conn, "sell")
             
             # Calculate performance metrics
             if not buy_performance.empty:
@@ -536,8 +927,8 @@ def display_trading_signals(config: Dict[str, Any]):
         st.markdown("### Latest Trading Signals")
         
         # Get the latest buy and sell signals
-        latest_buy_signals = get_latest_signals(conn, "buy", 5)
-        latest_sell_signals = get_latest_signals(conn, "sell", 5)
+        latest_buy_signals = get_latest_signals(trading_signals.conn, "buy", 5)
+        latest_sell_signals = get_latest_signals(trading_signals.conn, "sell", 5)
         
         # Display latest buy signals
         st.markdown("#### Latest Buy Signals")
@@ -709,7 +1100,7 @@ def display_trading_signals(config: Dict[str, Any]):
         st.markdown("### Buy Signals")
         
         # Get buy signals data
-        buy_df = get_table_data(conn, "buy_stocks")
+        buy_df = get_table_data(trading_signals.conn, "buy_stocks")
         
         if not buy_df.empty:
             # Create filters
@@ -778,7 +1169,7 @@ def display_trading_signals(config: Dict[str, Any]):
         st.markdown("### Sell Signals")
         
         # Get sell signals data
-        sell_df = get_table_data(conn, "sell_stocks")
+        sell_df = get_table_data(trading_signals.conn, "sell_stocks")
         
         if not sell_df.empty:
             # Create filters
@@ -847,7 +1238,7 @@ def display_trading_signals(config: Dict[str, Any]):
         st.markdown("### Neutral Signals")
         
         # Get neutral signals data
-        neutral_df = get_table_data(conn, "neutral_stocks")
+        neutral_df = get_table_data(trading_signals.conn, "neutral_stocks")
         
         if not neutral_df.empty:
             # Create filters
@@ -914,8 +1305,8 @@ def display_trading_signals(config: Dict[str, Any]):
         st.markdown("### Performance Analysis")
         
         # Get performance data for buy and sell signals
-        buy_performance = get_signal_performance(conn, "buy")
-        sell_performance = get_signal_performance(conn, "sell")
+        buy_performance = get_signal_performance(trading_signals.conn, "buy")
+        sell_performance = get_signal_performance(trading_signals.conn, "sell")
         
         # Create tabs for buy and sell performance
         perf_tab1, perf_tab2 = st.tabs(["Buy Performance", "Sell Performance"])
@@ -1017,4 +1408,114 @@ def display_trading_signals(config: Dict[str, Any]):
                 st.info("No sell performance data available.")
     
     # Close the database connection
-    conn.close() 
+    trading_signals.disconnect()
+
+def display_signal_tracking(config: Dict[str, Any]):
+    """Display signal tracking dashboard."""
+    st.markdown("### 📊 Signal Tracking Dashboard")
+    
+    # Initialize signal tracker
+    tracker = SignalTracker()
+    if not tracker.connect():
+        st.error("Failed to connect to databases")
+        return
+    
+    try:
+        # Create tabs for different views
+        tab1, tab2, tab3, tab4 = st.tabs(["Active Signals", "Signal History", "Performance", "Sync"])
+        
+        with tab1:
+            st.markdown("#### 🔄 Active Signal Transitions")
+            active_transitions = tracker.get_active_transitions()
+            
+            if not active_transitions.empty:
+                # Display active transitions
+                st.dataframe(active_transitions)
+                
+                # Allow closing transitions
+                selected_transition = st.selectbox(
+                    "Select transition to close:",
+                    active_transitions['transition_id'].tolist()
+                )
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    exit_price = st.number_input("Exit Price", min_value=0.0)
+                with col2:
+                    exit_date = st.date_input("Exit Date")
+                
+                if st.button("Close Transition"):
+                    exit_datetime = datetime.combine(exit_date, datetime.min.time())
+                    tracker.close_signal_transition(
+                        selected_transition,
+                        exit_price,
+                        exit_datetime.strftime('%Y-%m-%d %H:%M:%S')
+                    )
+                    st.success("Transition closed successfully!")
+                    st.rerun()
+            else:
+                st.info("No active signal transitions found")
+        
+        with tab2:
+            st.markdown("#### 📜 Signal History")
+            
+            # Add stock filter
+            stock_filter = st.text_input("Filter by stock symbol (leave empty for all):")
+            
+            # Get and display history
+            history = tracker.get_transition_history(stock_filter if stock_filter else None)
+            if not history.empty:
+                st.dataframe(history)
+                
+                # Create visualization
+                fig = px.scatter(
+                    history,
+                    x='transition_date',
+                    y='pl_percentage',
+                    color='stock_symbol',
+                    size='holding_days',
+                    hover_data=['from_signal', 'to_signal', 'entry_price', 'exit_price'],
+                    title='Signal Transitions Performance'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No signal history found")
+        
+        with tab3:
+            st.markdown("#### 📈 Performance Metrics")
+            
+            # Add stock filter
+            stock_filter = st.text_input("Filter by stock symbol (leave empty for all):", key="perf_stock_filter")
+            
+            # Get and display metrics
+            metrics = tracker.get_performance_metrics(stock_filter if stock_filter else None)
+            
+            if metrics:
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Total Trades", int(metrics['total_trades']))
+                
+                with col2:
+                    st.metric("Avg P/L %", f"{metrics['avg_pl']:.2f}%")
+                
+                with col3:
+                    st.metric("Avg Holding Days", f"{metrics['avg_holding_days']:.1f}")
+                
+                with col4:
+                    st.metric("Success Rate", f"{metrics['success_rate']:.1f}%")
+            else:
+                st.info("No performance metrics available")
+        
+        with tab4:
+            st.markdown("#### 🔄 Sync Signals")
+            
+            if st.button("Sync Signals from Main Database"):
+                with st.spinner("Syncing signals..."):
+                    if tracker.sync_signals():
+                        st.success("Signals synced successfully!")
+                    else:
+                        st.error("Error syncing signals")
+    
+    finally:
+        tracker.disconnect() 
