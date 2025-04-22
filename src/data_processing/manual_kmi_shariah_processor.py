@@ -473,7 +473,7 @@ def parse_kmi_shariah_data(html_content):
 def save_to_database(data, db_path=None):
     """Save the extracted data to SQLite database with data retention"""
     if db_path is None:
-        db_path = PRODUCTION_DB_DIR / "PSX_KMI_data.db"
+        db_path = Path("/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/data/databases/production/PSXSymbols.db")
     
     try:
         # Ensure the database directory exists
@@ -481,6 +481,10 @@ def save_to_database(data, db_path=None):
         
         print(f"  - Database path: {db_path}")
         print(f"  - Database exists: {os.path.exists(db_path)}")
+        
+        if not os.path.exists(db_path):
+            print("  - Creating new database file")
+            open(db_path, 'a').close()
         
         logging.info(f"Saving {len(data)} records to database: {db_path}")
         
@@ -515,6 +519,7 @@ def save_to_database(data, db_path=None):
                 date_added TEXT,
                 update_date TEXT,
                 backup_date TEXT,
+                rank INTEGER,
                 PRIMARY KEY (symbol, date_added, backup_date)
             )
             ''')
@@ -534,6 +539,7 @@ def save_to_database(data, db_path=None):
                 market_cap_000 INTEGER,
                 date_added TEXT,
                 update_date TEXT,
+                rank INTEGER,
                 PRIMARY KEY (symbol, date_added)
             )
             ''')
@@ -561,7 +567,7 @@ def save_to_database(data, db_path=None):
                 if count != len(data):
                     raise ValueError(f"Data count mismatch: expected {len(data)}, got {count}")
             
-        logging.info(f"Successfully saved {len(data)} records to database with backup")
+        logging.info(f"Successfully saved {len(data)} records to KMIALLSHR table")
         return True
     except Exception as e:
         logging.error(f"Failed to save data to database: {e}")
@@ -708,6 +714,184 @@ def fetch_market_data_from_api():
         logging.error(f"Failed to fetch market data from API: {e}")
         return None
 
+def copy_missing_data_to_kmiall(db_path=None):
+    """Copy missing data from KMIALLSHR to KMIALL table"""
+    if db_path is None:
+        db_path = PRODUCTION_DB_DIR / "PSXSymbols.db"  # Changed from PSX_KMI_data.db to PSXSymbols.db
+    
+    try:
+        print("\n🔄 Copying missing data from KMIALLSHR to KMIALL...")
+        logging.info("Copying missing data from KMIALLSHR to KMIALL")
+        
+        with sqlite3.connect(db_path) as conn:
+            # Get all unique dates from KMIALLSHR
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT date_added FROM KMIALLSHR ORDER BY date_added")
+            dates = cursor.fetchall()
+            
+            if not dates:
+                print("  - No dates found in KMIALLSHR table")
+                logging.warning("No dates found in KMIALLSHR table")
+                return False
+            
+            print(f"  - Found {len(dates)} unique dates in KMIALLSHR")
+            
+            for date in dates:
+                date_str = date[0]
+                print(f"  - Processing date: {date_str}")
+                
+                # Check if data exists in KMIALL for this date
+                cursor.execute("SELECT COUNT(*) FROM KMIALL WHERE date_added = ?", (date_str,))
+                kmiall_count = cursor.fetchone()[0]
+                
+                if kmiall_count == 0:
+                    print(f"    - No data found in KMIALL for {date_str}, copying from KMIALLSHR")
+                    
+                    # Get data from KMIALLSHR
+                    cursor.execute("""
+                        SELECT symbol, points, weight, current_price, change, change_percent,
+                               high_52_week, low_52_week, volume, market_cap_000, date_added, update_date, rank
+                        FROM KMIALLSHR 
+                        WHERE date_added = ?
+                    """, (date_str,))
+                    data = cursor.fetchall()
+                    
+                    if data:
+                        # Insert into KMIALL
+                        cursor.executemany("""
+                            INSERT INTO KMIALL (
+                                symbol, points, weight, current_price, change, change_percent,
+                                high_52_week, low_52_week, volume, market_cap_000, date_added, update_date, rank
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, data)
+                        print(f"    - Copied {len(data)} records to KMIALL")
+                        logging.info(f"Copied {len(data)} records to KMIALL for date {date_str}")
+                    else:
+                        print(f"    - No data found in KMIALLSHR for {date_str}")
+                        logging.warning(f"No data found in KMIALLSHR for date {date_str}")
+                else:
+                    print(f"    - Data already exists in KMIALL for {date_str}")
+            
+            conn.commit()
+            print("✅ Completed copying missing data")
+            logging.info("Successfully completed copying missing data")
+            return True
+            
+    except Exception as e:
+        logging.error(f"Failed to copy missing data: {e}")
+        logging.error(traceback.format_exc())
+        print(f"❌ Error copying data: {str(e)}")
+        return False
+
+def update_kmiall_from_excel(db_path=None):
+    """Update KMIALL table with only new scripts from Excel file, preserving existing data"""
+    if db_path is None:
+        db_path = PRODUCTION_DB_DIR / "PSXSymbols.db"
+    
+    try:
+        print("\n🔄 Updating KMIALL table with new scripts from Excel...")
+        logging.info("Updating KMIALL table with new scripts from Excel")
+        
+        # Read the Excel file
+        excel_path = CONFIG_DIR / 'psxsymbols.xlsx'
+        if not excel_path.exists():
+            print(f"  ❌ Excel file not found: {excel_path}")
+            logging.error(f"Excel file not found: {excel_path}")
+            return False
+            
+        print(f"  - Reading Excel file: {excel_path}")
+        df = pd.read_excel(excel_path, sheet_name='KMIALL')
+        
+        if df.empty:
+            print("  ❌ No data found in KMIALL sheet")
+            logging.error("No data found in KMIALL sheet")
+            return False
+            
+        print(f"  - Found {len(df)} symbols in KMIALL sheet")
+        
+        # Get today's date
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        with sqlite3.connect(db_path) as conn:
+            # Create KMIALL table if it doesn't exist
+            conn.execute('''
+            CREATE TABLE IF NOT EXISTS KMIALL (
+                symbol TEXT,
+                points REAL,
+                weight REAL,
+                current_price REAL,
+                change REAL,
+                change_percent REAL,
+                high_52_week REAL,
+                low_52_week REAL,
+                volume INTEGER,
+                market_cap_000 INTEGER,
+                date_added TEXT,
+                update_date TEXT,
+                rank INTEGER,
+                PRIMARY KEY (symbol, date_added)
+            )
+            ''')
+            
+            # Get existing symbols for today
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT symbol FROM KMIALL WHERE date_added = ?", (today,))
+            existing_symbols = {row[0] for row in cursor.fetchall()}
+            
+            # Filter out existing symbols
+            new_symbols = set(df['symbol'].unique()) - existing_symbols
+            new_data = df[df['symbol'].isin(new_symbols)]
+            
+            if len(new_data) == 0:
+                print("  - No new symbols to add")
+                logging.info("No new symbols to add to KMIALL table")
+                return True
+                
+            print(f"  - Found {len(new_data)} new symbols to add")
+            
+            # Add required columns if they don't exist
+            if 'rank' not in new_data.columns:
+                new_data['rank'] = None
+            if 'date_added' not in new_data.columns:
+                new_data['date_added'] = today
+            if 'update_date' not in new_data.columns:
+                new_data['update_date'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Ensure all required columns exist with NULL for missing values
+            required_columns = [
+                'symbol', 'points', 'weight', 'current_price', 'change', 
+                'change_percent', 'high_52_week', 'low_52_week', 'volume', 
+                'market_cap_000', 'date_added', 'update_date', 'rank'
+            ]
+            
+            # Add missing columns with NULL values
+            for col in required_columns:
+                if col not in new_data.columns:
+                    new_data[col] = None
+            
+            # Reorder columns to match database schema
+            new_data = new_data[required_columns]
+            
+            # Insert new data
+            new_data.to_sql('KMIALL', conn, if_exists='append', index=False)
+            
+            # Verify data was inserted correctly
+            count = conn.execute("SELECT COUNT(*) FROM KMIALL WHERE date_added = ? AND symbol IN ({})".format(
+                ','.join(['?'] * len(new_symbols))), [today] + list(new_symbols)).fetchone()[0]
+            
+            if count != len(new_data):
+                raise ValueError(f"Data count mismatch: expected {len(new_data)}, got {count}")
+            
+            print(f"  ✅ Successfully added {len(new_data)} new symbols to KMIALL table")
+            logging.info(f"Successfully added {len(new_data)} new symbols to KMIALL table")
+            return True
+            
+    except Exception as e:
+        logging.error(f"Failed to update KMIALL table: {e}")
+        logging.error(traceback.format_exc())
+        print(f"❌ Error updating KMIALL table: {str(e)}")
+        return False
+
 def main():
     """Main function to run the scraper"""
     print("\n🚀 Starting KMI Shariah Data Processor")
@@ -722,7 +906,7 @@ def main():
     print(f"\n🌐 Target URL: {url}")
     
     # Paths for output - using path constants for consistency
-    db_path = PRODUCTION_DB_DIR / 'PSXSymbols.db'
+    db_path = Path("/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/data/databases/production/PSXSymbols.db")
     
     excel_path = CONFIG_DIR / 'psxsymbols.xlsx'  # Use the correct path to PSXSymbols.xlsx
     
@@ -845,4 +1029,8 @@ def main():
         return False
 
 if __name__ == "__main__":
+    # Run the main scraper
     main()
+    
+    # Optionally run the KMIALL update separately
+    # update_kmiall_from_excel()

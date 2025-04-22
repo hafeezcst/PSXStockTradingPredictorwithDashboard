@@ -735,7 +735,7 @@ def create_success_rate_chart(performance_df: pd.DataFrame) -> go.Figure:
     
     return fig
 
-def get_latest_signals(conn: sqlite3.Connection, signal_type: str, limit: int = 5) -> pd.DataFrame:
+def get_latest_signals(conn: sqlite3.Connection, signal_type: str, limit: int = 10) -> pd.DataFrame:
     """
     Get the latest signals of a specific type.
     
@@ -750,7 +750,7 @@ def get_latest_signals(conn: sqlite3.Connection, signal_type: str, limit: int = 
     try:
         table_name = f"{signal_type}_stocks"
         
-        # Query for the latest signals
+        # Query for the latest signals with correct P/L calculation
         query = f"""
         SELECT 
             Stock,
@@ -759,7 +759,10 @@ def get_latest_signals(conn: sqlite3.Connection, signal_type: str, limit: int = 
             Signal_Close,
             Close,
             Holding_Days,
-            "% P/L",
+            CASE 
+                WHEN Signal_Close > 0 THEN ((Close - Signal_Close) / Signal_Close * 100.0)
+                ELSE NULL
+            END as "% P/L",
             Success,
             Status,
             Update_Date
@@ -775,6 +778,16 @@ def get_latest_signals(conn: sqlite3.Connection, signal_type: str, limit: int = 
         for col in date_columns:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col])
+        
+        # Ensure numeric columns are properly typed
+        numeric_columns = ['Signal_Close', 'Close', '% P/L']
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        # Recalculate P/L if needed
+        if 'Signal_Close' in df.columns and 'Close' in df.columns:
+            df['% P/L'] = ((df['Close'] - df['Signal_Close']) / df['Signal_Close'] * 100.0).round(2)
         
         return df
     except Exception as e:
@@ -927,8 +940,8 @@ def display_trading_signals(config: Dict[str, Any]):
         st.markdown("### Latest Trading Signals")
         
         # Get the latest buy and sell signals
-        latest_buy_signals = get_latest_signals(trading_signals.conn, "buy", 5)
-        latest_sell_signals = get_latest_signals(trading_signals.conn, "sell", 5)
+        latest_buy_signals = get_latest_signals(trading_signals.conn, "buy", 10)
+        latest_sell_signals = get_latest_signals(trading_signals.conn, "sell", 10)
         
         # Display latest buy signals
         st.markdown("#### Latest Buy Signals")

@@ -162,7 +162,7 @@ def process_stock_data(table_name, results, cursor, multibagger_symbols, data_so
         if (rsi_3months_latest is not None and rsi_3months_latest >= 40 and
             rsi_weekly_latest is not None and rsi_weekly_latest >= 40 and
             ao_weekly_latest is not None and ao_weekly_latest >= 0 and
-            volume_latest is not None and volume_latest > 50000):
+            volume_latest is not None and volume_latest > 500):
             
             buy_data = base_data.copy()
             buy_data.update({
@@ -183,7 +183,7 @@ def process_stock_data(table_name, results, cursor, multibagger_symbols, data_so
               # Proper sell condition: price below moving average
               close_latest <= ma_30_latest and
               # More selective volume filter
-              volume_latest is not None and volume_latest > 5000):
+              volume_latest is not None and volume_latest > 500):
               
             sell_data = base_data.copy()
             sell_data.update({

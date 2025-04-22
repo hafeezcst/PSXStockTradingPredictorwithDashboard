@@ -732,6 +732,11 @@ def display_financial_reports(config: Dict[str, Any]):
     
     with tab4:
         display_analysis_tab(df, date_col)
+        
+        # Add enhanced buy signals display
+        st.markdown("### 📈 Latest Buy Signals")
+        buy_signals = get_latest_buy_signals()
+        display_enhanced_buy_signals(buy_signals)
     
     with tab5:
         display_ai_analysis_tab(df, date_col)
@@ -1254,17 +1259,134 @@ def display_ai_analysis_tab(df: pd.DataFrame, date_col: str):
     # Get enhanced company options with signals
     company_options, default_companies = enhance_company_selection(df)
     
-    # Display buy signals summary with enhanced UI
+    # Display enhanced buy signals summary
     buy_signals = get_latest_buy_signals()
     if buy_signals:
         st.markdown("#### 📈 Latest Buy Signals")
-        signals_summary = ""
-        for symbol, signal in list(buy_signals.items())[:5]:  # Show top 5 signals
-            strength = "🔥" if signal['signal_type'] == 'Strong Buy' else "✨"
-            confidence = "⭐" * ({"High": 3, "Medium": 2, "Low": 1}.get(signal['confidence'], 2))
-            price_target = f" (Target: {signal.get('price_target', 'N/A')})" if signal.get('price_target') else ""
-            signals_summary += f"- {strength} **{symbol}**: {signal['signal_type']}{price_target} {confidence}\n"
-        st.markdown(signals_summary)
+        
+        # Create a DataFrame for better display
+        signals_data = []
+        for symbol, signal in list(buy_signals.items())[:10]:  # Get top 10 signals
+            # Format signal date
+            signal_date = signal.get('signal_date')
+            if pd.notna(signal_date):
+                try:
+                    signal_date = pd.to_datetime(signal_date).strftime('%Y-%m-%d')
+                except:
+                    signal_date = str(signal_date)
+            
+            # Format holding days with category
+            holding_days = signal.get('holding_days', 'N/A')
+            holding_category = "Unknown"
+            if isinstance(holding_days, (int, float)):
+                if holding_days <= 5:
+                    holding_category = "Very Short (≤5d)"
+                elif holding_days <= 20:
+                    holding_category = "Short (≤20d)"
+                elif holding_days <= 60:
+                    holding_category = "Medium (≤60d)"
+                else:
+                    holding_category = "Long (>60d)"
+            
+            # Format profit/loss with color and trend
+            profit_loss = signal.get('profit_loss')
+            profit_loss_str = ""
+            if profit_loss is not None:
+                profit_loss_str = f"{profit_loss:+.2f}%"
+                if profit_loss > 0:
+                    profit_loss_str = f"🟢 {profit_loss_str}"
+                elif profit_loss < 0:
+                    profit_loss_str = f"🔴 {profit_loss_str}"
+                else:
+                    profit_loss_str = f"⚪ {profit_loss_str}"
+            
+            # Calculate daily return
+            daily_return = None
+            if isinstance(holding_days, (int, float)) and holding_days > 0 and profit_loss is not None:
+                daily_return = profit_loss / holding_days
+            
+            signals_data.append({
+                'Symbol': symbol,
+                'Signal Date': signal_date,
+                'Signal Price': f"Rs. {signal.get('signal_price', 'N/A')}",
+                'Holding Days': f"{holding_days} ({holding_category})",
+                'Profit/Loss': profit_loss_str,
+                'Daily Return': f"{daily_return:+.2f}%" if daily_return is not None else "N/A",
+                'Confidence': signal.get('confidence', 'Medium'),
+                'Signal Type': signal.get('signal_type', 'Buy')
+            })
+        
+        if signals_data:
+            # Convert to DataFrame and sort by signal date
+            signals_df = pd.DataFrame(signals_data)
+            signals_df['Signal Date'] = pd.to_datetime(signals_df['Signal Date'])
+            signals_df = signals_df.sort_values('Signal Date', ascending=False)
+            
+            # Create tabs for different views
+            tab1, tab2 = st.tabs(["📊 Table View", "📈 Chart View"])
+            
+            with tab1:
+                # Display the table with enhanced styling
+                st.dataframe(
+                    signals_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        'Symbol': st.column_config.TextColumn("Symbol", width="small"),
+                        'Signal Date': st.column_config.DateColumn("Signal Date", width="medium"),
+                        'Signal Price': st.column_config.TextColumn("Signal Price", width="medium"),
+                        'Holding Days': st.column_config.TextColumn("Holding Days", width="medium"),
+                        'Profit/Loss': st.column_config.TextColumn("Profit/Loss", width="medium"),
+                        'Daily Return': st.column_config.TextColumn("Daily Return", width="medium"),
+                        'Confidence': st.column_config.TextColumn("Confidence", width="small"),
+                        'Signal Type': st.column_config.TextColumn("Signal Type", width="small")
+                    }
+                )
+                
+                # Add download button with unique key
+                csv = signals_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Signals",
+                    data=csv,
+                    file_name="latest_buy_signals.csv",
+                    mime="text/csv",
+                    key="download_signals_table"
+                )
+            
+            with tab2:
+                # Create a bar chart for profit/loss
+                fig = px.bar(
+                    signals_df,
+                    x='Symbol',
+                    y='Profit/Loss',
+                    title='Profit/Loss by Stock',
+                    color='Profit/Loss',
+                    color_continuous_scale=['red', 'white', 'green'],
+                    labels={'Profit/Loss': 'Profit/Loss (%)'}
+                )
+                st.plotly_chart(fig, use_container_width=True, key="profit_loss_bar_chart")
+                
+                # Create a scatter plot for holding days vs profit/loss
+                fig2 = px.scatter(
+                    signals_df,
+                    x='Holding Days',
+                    y='Profit/Loss',
+                    color='Symbol',
+                    title='Holding Days vs Profit/Loss',
+                    labels={'Holding Days': 'Holding Days', 'Profit/Loss': 'Profit/Loss (%)'}
+                )
+                st.plotly_chart(fig2, use_container_width=True, key="holding_days_scatter_chart")
+                
+                # Add download button for chart data with unique key
+                st.download_button(
+                    label="📥 Download Chart Data",
+                    data=signals_df.to_csv(index=False),
+                    file_name="buy_signals_chart_data.csv",
+                    mime="text/csv",
+                    key="download_chart_data"
+                )
+        else:
+            st.info("No valid buy signals to display.")
     
     # Company selection with enhanced UI
     st.markdown("#### 📊 Select Companies for Analysis")
@@ -1449,7 +1571,7 @@ def display_ai_analysis_tab(df: pd.DataFrame, date_col: str):
                     with analysis_placeholder.container():
                         st.markdown(analysis)
                         
-                        # Add download button for the analysis
+                        # Add download button for the analysis with unique key
                         analysis_filename = f"financial_analysis_{company1}"
                         if company2 != "None":
                             analysis_filename += f"_vs_{company2}"
@@ -1460,7 +1582,7 @@ def display_ai_analysis_tab(df: pd.DataFrame, date_col: str):
                             data=analysis.encode(),
                             file_name=analysis_filename,
                             mime="text/markdown",
-                            key="download_analysis"
+                            key="download_analysis_report"
                         )
                 
                 except Exception as e:
@@ -2749,5 +2871,130 @@ def display_buy_signals(signals: Dict[str, Dict]):
                 'Confidence': st.column_config.TextColumn("Confidence", width="small")
             }
         )
+    else:
+        st.info("No valid buy signals to display.")
+
+def display_enhanced_buy_signals(signals: Dict[str, Dict]):
+    """
+    Display enhanced buy signals with detailed information including signal date, holding days,
+    profit/loss, and additional metrics.
+    """
+    if not signals:
+        st.info("No buy signals available at the moment.")
+        return
+        
+    st.markdown("## 📈 Top 10 Latest Buy Signals")
+    
+    # Create a DataFrame for better display
+    signals_data = []
+    for symbol, signal_info in signals.items():
+        # Format signal date
+        signal_date = signal_info.get('signal_date')
+        if pd.notna(signal_date):
+            try:
+                signal_date = pd.to_datetime(signal_date).strftime('%Y-%m-%d')
+            except:
+                signal_date = str(signal_date)
+        
+        # Format holding days with category
+        holding_days = signal_info.get('holding_days', 'N/A')
+        holding_category = "Unknown"
+        if isinstance(holding_days, (int, float)):
+            if holding_days <= 5:
+                holding_category = "Very Short (≤5d)"
+            elif holding_days <= 20:
+                holding_category = "Short (≤20d)"
+            elif holding_days <= 60:
+                holding_category = "Medium (≤60d)"
+            else:
+                holding_category = "Long (>60d)"
+        
+        # Format profit/loss with color and trend
+        profit_loss = signal_info.get('profit_loss')
+        profit_loss_str = ""
+        if profit_loss is not None:
+            profit_loss_str = f"{profit_loss:+.2f}%"
+            if profit_loss > 0:
+                profit_loss_str = f"🟢 {profit_loss_str}"
+            elif profit_loss < 0:
+                profit_loss_str = f"🔴 {profit_loss_str}"
+            else:
+                profit_loss_str = f"⚪ {profit_loss_str}"
+        
+        # Calculate daily return
+        daily_return = None
+        if isinstance(holding_days, (int, float)) and holding_days > 0 and profit_loss is not None:
+            daily_return = profit_loss / holding_days
+        
+        signals_data.append({
+            'Symbol': symbol,
+            'Signal Date': signal_date,
+            'Signal Price': f"Rs. {signal_info.get('signal_price', 'N/A')}",
+            'Holding Days': f"{holding_days} ({holding_category})",
+            'Profit/Loss': profit_loss_str,
+            'Daily Return': f"{daily_return:+.2f}%" if daily_return is not None else "N/A",
+            'Confidence': signal_info.get('confidence', 'Medium'),
+            'Signal Type': signal_info.get('signal_type', 'Buy')
+        })
+    
+    if signals_data:
+        # Convert to DataFrame and sort by signal date
+        df = pd.DataFrame(signals_data)
+        df['Signal Date'] = pd.to_datetime(df['Signal Date'])
+        df = df.sort_values('Signal Date', ascending=False).head(10)
+        
+        # Create tabs for different views
+        tab1, tab2 = st.tabs(["📊 Table View", "📈 Chart View"])
+        
+        with tab1:
+            # Display the table with enhanced styling
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    'Symbol': st.column_config.TextColumn("Symbol", width="small"),
+                    'Signal Date': st.column_config.DateColumn("Signal Date", width="medium"),
+                    'Signal Price': st.column_config.TextColumn("Signal Price", width="medium"),
+                    'Holding Days': st.column_config.TextColumn("Holding Days", width="medium"),
+                    'Profit/Loss': st.column_config.TextColumn("Profit/Loss", width="medium"),
+                    'Daily Return': st.column_config.TextColumn("Daily Return", width="medium"),
+                    'Confidence': st.column_config.TextColumn("Confidence", width="small"),
+                    'Signal Type': st.column_config.TextColumn("Signal Type", width="small")
+                }
+            )
+            
+            # Add download button
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Signals",
+                data=csv,
+                file_name="latest_buy_signals.csv",
+                mime="text/csv"
+            )
+        
+        with tab2:
+            # Create a bar chart for profit/loss
+            fig = px.bar(
+                df,
+                x='Symbol',
+                y='Profit/Loss',
+                title='Profit/Loss by Stock',
+                color='Profit/Loss',
+                color_continuous_scale=['red', 'white', 'green'],
+                labels={'Profit/Loss': 'Profit/Loss (%)'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Create a scatter plot for holding days vs profit/loss
+            fig2 = px.scatter(
+                df,
+                x='Holding Days',
+                y='Profit/Loss',
+                color='Symbol',
+                title='Holding Days vs Profit/Loss',
+                labels={'Holding Days': 'Holding Days', 'Profit/Loss': 'Profit/Loss (%)'}
+            )
+            st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info("No valid buy signals to display.")
