@@ -6,6 +6,11 @@ import schedule
 import time
 from datetime import datetime
 
+# Add project root to Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 # Configure basic logging
 logging.basicConfig(
     level=logging.INFO,
@@ -50,22 +55,25 @@ def run_signal_tracker():
         
         # Get the path to the run_stock_signal_tracker.py script
         script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        tracker_script = os.path.join(script_dir, "..", "scripts", "run_stock_signal_tracker.py")
+        tracker_script = os.path.join(script_dir, "scripts", "run_stock_signal_tracker.py")
         
         # Create reports directory with timestamp
         timestamp = datetime.now().strftime("%Y%m%d")
-        reports_dir = os.path.join(script_dir, "..", "reports", f"signal_tracking_{timestamp}")
+        reports_dir = os.path.join(script_dir, "reports", f"signal_tracking_{timestamp}")
         os.makedirs(reports_dir, exist_ok=True)
         
         # Set path to database
-        db_path = os.path.join(script_dir, "..", "data", "databases", "production", "PSX_investing_Stocks_KMI30_tracking.db")
+        db_path = os.path.join(script_dir, "data", "databases", "production", "PSX_investing_Stocks_KMI30_tracking.db")
         
         # Run the tracker script with enhanced parameters
         cmd = [
             sys.executable, 
             tracker_script,
             f"--db={db_path}",
-            f"--output-dir={reports_dir}"
+            f"--output-dir={reports_dir}",
+            "--create-backup",
+            "--generate-report",
+            "--send-alerts"
         ]
         
         logging.info(f"Executing: {' '.join(cmd)}")
@@ -91,8 +99,6 @@ def run_signal_tracker():
         # Add to summary notification
         if result.returncode == 0:
             try:
-                # Import locally to avoid circular imports
-                sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
                 from src.data_processing.telegram_message import send_telegram_message
                 
                 summary = f"🔄 PSX Analysis Batch Job - {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
