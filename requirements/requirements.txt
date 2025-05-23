@@ -18,7 +18,6 @@ scikit-learn>=1.2.0
 matplotlib>=3.8.0
 plotly>=5.14.0
 pandas-ta 
-
 # Development tools
 pytest==7.4.3
 pytest-cov==4.1.0
@@ -28,7 +27,6 @@ mypy==1.7.1
 bandit==1.7.5
 pre-commit==3.5.0
 watchdog==3.0.0  # For better Streamlit performance
-
 ipython>=8.0.0
 jupyter>=1.0.0 
 tensorflow>=2.12.0
@@ -38,3 +36,4 @@ pmdarima>=2.0.0
 statsmodels>=0.13.0
 gunicorn>=20.0.0
 python-dotenv>=1.0.0 
+schedule>=1.2.0

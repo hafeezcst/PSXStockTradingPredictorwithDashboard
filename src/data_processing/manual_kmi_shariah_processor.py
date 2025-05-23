@@ -15,13 +15,12 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
-from config.paths import (
-    DATA_LOGS_DIR,
-    DATA_EXPORTS_DIR,
-    PRODUCTION_DB_DIR,
-    CONFIG_DIR,
-    SCRIPTS_DIR
-)
+# Define important directories
+DATA_LOGS_DIR = project_root / 'data' / 'logs'
+DATA_EXPORTS_DIR = project_root / 'data' / 'exports'
+PRODUCTION_DB_DIR = project_root / 'data' / 'databases' / 'production'
+CONFIG_DIR = project_root / 'config'
+SCRIPTS_DIR = project_root / 'src'
 
 # Configure logging with proper path
 logging.basicConfig(
@@ -29,6 +28,13 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+# Ensure directories exist
+DATA_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+DATA_EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+PRODUCTION_DB_DIR.mkdir(parents=True, exist_ok=True)
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
 
 def ensure_dependencies():
     """Check and install required dependencies"""

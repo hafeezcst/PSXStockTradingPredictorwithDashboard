@@ -31,9 +31,6 @@ class FairValueCalculator:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Drop existing tables to ensure clean schema
-            cursor.execute('DROP TABLE IF EXISTS tradingview_ta')
-            
             # Create tradingview_ta table with updated schema
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS tradingview_ta (
@@ -73,6 +70,11 @@ class FairValueCalculator:
                 PRIMARY KEY (symbol, date)
             )
             ''')
+            
+            # Verify table creation
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tradingview_ta'")
+            if not cursor.fetchone():
+                raise Exception("Failed to create tradingview_ta table")
             
             # Create tradingview_signals table
             cursor.execute('''
@@ -116,13 +118,25 @@ class FairValueCalculator:
             ''')
             
             conn.commit()
+            
+            # Verify tables exist and have correct structure
+            cursor.execute("SELECT COUNT(*) FROM tradingview_ta")
+            logger.info(f"tradingview_ta table initialized with {cursor.fetchone()[0]} records")
+            
+            cursor.execute("SELECT COUNT(*) FROM tradingview_signals")
+            logger.info(f"tradingview_signals table initialized with {cursor.fetchone()[0]} records")
+            
+            cursor.execute("SELECT COUNT(*) FROM financial_reports")
+            logger.info(f"financial_reports table initialized with {cursor.fetchone()[0]} records")
+            
             conn.close()
             logger.info(f"Database initialized successfully at {self.db_path}")
             
         except Exception as e:
-            logger.error(f"Error initializing database: {e}")
+            logger.error(f"Error initializing database: {str(e)}")
             if 'conn' in locals():
                 conn.close()
+            raise  # Re-raise the exception to handle it in the calling code
 
     def fetch_psx_symbols(self) -> List[str]:
         """Fetch list of PSX symbols from Excel file"""
@@ -152,7 +166,7 @@ class FairValueCalculator:
             return []
 
     def should_update_data(self, symbol: str) -> bool:
-        """Check if data needs to be updated for a symbol"""
+        """Check if data needs to be updated for a symbol with weekly timeframe logic"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -177,36 +191,25 @@ class FairValueCalculator:
             last_updated = datetime.strptime(result[1], '%Y-%m-%d %H:%M:%S')
             current_time = datetime.now()
             
-            # Check if we have data for today
-            if last_date.date() == current_time.date():
-                logger.info(f"Current day data already exists for {symbol}, skipping update")
+            # For weekly data, we only need to update once per week
+            if last_date.isocalendar()[1] == current_time.isocalendar()[1]:
+                logger.info(f"Current week's data exists for {symbol}, skipping update")
                 return False
             
-            # Check if the last update was within the last hour
-            if (current_time - last_updated).total_seconds() < 3600:  # 1 hour in seconds
-                logger.info(f"Data for {symbol} was updated within the last hour, skipping update")
-                return False
-            
-            # Check if it's a trading day (Monday to Friday)
-            if current_time.weekday() >= 5:  # 5 is Saturday, 6 is Sunday
-                logger.info(f"Today is not a trading day for {symbol}, skipping update")
-                return False
-            
-            # Check if it's within market hours (9:30 AM to 3:30 PM PKT)
-            current_hour = current_time.hour
-            if current_hour < 9 or (current_hour == 9 and current_time.minute < 30) or current_hour >= 15:
-                logger.info(f"Outside market hours for {symbol}, skipping update")
+            # Check if the last update was within the last 24 hours
+            if (current_time - last_updated).total_seconds() < 86400:  # 24 hours
+                logger.info(f"Data for {symbol} was updated within the last 24 hours, skipping update")
                 return False
             
             logger.info(f"Data for {symbol} needs update")
             return True
             
         except Exception as e:
-            logger.error(f"Error checking update status for {symbol}: {e}")
+            logger.error(f"Error checking update status for {symbol}: {str(e)}")
             return True
 
     def get_market_status(self) -> bool:
-        """Check if the market is currently open"""
+        """Check if the market is currently open with enhanced timezone handling"""
         try:
             current_time = datetime.now()
             
@@ -215,16 +218,44 @@ class FairValueCalculator:
                 logger.info("Market is closed: Weekend")
                 return False
             
-            # Check if it's within market hours (9:30 AM to 3:30 PM PKT)
-            current_hour = current_time.hour
-            if current_hour < 9 or (current_hour == 9 and current_time.minute < 30) or current_hour >= 15:
-                logger.info("Market is closed: Outside trading hours")
+            # Convert current time to PKT (Pakistan Time)
+            # Pakistan is UTC+5
+            pkt_hour = current_time.hour
+            pkt_minute = current_time.minute
+            
+            # Market hours in PKT:
+            # Pre-market: 9:00 AM - 9:30 AM
+            # Regular market: 9:30 AM - 3:30 PM
+            # Post-market: 3:30 PM - 4:00 PM
+            
+            # Check if it's within market hours
+            if (pkt_hour < 9 or 
+                (pkt_hour == 9 and pkt_minute < 30) or 
+                pkt_hour >= 15 or 
+                (pkt_hour == 15 and pkt_minute > 30)):
+                logger.info(f"Market is closed: Outside trading hours (Current PKT: {pkt_hour:02d}:{pkt_minute:02d})")
                 return False
             
+            # Check for market holidays (you can expand this list)
+            holidays = [
+                "2024-01-01",  # New Year's Day
+                "2024-03-23",  # Pakistan Day
+                "2024-05-01",  # Labour Day
+                "2024-08-14",  # Independence Day
+                "2024-09-06",  # Defence Day
+                "2024-12-25",  # Christmas Day
+            ]
+            
+            current_date = current_time.strftime('%Y-%m-%d')
+            if current_date in holidays:
+                logger.info(f"Market is closed: Holiday ({current_date})")
+                return False
+            
+            logger.info(f"Market is open (Current PKT: {pkt_hour:02d}:{pkt_minute:02d})")
             return True
             
         except Exception as e:
-            logger.error(f"Error checking market status: {e}")
+            logger.error(f"Error checking market status: {str(e)}")
             return False
 
     def read_psx_announcements(self) -> Dict:
@@ -691,7 +722,7 @@ Provide a detailed analysis in the following format:
             return technical_analysis
 
     def analyze_stock_indicators(self, stock_data: Dict) -> Dict:
-        """Analyze stock data using multiple technical indicators"""
+        """Analyze stock data using multiple technical indicators with enhanced logic"""
         try:
             # Get previous analysis from database
             conn = sqlite3.connect(self.db_path)
@@ -743,38 +774,37 @@ Provide a detailed analysis in the following format:
                 price_above_sma50 = (close - sma50) / sma50 * 100
                 price_above_sma200 = (close - sma200) / sma200 * 100
                 
+                # Enhanced trend analysis
+                trend_strength = 0
+                
+                # Golden Cross (SMA20 crosses above SMA50)
+                if sma20 > sma50 and previous_analysis and previous_analysis.get('sma_20', 0) <= previous_analysis.get('sma_50', 0):
+                    trend_strength += 15
+                    analysis['analysis_summary'].append("Golden Cross detected: SMA20 crossed above SMA50")
+                
+                # Death Cross (SMA20 crosses below SMA50)
+                elif sma20 < sma50 and previous_analysis and previous_analysis.get('sma_20', 0) >= previous_analysis.get('sma_50', 0):
+                    trend_strength -= 15
+                    analysis['analysis_summary'].append("Death Cross detected: SMA20 crossed below SMA50")
+                
                 # Strong uptrend conditions
                 if close > sma20 > sma50 > sma200:
                     if price_above_sma20 > 5:  # Price significantly above SMA20
-                        analysis['trend_score'] = 40
+                        trend_strength += 25
                         analysis['analysis_summary'].append(f"Strong uptrend: Price {price_above_sma20:.2f}% above SMA20")
                     else:
-                        analysis['trend_score'] = 30
+                        trend_strength += 15
                         analysis['analysis_summary'].append(f"Moderate uptrend: Price {price_above_sma20:.2f}% above SMA20")
-                # Moderate uptrend
-                elif close > sma20 > sma50:
-                    analysis['trend_score'] = 20
-                    analysis['analysis_summary'].append(f"Moderate uptrend: Price {price_above_sma20:.2f}% above SMA20")
-                # Weak uptrend
-                elif close > sma20:
-                    analysis['trend_score'] = 10
-                    analysis['analysis_summary'].append(f"Weak uptrend: Price {price_above_sma20:.2f}% above SMA20")
                 # Strong downtrend conditions
                 elif close < sma20 < sma50 < sma200:
                     if price_above_sma20 < -5:  # Price significantly below SMA20
-                        analysis['trend_score'] = -40
+                        trend_strength -= 25
                         analysis['analysis_summary'].append(f"Strong downtrend: Price {abs(price_above_sma20):.2f}% below SMA20")
                     else:
-                        analysis['trend_score'] = -30
+                        trend_strength -= 15
                         analysis['analysis_summary'].append(f"Moderate downtrend: Price {abs(price_above_sma20):.2f}% below SMA20")
-                # Moderate downtrend
-                elif close < sma20 < sma50:
-                    analysis['trend_score'] = -20
-                    analysis['analysis_summary'].append(f"Moderate downtrend: Price {abs(price_above_sma20):.2f}% below SMA20")
-                # Weak downtrend
-                elif close < sma20:
-                    analysis['trend_score'] = -10
-                    analysis['analysis_summary'].append(f"Weak downtrend: Price {abs(price_above_sma20):.2f}% below SMA20")
+                
+                analysis['trend_score'] = trend_strength
             
             # 2. Momentum Analysis (35 points)
             if all(x is not None for x in [stock_data['rsi'], stock_data['macd'], stock_data['macd_signal'], stock_data['ao']]):
@@ -784,63 +814,79 @@ Provide a detailed analysis in the following format:
                 macd_signal = stock_data['macd_signal']
                 ao = stock_data['ao']
                 
-                # RSI Analysis (15 points)
+                momentum_strength = 0
+                
+                # Enhanced RSI Analysis (15 points)
                 if rsi < 30:
-                    analysis['momentum_score'] += 15
+                    momentum_strength += 15
                     analysis['analysis_summary'].append(f"Strong oversold: RSI at {rsi:.2f}")
                 elif rsi < 40:
-                    analysis['momentum_score'] += 10
+                    momentum_strength += 10
                     analysis['analysis_summary'].append(f"Moderately oversold: RSI at {rsi:.2f}")
                 elif rsi > 70:
-                    analysis['momentum_score'] -= 15
+                    momentum_strength -= 15
                     analysis['analysis_summary'].append(f"Strong overbought: RSI at {rsi:.2f}")
                 elif rsi > 60:
-                    analysis['momentum_score'] -= 10
+                    momentum_strength -= 10
                     analysis['analysis_summary'].append(f"Moderately overbought: RSI at {rsi:.2f}")
                 
-                # MACD Analysis (10 points)
+                # Enhanced MACD Analysis (10 points)
                 macd_diff = macd - macd_signal
                 macd_diff_percent = (macd_diff / abs(macd_signal)) * 100 if macd_signal != 0 else 0
                 
+                # Check for MACD crossover
+                if previous_analysis:
+                    prev_macd = previous_analysis.get('macd', 0)
+                    prev_macd_signal = previous_analysis.get('macd_signal', 0)
+                    
+                    if macd > macd_signal and prev_macd <= prev_macd_signal:
+                        momentum_strength += 10
+                        analysis['analysis_summary'].append("Bullish MACD crossover detected")
+                    elif macd < macd_signal and prev_macd >= prev_macd_signal:
+                        momentum_strength -= 10
+                        analysis['analysis_summary'].append("Bearish MACD crossover detected")
+                
                 if macd_diff_percent > 5:
-                    analysis['momentum_score'] += 10
+                    momentum_strength += 5
                     analysis['analysis_summary'].append(f"Strong bullish MACD: {macd_diff_percent:.2f}% above signal")
                 elif macd_diff_percent > 2:
-                    analysis['momentum_score'] += 5
+                    momentum_strength += 2
                     analysis['analysis_summary'].append(f"Moderate bullish MACD: {macd_diff_percent:.2f}% above signal")
                 elif macd_diff_percent < -5:
-                    analysis['momentum_score'] -= 10
+                    momentum_strength -= 5
                     analysis['analysis_summary'].append(f"Strong bearish MACD: {abs(macd_diff_percent):.2f}% below signal")
                 elif macd_diff_percent < -2:
-                    analysis['momentum_score'] -= 5
+                    momentum_strength -= 2
                     analysis['analysis_summary'].append(f"Moderate bearish MACD: {abs(macd_diff_percent):.2f}% below signal")
                 
-                # Awesome Oscillator (AO) Analysis (10 points)
+                # Enhanced Awesome Oscillator (AO) Analysis (10 points)
                 ao_abs = abs(ao)
                 ao_threshold = 50  # Threshold for strong signals
                 
+                # Check for AO crossover
+                if previous_analysis:
+                    prev_ao = previous_analysis.get('ao', 0)
+                    if ao > 0 and prev_ao <= 0:
+                        momentum_strength += 5
+                        analysis['analysis_summary'].append("Bullish AO crossover detected")
+                    elif ao < 0 and prev_ao >= 0:
+                        momentum_strength -= 5
+                        analysis['analysis_summary'].append("Bearish AO crossover detected")
+                
                 if ao > ao_threshold:
-                    analysis['momentum_score'] += 10
+                    momentum_strength += 5
                     analysis['analysis_summary'].append(f"Strong bullish AO: {ao:.2f}")
                 elif ao > 0:
-                    analysis['momentum_score'] += 5
+                    momentum_strength += 2
                     analysis['analysis_summary'].append(f"Moderate bullish AO: {ao:.2f}")
                 elif ao < -ao_threshold:
-                    analysis['momentum_score'] -= 10
+                    momentum_strength -= 5
                     analysis['analysis_summary'].append(f"Strong bearish AO: {ao:.2f}")
                 elif ao < 0:
-                    analysis['momentum_score'] -= 5
+                    momentum_strength -= 2
                     analysis['analysis_summary'].append(f"Moderate bearish AO: {ao:.2f}")
                 
-                # Add AO trend information
-                if ao > 0 and ao > ao_threshold:
-                    analysis['analysis_summary'].append("AO indicates strong bullish momentum")
-                elif ao > 0:
-                    analysis['analysis_summary'].append("AO indicates moderate bullish momentum")
-                elif ao < 0 and ao < -ao_threshold:
-                    analysis['analysis_summary'].append("AO indicates strong bearish momentum")
-                elif ao < 0:
-                    analysis['analysis_summary'].append("AO indicates moderate bearish momentum")
+                analysis['momentum_score'] = momentum_strength
             
             # 3. Volume Analysis (20 points)
             if all(x is not None for x in [stock_data['volume'], stock_data['change']]):
@@ -849,27 +895,41 @@ Provide a detailed analysis in the following format:
                 change = stock_data['change']
                 change_percent = stock_data.get('change_percent', 0)
                 
-                # Calculate volume score based on both volume and price change
+                volume_strength = 0
+                
+                # Enhanced volume analysis
                 if volume > 2000000:  # High volume threshold
                     if change_percent > 5:
-                        analysis['volume_score'] = 20
+                        volume_strength = 20
                         analysis['analysis_summary'].append(f"Very high volume with strong price increase: {change_percent:.2f}%")
                     elif change_percent > 2:
-                        analysis['volume_score'] = 15
+                        volume_strength = 15
                         analysis['analysis_summary'].append(f"High volume with moderate price increase: {change_percent:.2f}%")
                     elif change_percent < -5:
-                        analysis['volume_score'] = -20
+                        volume_strength = -20
                         analysis['analysis_summary'].append(f"Very high volume with strong price decrease: {abs(change_percent):.2f}%")
                     elif change_percent < -2:
-                        analysis['volume_score'] = -15
+                        volume_strength = -15
                         analysis['analysis_summary'].append(f"High volume with moderate price decrease: {abs(change_percent):.2f}%")
                 elif volume > 1000000:  # Moderate volume threshold
                     if change_percent > 2:
-                        analysis['volume_score'] = 10
+                        volume_strength = 10
                         analysis['analysis_summary'].append(f"Moderate volume with price increase: {change_percent:.2f}%")
                     elif change_percent < -2:
-                        analysis['volume_score'] = -10
+                        volume_strength = -10
                         analysis['analysis_summary'].append(f"Moderate volume with price decrease: {abs(change_percent):.2f}%")
+                
+                # Check for volume trend
+                if previous_analysis:
+                    prev_volume = previous_analysis.get('volume', 0)
+                    if volume > prev_volume * 1.5:  # 50% volume increase
+                        volume_strength += 5
+                        analysis['analysis_summary'].append("Significant volume increase detected")
+                    elif volume < prev_volume * 0.5:  # 50% volume decrease
+                        volume_strength -= 5
+                        analysis['analysis_summary'].append("Significant volume decrease detected")
+                
+                analysis['volume_score'] = volume_strength
             
             # 4. Volatility Analysis (20 points)
             if all(x is not None for x in [stock_data['bb_upper'], stock_data['bb_lower'], stock_data['close']]):
@@ -882,18 +942,20 @@ Provide a detailed analysis in the following format:
                 volatility = bb_range / close * 100
                 price_position = (close - bb_lower) / bb_range * 100
                 
-                # Volatility score based on BB range
+                volatility_strength = 0
+                
+                # Enhanced volatility analysis
                 if volatility > 15:
-                    analysis['volatility_score'] = -20
+                    volatility_strength = -20
                     analysis['analysis_summary'].append(f"Very high volatility: BB range {volatility:.2f}%")
                 elif volatility > 10:
-                    analysis['volatility_score'] = -15
+                    volatility_strength = -15
                     analysis['analysis_summary'].append(f"High volatility: BB range {volatility:.2f}%")
                 elif volatility < 5:
-                    analysis['volatility_score'] = 15
+                    volatility_strength = 15
                     analysis['analysis_summary'].append(f"Low volatility: BB range {volatility:.2f}%")
                 elif volatility < 8:
-                    analysis['volatility_score'] = 10
+                    volatility_strength = 10
                     analysis['analysis_summary'].append(f"Moderate volatility: BB range {volatility:.2f}%")
                 
                 # Calculate support and resistance levels
@@ -903,8 +965,12 @@ Provide a detailed analysis in the following format:
                 # Add price position relative to BB
                 if price_position > 80:
                     analysis['analysis_summary'].append(f"Price near upper BB: {price_position:.2f}% of range")
+                    volatility_strength -= 5  # Additional bearish signal
                 elif price_position < 20:
                     analysis['analysis_summary'].append(f"Price near lower BB: {price_position:.2f}% of range")
+                    volatility_strength += 5  # Additional bullish signal
+                
+                analysis['volatility_score'] = volatility_strength
             
             # Calculate final scores
             analysis['technical_score'] = (
@@ -914,7 +980,7 @@ Provide a detailed analysis in the following format:
                 analysis['volatility_score']
             )
             
-            # Determine signal type and strength with more granular thresholds
+            # Enhanced signal determination with more granular thresholds
             if analysis['technical_score'] >= 70:
                 analysis['signal_type'] = 'STRONG_BUY'
                 analysis['signal_strength'] = min(analysis['technical_score'] / 70, 1.0)
@@ -936,26 +1002,97 @@ Provide a detailed analysis in the following format:
             available_indicators = len(analysis['indicators_used'])
             indicator_completeness = available_indicators / total_possible_indicators
             
-            # Adjust confidence based on signal strength
+            # Adjust confidence based on signal strength and indicator agreement
             signal_strength_factor = abs(analysis['technical_score']) / 70  # Normalize to max score
             
-            analysis['confidence_score'] = indicator_completeness * (0.7 + 0.3 * signal_strength_factor)
+            # Calculate indicator agreement
+            indicator_scores = [
+                analysis['trend_score'],
+                analysis['momentum_score'],
+                analysis['volume_score'],
+                analysis['volatility_score']
+            ]
+            positive_scores = sum(1 for score in indicator_scores if score > 0)
+            negative_scores = sum(1 for score in indicator_scores if score < 0)
+            indicator_agreement = max(positive_scores, negative_scores) / len(indicator_scores)
             
-            # Calculate stop loss and take profit levels
-            if analysis['support_level'] and analysis['resistance_level']:
-                if analysis['signal_type'] in ['BUY', 'STRONG_BUY']:
-                    analysis['stop_loss'] = analysis['support_level']
-                    analysis['take_profit'] = analysis['resistance_level']
+            analysis['confidence_score'] = (
+                indicator_completeness * 0.4 +  # Weight for data completeness
+                signal_strength_factor * 0.3 +  # Weight for signal strength
+                indicator_agreement * 0.3        # Weight for indicator agreement
+            )
+            
+            # Calculate stop loss and take profit levels with enhanced risk management
+            if analysis['support_level'] and analysis['resistance_level'] and stock_data['close']:
+                current_price = stock_data['close']
+                support = analysis['support_level']
+                resistance = analysis['resistance_level']
+                
+                # Calculate price ranges
+                price_to_support = abs(current_price - support)
+                price_to_resistance = abs(resistance - current_price)
+                
+                # Calculate ATR-based volatility if available
+                atr = None
+                if 'atr' in stock_data and stock_data['atr'] is not None:
+                    atr = stock_data['atr']
+                    # Use ATR to adjust stop loss and take profit levels
+                    atr_multiplier = 2.0  # Standard multiplier for stop loss
+                    volatility_adjusted_support = support - (atr * atr_multiplier)
+                    volatility_adjusted_resistance = resistance + (atr * atr_multiplier)
                 else:
-                    analysis['stop_loss'] = analysis['resistance_level']
-                    analysis['take_profit'] = analysis['support_level']
+                    # Fallback to percentage-based adjustment
+                    volatility_adjusted_support = support * 0.98  # 2% below support
+                    volatility_adjusted_resistance = resistance * 1.02  # 2% above resistance
+                
+                # Set stop loss and take profit based on signal type
+                if analysis['signal_type'] in ['BUY', 'STRONG_BUY']:
+                    analysis['stop_loss'] = volatility_adjusted_support
+                    analysis['take_profit'] = volatility_adjusted_resistance
+                    risk = abs(current_price - volatility_adjusted_support)
+                    reward = abs(volatility_adjusted_resistance - current_price)
+                else:
+                    analysis['stop_loss'] = volatility_adjusted_resistance
+                    analysis['take_profit'] = volatility_adjusted_support
+                    risk = abs(volatility_adjusted_resistance - current_price)
+                    reward = abs(current_price - volatility_adjusted_support)
                 
                 # Calculate risk-reward ratio
-                if analysis['stop_loss'] and analysis['take_profit'] and stock_data['close']:
-                    risk = abs(stock_data['close'] - analysis['stop_loss'])
-                    reward = abs(analysis['take_profit'] - stock_data['close'])
-                    if risk > 0:
-                        analysis['risk_reward_ratio'] = reward / risk
+                if risk > 0:
+                    analysis['risk_reward_ratio'] = reward / risk
+                    
+                    # Add risk management metrics
+                    analysis['risk_metrics'] = {
+                        'price_to_support': price_to_support,
+                        'price_to_resistance': price_to_resistance,
+                        'risk_percent': (risk / current_price) * 100,
+                        'reward_percent': (reward / current_price) * 100,
+                        'volatility_adjusted': atr is not None,
+                        'atr_value': atr
+                    }
+                    
+                    # Add risk assessment to analysis summary
+                    risk_assessment = f"Risk-Reward Analysis:\n"
+                    risk_assessment += f"Current Price: {current_price:.2f}\n"
+                    risk_assessment += f"Stop Loss: {analysis['stop_loss']:.2f} ({analysis['risk_metrics']['risk_percent']:.2f}% risk)\n"
+                    risk_assessment += f"Take Profit: {analysis['take_profit']:.2f} ({analysis['risk_metrics']['reward_percent']:.2f}% reward)\n"
+                    risk_assessment += f"Risk-Reward Ratio: {analysis['risk_reward_ratio']:.2f}\n"
+                    
+                    if atr:
+                        risk_assessment += f"ATR-based volatility adjustment applied (ATR: {atr:.2f})"
+                    else:
+                        risk_assessment += "Percentage-based volatility adjustment applied (2%)"
+                    
+                    analysis['analysis_summary'].append(risk_assessment)
+                    
+                    # Add risk warning if ratio is unfavorable
+                    if analysis['risk_reward_ratio'] < 1.5:
+                        analysis['analysis_summary'].append("Warning: Risk-Reward ratio is below recommended minimum of 1.5")
+                    elif analysis['risk_reward_ratio'] > 3:
+                        analysis['analysis_summary'].append("Strong Risk-Reward ratio above 3.0")
+                else:
+                    analysis['risk_reward_ratio'] = None
+                    analysis['analysis_summary'].append("Warning: Could not calculate risk-reward ratio (risk is zero)")
             
             # After calculating technical analysis, get financial analysis
             financial_analysis = self.analyze_financial_data(stock_data['symbol'])
@@ -969,7 +1106,7 @@ Provide a detailed analysis in the following format:
             return final_analysis
             
         except Exception as e:
-            logger.error(f"Error analyzing stock indicators: {e}")
+            logger.error(f"Error analyzing stock indicators: {str(e)}")
             return None
 
     def send_telegram_notification(self, message: str):
@@ -1094,21 +1231,21 @@ Provide a detailed analysis in the following format:
             ''', (
                 symbol,
                 datetime.now().strftime('%Y-%m-%d'),
-                analysis['signal_type'],
-                analysis['signal_strength'],
-                analysis['confidence_score'],
-                analysis['technical_score'],
-                analysis['trend_score'],
-                analysis['momentum_score'],
-                analysis['volume_score'],
-                analysis['volatility_score'],
-                analysis['support_level'],
-                analysis['resistance_level'],
-                analysis['stop_loss'],
-                analysis['take_profit'],
-                analysis['risk_reward_ratio'],
-                '|'.join(analysis['analysis_summary']),
-                '|'.join(analysis['indicators_used']),
+                analysis.get('signal_type'),
+                analysis.get('signal_strength'),
+                analysis.get('confidence_score'),
+                analysis.get('technical_score'),
+                analysis.get('trend_score'),
+                analysis.get('momentum_score'),
+                analysis.get('volume_score'),
+                analysis.get('volatility_score'),
+                analysis.get('support_level'),
+                analysis.get('resistance_level'),
+                analysis.get('stop_loss'),
+                analysis.get('take_profit'),
+                analysis.get('risk_reward_ratio'),
+                '|'.join(analysis.get('analysis_summary', [])),
+                '|'.join(analysis.get('indicators_used', [])),
                 current_time
             ))
             
@@ -1122,134 +1259,242 @@ Provide a detailed analysis in the following format:
                 conn.close()
 
     def fetch_tradingview_ta_data(self, symbol: str) -> Dict:
-        """Fetch data using tradingview_ta library with enhanced caching"""
+        """Fetch data using tradingview_ta library with weekly timeframe"""
         try:
+            # First check if we have valid cached data
+            cached_data = self.get_latest_data(symbol)
+            if cached_data:
+                cache_date = datetime.strptime(cached_data.get('date', ''), '%Y-%m-%d')
+                current_date = datetime.now()
+                
+                # If cached data is from current week, use it
+                if cache_date.isocalendar()[1] == current_date.isocalendar()[1]:
+                    logger.info(f"Using current week's cached data for {symbol}")
+                    return cached_data
+                
+                # If cached data is less than 24 hours old, use it
+                if (current_date - cache_date).total_seconds() < 86400:  # 24 hours
+                    logger.info(f"Using recent cached data for {symbol} (less than 24 hours old)")
+                    return cached_data
+            
             # Check if we need to update the data
             if not self.should_update_data(symbol):
-                logger.info(f"Using cached data for {symbol}")
-                return self.get_latest_data(symbol)
+                logger.info(f"Using existing data for {symbol}")
+                return cached_data
             
-            # Check if market is open before fetching new data
-            if not self.get_market_status():
-                logger.info(f"Market is closed, using cached data for {symbol}")
-                return self.get_latest_data(symbol)
-            
-            # Try different symbol formats
+            # Try different symbol formats with retry mechanism
+            # Start with the most common format first
             symbol_formats = [
-                f"PSX:{symbol}",  # Standard format
-                f"PSX-{symbol}",  # Alternative format
-                symbol,           # Just the symbol
-                f"{symbol}.PSX"   # Another common format
+                symbol,           # Just the symbol (most common)
+                f"{symbol}.PSX",  # PSX suffix (second most common)
+                f"PSX:{symbol}",  # PSX prefix with colon (third most common)
+                f"PSX-{symbol}"   # PSX prefix with hyphen (fourth most common)
             ]
             
             data = {}
-            for symbol_format in symbol_formats:
-                try:
-                    handler = TA_Handler(
-                        symbol=symbol_format,
-                        screener="pakistan",
-                        exchange="PSX",
-                        interval=Interval.INTERVAL_1_WEEK
-                    )
-                    
-                    analysis = handler.get_analysis()
-                    
-                    # Debug logging for raw data
-                    logger.debug(f"Raw analysis for {symbol} ({symbol_format}):")
-                    logger.debug(f"Summary: {analysis.summary}")
-                    logger.debug(f"Oscillators: {analysis.oscillators}")
-                    logger.debug(f"Moving Averages: {analysis.moving_averages}")
-                    logger.debug(f"Indicators: {analysis.indicators}")
-                    
-                    # Extract summary data
-                    if analysis.summary:
-                        data.update({
-                            'recommendation': analysis.summary.get('RECOMMENDATION'),
-                            'buy_signals': analysis.summary.get('BUY'),
-                            'sell_signals': analysis.summary.get('SELL'),
-                            'neutral_signals': analysis.summary.get('NEUTRAL')
-                        })
-                        logger.debug(f"Extracted summary data for {symbol}: {data}")
-                    
-                    # Extract all indicators from the indicators dictionary
-                    if analysis.indicators:
-                        # Calculate change_percent if we have change and close values
-                        change = analysis.indicators.get('change')
-                        close = analysis.indicators.get('close')
-                        change_percent = (change / (close - change) * 100) if change is not None and close is not None and (close - change) != 0 else None
-                        
-                        indicator_data = {
-                            # Oscillators
-                            'rsi': analysis.indicators.get('RSI[1]'),
-                            'stoch_k': analysis.indicators.get('Stoch.K[1]'),
-                            'stoch_d': analysis.indicators.get('Stoch.D[1]'),
-                            'macd': analysis.indicators.get('MACD.macd'),
-                            'macd_signal': analysis.indicators.get('MACD.signal'),
-                            'macd_hist': analysis.indicators.get('MACD.macd') - analysis.indicators.get('MACD.signal') if analysis.indicators.get('MACD.macd') is not None and analysis.indicators.get('MACD.signal') is not None else None,
-                            
-                            # Moving Averages
-                            'sma_20': analysis.indicators.get('SMA20'),
-                            'sma_50': analysis.indicators.get('SMA50'),
-                            'sma_200': analysis.indicators.get('SMA200'),
-                            'ema_20': analysis.indicators.get('EMA20'),
-                            'ema_50': analysis.indicators.get('EMA50'),
-                            'ema_200': analysis.indicators.get('EMA200'),
-                            
-                            # Price and Volume
-                            'close': close,
-                            'open': analysis.indicators.get('open'),
-                            'high': analysis.indicators.get('high'),
-                            'low': analysis.indicators.get('low'),
-                            'volume': analysis.indicators.get('volume'),
-                            'change': change,
-                            'change_percent': change_percent,
-                            
-                            # Additional Indicators
-                            'bb_upper': analysis.indicators.get('BB.upper'),
-                            'bb_lower': analysis.indicators.get('BB.lower'),
-                            'ao': analysis.indicators.get('AO[2]'),
-                            'psar': analysis.indicators.get('P.SAR'),
-                            'vwma': analysis.indicators.get('VWMA'),
-                            'hull_ma9': analysis.indicators.get('HullMA9')
-                        }
-                        data.update(indicator_data)
-                        logger.debug(f"Extracted all indicators for {symbol}: {indicator_data}")
-                    
-                    # If we got here, we found valid data
-                    logger.info(f"Successfully fetched TradingView TA data for {symbol} using format {symbol_format}")
-                    break
-                    
-                except Exception as e:
-                    logger.debug(f"Failed to fetch data for {symbol} using format {symbol_format}: {e}")
-                    continue
+            success = False
+            max_retries = 2
+            retry_delay = 1
             
-            if data:
+            for symbol_format in symbol_formats:
+                for attempt in range(max_retries):
+                    try:
+                        logger.info(f"Attempting to fetch data for {symbol} using format: {symbol_format} (Attempt {attempt + 1}/{max_retries})")
+                        
+                        handler = TA_Handler(
+                            symbol=symbol_format,
+                            screener="pakistan",
+                            exchange="PSX",
+                            interval=Interval.INTERVAL_1_WEEK
+                        )
+                        
+                        analysis = handler.get_analysis()
+                        
+                        # Validate the analysis data
+                        if not analysis or not analysis.summary or not analysis.indicators:
+                            logger.warning(f"Invalid analysis data received for {symbol} using format {symbol_format}")
+                            continue
+                        
+                        # Debug logging for raw data
+                        logger.info(f"Raw analysis for {symbol} ({symbol_format}):")
+                        logger.info(f"Summary: {analysis.summary}")
+                        logger.info(f"Oscillators: {analysis.oscillators}")
+                        logger.info(f"Moving Averages: {analysis.moving_averages}")
+                        logger.info(f"Indicators: {analysis.indicators}")
+                        
+                        # Extract summary data
+                        if analysis.summary:
+                            data.update({
+                                'recommendation': analysis.summary.get('RECOMMENDATION'),
+                                'buy_signals': analysis.summary.get('BUY'),
+                                'sell_signals': analysis.summary.get('SELL'),
+                                'neutral_signals': analysis.summary.get('NEUTRAL')
+                            })
+                            logger.info(f"Extracted summary data for {symbol}: {data}")
+                        
+                        # Extract all indicators from the indicators dictionary
+                        if analysis.indicators:
+                            # Calculate price changes and metrics
+                            close = analysis.indicators.get('close')
+                            open_price = analysis.indicators.get('open')
+                            high = analysis.indicators.get('high')
+                            low = analysis.indicators.get('low')
+                            
+                            # Initialize price change metrics
+                            price_metrics = {
+                                'change': None,
+                                'change_percent': None,
+                                'high_low_range': None,
+                                'high_low_range_percent': None,
+                                'volatility': None
+                            }
+                            
+                            # Calculate daily change if we have both close and open
+                            if close is not None and open_price is not None:
+                                # Calculate absolute change
+                                price_metrics['change'] = close - open_price
+                                
+                                # Calculate percentage change
+                                if open_price != 0:
+                                    price_metrics['change_percent'] = (price_metrics['change'] / open_price) * 100
+                                    logger.info(f"Calculated change: {price_metrics['change']:.2f} ({price_metrics['change_percent']:.2f}%)")
+                                else:
+                                    logger.warning(f"Open price is zero for {symbol}, cannot calculate percentage change")
+                            
+                            # Calculate high-low range if we have both high and low
+                            if high is not None and low is not None:
+                                price_metrics['high_low_range'] = high - low
+                                if low != 0:
+                                    price_metrics['high_low_range_percent'] = (price_metrics['high_low_range'] / low) * 100
+                                    logger.info(f"High-Low range: {price_metrics['high_low_range']:.2f} ({price_metrics['high_low_range_percent']:.2f}%)")
+                            
+                            # Calculate volatility (standard deviation of price changes)
+                            if all(x is not None for x in [close, open_price, high, low]):
+                                # Simple volatility calculation based on high-low range
+                                price_metrics['volatility'] = price_metrics['high_low_range_percent'] / 2
+                                logger.info(f"Calculated volatility: {price_metrics['volatility']:.2f}%")
+                            
+                            indicator_data = {
+                                # Oscillators
+                                'rsi': analysis.indicators.get('RSI[1]'),
+                                'stoch_k': analysis.indicators.get('Stoch.K[1]'),
+                                'stoch_d': analysis.indicators.get('Stoch.D[1]'),
+                                'macd': analysis.indicators.get('MACD.macd'),
+                                'macd_signal': analysis.indicators.get('MACD.signal'),
+                                'macd_hist': analysis.indicators.get('MACD.macd') - analysis.indicators.get('MACD.signal') if analysis.indicators.get('MACD.macd') is not None and analysis.indicators.get('MACD.signal') is not None else None,
+                                
+                                # Moving Averages
+                                'sma_20': analysis.indicators.get('SMA20'),
+                                'sma_50': analysis.indicators.get('SMA50'),
+                                'sma_200': analysis.indicators.get('SMA200'),
+                                'ema_20': analysis.indicators.get('EMA20'),
+                                'ema_50': analysis.indicators.get('EMA50'),
+                                'ema_200': analysis.indicators.get('EMA200'),
+                                
+                                # Price and Volume
+                                'close': close,
+                                'open': open_price,
+                                'high': high,
+                                'low': low,
+                                'volume': analysis.indicators.get('volume'),
+                                'change': price_metrics['change'],
+                                'change_percent': price_metrics['change_percent'],
+                                'high_low_range': price_metrics['high_low_range'],
+                                'high_low_range_percent': price_metrics['high_low_range_percent'],
+                                'volatility': price_metrics['volatility'],
+                                
+                                # Additional Indicators
+                                'bb_upper': analysis.indicators.get('BB.upper'),
+                                'bb_lower': analysis.indicators.get('BB.lower'),
+                                'ao': analysis.indicators.get('AO[2]'),
+                                'psar': analysis.indicators.get('P.SAR'),
+                                'vwma': analysis.indicators.get('VWMA'),
+                                'hull_ma9': analysis.indicators.get('HullMA9')
+                            }
+                            
+                            # Validate required fields
+                            required_fields = ['close', 'open', 'high', 'low', 'volume']
+                            if all(indicator_data.get(field) is not None for field in required_fields):
+                                data.update(indicator_data)
+                                logger.info(f"Extracted all indicators for {symbol}: {indicator_data}")
+                                success = True
+                                break
+                            else:
+                                missing_fields = [field for field in required_fields if indicator_data.get(field) is None]
+                                logger.warning(f"Missing required fields for {symbol} using format {symbol_format}: {missing_fields}")
+                                continue
+                        
+                        if success:
+                            break
+                            
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "Exchange or symbol not found" in error_msg:
+                            logger.warning(f"Symbol format {symbol_format} not found for {symbol}")
+                        else:
+                            logger.error(f"Attempt {attempt + 1} failed for {symbol} using format {symbol_format}: {error_msg}")
+                        
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                        continue
+                
+                if success:
+                    break
+            
+            if success and data:
                 # Add timestamp for caching
                 data['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                # Ensure symbol is present in data
+                data['symbol'] = symbol
+                # Add current date
+                data['date'] = datetime.now().strftime('%Y-%m-%d')
+                
                 # Save data to database
-                self.save_tradingview_ta_data_to_db(symbol, data)
+                save_result = self.save_tradingview_ta_data_to_db(symbol, data)
+                if save_result:
+                    logger.info(f"Successfully saved data for {symbol} to database")
+                else:
+                    logger.error(f"Failed to save data for {symbol} to database")
+                
                 # Analyze and save signals
                 analysis_result = self.analyze_stock_indicators(data)
                 if analysis_result:
                     self.save_analysis_to_db(symbol, analysis_result)
+                    logger.info(f"Successfully saved analysis for {symbol} to database")
+                else:
+                    logger.error(f"Failed to save analysis for {symbol} to database")
+                
                 return data
             else:
-                logger.warning(f"Could not fetch data for {symbol} using any symbol format")
+                logger.warning(f"Could not fetch valid data for {symbol} using any symbol format")
+                # Return cached data if available, even if it's old
+                if cached_data:
+                    logger.info(f"Returning cached data for {symbol} as fallback")
+                    return cached_data
                 return {}
             
         except Exception as e:
-            logger.error(f"Error fetching TradingView TA data for {symbol}: {e}")
+            logger.error(f"Error fetching TradingView TA data for {symbol}: {str(e)}")
+            # Return cached data if available, even if it's old
+            cached_data = self.get_latest_data(symbol)
+            if cached_data:
+                logger.info(f"Returning cached data for {symbol} after error")
+                return cached_data
             return {}
 
     def get_latest_data(self, symbol: str) -> Dict:
-        """Get the latest data for a symbol from the database"""
+        """Get the latest data for a symbol from the database with enhanced validation"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
+            # Get the latest data with validation
             cursor.execute("""
                 SELECT * FROM tradingview_ta 
                 WHERE symbol = ? 
+                AND close IS NOT NULL 
+                AND volume IS NOT NULL 
+                AND date IS NOT NULL 
                 ORDER BY date DESC 
                 LIMIT 1
             """, (symbol,))
@@ -1260,72 +1505,108 @@ Provide a detailed analysis in the following format:
             conn.close()
             
             if row:
-                return dict(zip(columns, row))
+                data = dict(zip(columns, row))
+                # Validate the data
+                required_fields = ['close', 'open', 'high', 'low', 'volume', 'date']
+                if all(data.get(field) is not None for field in required_fields):
+                    logger.info(f"Found valid cached data for {symbol} from {data['date']}")
+                    return data
+                else:
+                    logger.warning(f"Found incomplete cached data for {symbol}")
+                    return {}
+            
+            logger.info(f"No valid cached data found for {symbol}")
             return {}
             
         except Exception as e:
-            logger.error(f"Error getting latest data for {symbol}: {e}")
+            logger.error(f"Error getting latest data for {symbol}: {str(e)}")
             return {}
 
     def save_tradingview_ta_data_to_db(self, symbol: str, data: Dict):
-        """Save TradingView TA data to the database"""
+        """Save TradingView TA data to the database with duplicate validation"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Insert or update data
-            cursor.execute('''
-            INSERT OR REPLACE INTO tradingview_ta 
-            (symbol, date, recommendation, buy_signals, sell_signals, neutral_signals,
-             rsi, stoch_k, stoch_d, macd, macd_signal, macd_hist,
-             sma_20, sma_50, sma_200, ema_20, ema_50, ema_200,
-             close, open, high, low, volume, change, change_percent,
-             bb_upper, bb_lower, ao, psar, vwma, hull_ma9, source, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                symbol,
-                datetime.now().strftime('%Y-%m-%d'),
-                data.get('recommendation'),
-                data.get('buy_signals'),
-                data.get('sell_signals'),
-                data.get('neutral_signals'),
-                data.get('rsi'),
-                data.get('stoch_k'),
-                data.get('stoch_d'),
-                data.get('macd'),
-                data.get('macd_signal'),
-                data.get('macd_hist'),
-                data.get('sma_20'),
-                data.get('sma_50'),
-                data.get('sma_200'),
-                data.get('ema_20'),
-                data.get('ema_50'),
-                data.get('ema_200'),
-                data.get('close'),
-                data.get('open'),
-                data.get('high'),
-                data.get('low'),
-                data.get('volume'),
-                data.get('change'),
-                data.get('change_percent'),
-                data.get('bb_upper'),
-                data.get('bb_lower'),
-                data.get('ao'),
-                data.get('psar'),
-                data.get('vwma'),
-                data.get('hull_ma9'),
-                'tradingview_ta',
-                data.get('last_updated')
-            ))
+            current_date = data.get('date', datetime.now().strftime('%Y-%m-%d'))
+            
+            # Check if record exists for this symbol and date
+            cursor.execute("""
+                SELECT * FROM tradingview_ta 
+                WHERE symbol = ? AND date = ?
+            """, (symbol, current_date))
+            
+            existing_record = cursor.fetchone()
+            
+            if existing_record:
+                # Get column names
+                columns = [description[0] for description in cursor.description]
+                existing_data = dict(zip(columns, existing_record))
+                
+                # Compare values and build update query only for changed fields
+                update_fields = []
+                update_values = []
+                
+                for key, new_value in data.items():
+                    if key in columns and key not in ['symbol', 'date']:  # Skip primary key fields
+                        old_value = existing_data.get(key)
+                        if new_value != old_value and new_value is not None:
+                            update_fields.append(f"{key} = ?")
+                            update_values.append(new_value)
+                
+                if update_fields:  # Only update if there are changes
+                    update_query = f"""
+                    UPDATE tradingview_ta 
+                    SET {', '.join(update_fields)}, last_updated = ?
+                    WHERE symbol = ? AND date = ?
+                    """
+                    update_values.extend([datetime.now().strftime('%Y-%m-%d %H:%M:%S'), symbol, current_date])
+                    
+                    cursor.execute(update_query, update_values)
+                    logger.info(f"Updated {len(update_fields)} fields for {symbol} on {current_date}")
+                else:
+                    logger.info(f"No changes detected for {symbol} on {current_date}")
+            else:
+                # Insert new record
+                # Get all column names from the table
+                cursor.execute("PRAGMA table_info(tradingview_ta)")
+                columns = [column[1] for column in cursor.fetchall()]
+                
+                # Prepare values list with None for missing columns
+                values = []
+                for column in columns:
+                    if column == 'symbol':
+                        values.append(symbol)
+                    elif column == 'date':
+                        values.append(current_date)
+                    elif column == 'last_updated':
+                        values.append(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                    elif column == 'source':
+                        values.append('tradingview_ta')
+                    else:
+                        values.append(data.get(column))
+                
+                # Create placeholders for the SQL query
+                placeholders = ','.join(['?' for _ in columns])
+                
+                # Insert new record
+                cursor.execute(f'''
+                INSERT INTO tradingview_ta 
+                ({', '.join(columns)})
+                VALUES ({placeholders})
+                ''', values)
+                
+                logger.info(f"Inserted new record for {symbol} on {current_date}")
             
             conn.commit()
             conn.close()
-            logger.info(f"Successfully saved TradingView TA data for {symbol} to database")
+            return True
             
         except Exception as e:
-            logger.error(f"Error saving TradingView TA data for {symbol} to database: {e}")
+            logger.error(f"Error saving TradingView TA data for {symbol} to database: {str(e)}")
             if 'conn' in locals():
                 conn.close()
+            return False
 
     def analyze_database(self):
         """Analyze the database for null values and data quality"""
@@ -1458,14 +1739,34 @@ Provide a detailed analysis in the following format:
             volatility_score = 0
             if stock['bb_upper'] is not None and stock['bb_lower'] is not None:
                 bb_range = stock['bb_upper'] - stock['bb_lower']
-                if bb_range > 0:
-                    volatility = bb_range / stock['close'] * 100
-                    if volatility > 10:  # High volatility
-                        volatility_score -= 10
-                        reasons.append("High volatility: BB range > 10%")
-                    elif volatility < 5:  # Low volatility
-                        volatility_score += 10
-                        reasons.append("Low volatility: BB range < 5%")
+                volatility = bb_range / stock['close'] * 100
+                price_position = (stock['close'] - stock['bb_lower']) / bb_range * 100
+                
+                # Volatility score based on BB range
+                if volatility > 15:
+                    volatility_score = -20
+                    reasons.append("Very high volatility: BB range > 15%")
+                elif volatility > 10:
+                    volatility_score = -15
+                    reasons.append("High volatility: BB range > 10%")
+                elif volatility < 5:
+                    volatility_score = 15
+                    reasons.append("Low volatility: BB range < 5%")
+                elif volatility < 8:
+                    volatility_score = 10
+                    reasons.append("Moderate volatility: BB range < 8%")
+                
+                # Calculate support and resistance levels
+                signal['support_level'] = stock['bb_lower']
+                signal['resistance_level'] = stock['bb_upper']
+                
+                # Add price position relative to BB
+                if price_position > 80:
+                    reasons.append("Price near upper BB: 80% of range")
+                    volatility_score -= 5
+                elif price_position < 20:
+                    reasons.append("Price near lower BB: 20% of range")
+                    volatility_score += 5
             
             # Calculate final score
             final_score = trend_score + momentum_score + volume_score + volatility_score
