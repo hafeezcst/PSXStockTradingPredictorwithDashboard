@@ -243,7 +243,7 @@ def get_signal_tracking_data(conn: sqlite3.Connection) -> pd.DataFrame:
         # Add buy signals if table exists
         if 'buy_stocks' in existing_tables:
             query_parts.append("""
-                    WHEN Current_Signal = 'Buy' AND Initial_Close > 0 
+                -- Get latest buy signals
                 SELECT 
                     Stock,
                     'Buy' as Current_Signal,

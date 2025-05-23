@@ -7,6 +7,7 @@ This module provides functions to send messages and images to a Telegram bot.
 import os
 import requests
 import logging
+import time
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
@@ -15,9 +16,13 @@ logging.basicConfig(filename='telegram_message.log', level=logging.INFO,
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Rate limiting configuration
+RATE_LIMIT_DELAY = 1  # Minimum delay between messages in seconds
+MAX_RETRIES = 3  # Maximum number of retries for rate-limited requests
+
 def send_telegram_message(message: str) -> bool:
     """
-    Send a text message to a Telegram bot.
+    Send a text message to a Telegram bot with rate limiting.
     
     Args:
         message (str): Message text to send
@@ -47,16 +52,33 @@ def send_telegram_message(message: str) -> bool:
             'parse_mode': 'HTML'
         }
         
-        # Send the request
-        response = requests.post(url, data=payload, timeout=10)
-        
-        # Check if the request was successful
-        if response.status_code == 200:
-            logger.info("Message sent successfully")
-            return True
-        else:
-            logger.error(f"Failed to send message: {response.text}")
-            return False
+        # Send the request with retries for rate limiting
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = requests.post(url, data=payload, timeout=10)
+                
+                # Check if the request was successful
+                if response.status_code == 200:
+                    logger.info("Message sent successfully")
+                    return True
+                elif response.status_code == 429:  # Rate limit exceeded
+                    retry_after = int(response.json().get('parameters', {}).get('retry_after', RATE_LIMIT_DELAY))
+                    logger.warning(f"Rate limit exceeded. Waiting {retry_after} seconds before retry.")
+                    time.sleep(retry_after)
+                    continue
+                else:
+                    logger.error(f"Failed to send message: {response.text}")
+                    return False
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request error: {str(e)}")
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RATE_LIMIT_DELAY)
+                    continue
+                return False
+            
+            # Add delay between messages to prevent rate limiting
+            time.sleep(RATE_LIMIT_DELAY)
             
     except Exception as e:
         logger.error(f"Error sending Telegram message: {str(e)}")

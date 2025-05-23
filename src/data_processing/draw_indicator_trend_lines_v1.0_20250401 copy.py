@@ -1,11 +1,7 @@
-# WARNING: This is a frozen version of the code - DO NOT MODIFY DIRECTLY
-# Create a copy for any modifications and test thoroughly before replacing
-# Last frozen: 2025-04-01 (Version 1.0)
-
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, QueuePool
 import sqlite3
 import os
 import logging
@@ -22,151 +18,334 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.gridspec
 import matplotlib
-
-# Add this near the top of your imports
-import sys
+from contextlib import contextmanager
+from typing import Generator, Optional
+from sqlalchemy.engine import Engine
+from dataclasses import dataclass
 from pathlib import Path
+import traceback
+import requests
+from logging.handlers import RotatingFileHandler
+from dotenv import load_dotenv, find_dotenv, dotenv_values
+from dataclasses import dataclass
+from typing import Generator, Optional, List, Tuple, Dict, Any
+import re
 
-# Add parent directory to path to allow importing from config
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from config.config import get_config, config
+# Configure basic logging first
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Replace hardcoded values with ones from config.py:
-# 1. Replace database paths
-DATABASE_MAIN = get_config("databases", "main_db_path")
-DATABASE_SIGNALS = get_config("databases", "signals_db_path")
-
-# 2. Replace output folders
-CHARTS_FOLDER = get_config("output_paths", "charts_folder")
-DASHBOARDS_FOLDER = get_config("output_paths", "dashboards_folder")
-
-# 3. Replace analysis parameters
-RSI_OVERSOLD = get_config("analysis", "rsi_oversold")
-RSI_OVERBOUGHT = get_config("analysis", "rsi_overbought")
-NEUTRAL_THRESHOLD = get_config("analysis", "neutral_threshold")
-MAX_HOLDING_DAYS = get_config("analysis", "max_holding_days")
-
-# 4. Replace indicator weights
-INDICATOR_WEIGHTS = get_config("analysis", "indicator_weights")
-
-# 5. Replace visualization settings
-CHART_FIGSIZE = get_config("visualization", "chart_figsize")
-DASHBOARD_FIGSIZE = get_config("visualization", "dashboard_figsize")
-STATUS_COLORS = get_config("visualization", "status_colors")
-PHASE_COLORS = get_config("visualization", "phase_colors")
-
-# 6. Replace market conditions
-MARKET_THRESHOLDS = get_config("market_conditions")
-ALLOCATION_TARGETS = get_config("allocation_targets")
-
-# 7. Replace KMI30 symbols
-KMI30_SYMBOLS = get_config("kmi30_symbols")
-
-def calculate_risk_adjusted_metrics(df):
-    """Calculate risk-adjusted performance metrics"""
-    try:
-        metrics = {}
-        if 'Profit_Loss' in df.columns and 'Holding_Days' in df.columns:
-            # Calculate daily volatility
-            daily_returns = df['Profit_Loss'] / df['Holding_Days']
-            metrics['volatility'] = daily_returns.std()
-            
-            # Calculate Sharpe-like ratio (assuming risk-free rate of 0 for simplicity)  
-            if metrics['volatility'] != 0:
-                metrics['risk_adjusted_return'] = daily_returns.mean() / metrics['volatility']
-            
-            # Calculate max drawdown
-            if len(df) > 0:
-                df['cumulative_return'] = (1 + df['Profit_Loss']/100).cumprod()
-                rolling_max = df['cumulative_return'].expanding().max()
-                drawdowns = (df['cumulative_return'] - rolling_max) / rolling_max
-                metrics['max_drawdown'] = drawdowns.min() * 100
-                
-        return metrics
-    except Exception as e:
-        logging.error(f"Error calculating risk metrics: {e}")
-        return {}
-
-def analyze_volume_profile(df):
-    """Analyze volume distribution and trend
+def setup_logging():
+    """Configure logging with enhanced formatting and file rotation."""
+    log_dir = Path('logs')
+    log_dir.mkdir(exist_ok=True)
     
-    Args:
-        df (DataFrame): DataFrame containing stock data with Volume column
-        
-    Returns:
-        dict: Dictionary containing volume metrics including trend and concentration
-    """
-    try:
-        volume_metrics = {}
-        if 'Volume' not in df.columns or df['Volume'].isna().all():
-            logging.warning("Volume data missing or all values are NaN")
-            return volume_metrics
-            
-        # Ensure we have enough data for SMA calculation
-        if len(df) < 20:
-            logging.warning(f"Insufficient data points ({len(df)}) for volume analysis, need at least 20")
-            return volume_metrics
-            
-        # Fill any NaN values to avoid calculation errors
-        df_clean = df.copy()
-        df_clean['Volume'] = df_clean['Volume'].fillna(method='ffill').fillna(0)
-        
-        # Calculate volume trend using 20-day SMA
-        volume_sma = df_clean['Volume'].rolling(window=20).mean()
-        if pd.isna(volume_sma.iloc[-1]):
-            logging.warning("Unable to calculate volume SMA, possibly due to insufficient data")
-            return volume_metrics
-            
-        current_vol = df_clean['Volume'].iloc[-1]
-        avg_vol = volume_sma.iloc[-1]
-        
-        # Determine volume trend based on current volume vs average
-        volume_metrics['volume_trend'] = 'INCREASING' if current_vol > avg_vol * 1.2 else \
-                                       'DECREASING' if current_vol < avg_vol * 0.8 else \
-                                       'NEUTRAL'
-        
-        # Calculate volume concentration (percentage of days with high volume)
-        volume_metrics['volume_concentration'] = (df_clean['Volume'] > avg_vol * 1.5).sum() / len(df_clean)
-        
-        # Add additional metrics
-        volume_metrics['current_volume'] = current_vol
-        volume_metrics['average_volume'] = avg_vol
-        volume_metrics['volume_ratio'] = current_vol / avg_vol if avg_vol > 0 else 0
-        
-        return volume_metrics
-    except Exception as e:
-        logging.error(f"Error analyzing volume profile: {e}")
-        return {}
+    # Configure logging format
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    date_format = '%Y-%m-%d %H:%M:%S'
+    
+    # Create formatters
+    file_formatter = logging.Formatter(log_format, date_format)
+    console_formatter = logging.Formatter('%(levelname)s: %(message)s')
+    
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    
+    # Remove existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # File handler with rotation
+    file_handler = RotatingFileHandler(
+        log_dir / 'stock_analysis.log',
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    file_handler.setFormatter(file_formatter)
+    file_handler.setLevel(logging.INFO)
+    
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(console_formatter)
+    console_handler.setLevel(logging.INFO)
+    
+    # Add handlers
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    
+    logger.info("Logging system initialized")
+    return logger
 
-def get_sector_analysis(df):
-    """Analyze sector/industry trends"""
+def parse_env_file(file_path: Path) -> Dict[str, str]:
+    """Custom parser for .env file with better error handling."""
+    env_vars = {}
+    if not file_path.exists():
+        return env_vars
+        
     try:
-        # Group stocks by sector/price range
-        df['price_category'] = pd.qcut(df['Close'], q=3, labels=['Small', 'Mid', 'Large'])
-        sector_analysis = df.groupby('price_category').agg({
-            'RSI': 'mean',
-            'AO': 'mean', 
-            'Phase_Probability': 'mean',
-            'Symbol': 'count'
-        }).reset_index()
-        
-        # Add sector momentum
-        sector_analysis['momentum'] = sector_analysis.apply(
-            lambda x: 'STRONG' if x['RSI'] > 60 and x['AO'] > 0 else
-                     'WEAK' if x['RSI'] < 40 and x['AO'] < 0 else 'NEUTRAL',
-            axis=1
-        )
-        
-        return sector_analysis
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                
+                # Skip empty lines and comments
+                if not line or line.startswith('#'):
+                    continue
+                    
+                # Parse key-value pairs
+                match = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', line)
+                if match:
+                    key, value = match.groups()
+                    # Remove quotes if present
+                    value = value.strip().strip('"\'')
+                    env_vars[key] = value
+                else:
+                    logger.warning(f"Invalid line format in .env file at line {line_num}: {line}")
+                    
     except Exception as e:
-        logging.error(f"Error in sector analysis: {e}")
-        return pd.DataFrame()
+        logger.error(f"Error reading .env file: {str(e)}")
+        
+    return env_vars
+
+def load_environment_variables() -> Dict[str, Any]:
+    """Load and validate environment variables with proper error handling."""
+    try:
+        # Define default values
+        defaults = {
+            'MAIN_DB_PATH': 'data/databases/production/psx_consolidated_data_indicators_PSX.db',
+            'SIGNALS_DB_PATH': 'data/databases/production/PSX_investing_Stocks_KMI30.db',
+            'CHARTS_DIR': 'outputs/charts/RSI_AO_CHARTS',
+            'DASHBOARDS_DIR': 'outputs/dashboards/PSX_DASHBOARDS',
+            'RSI_OVERSOLD': '40',
+            'RSI_OVERBOUGHT': '60',
+            'MA_PERIOD': '30',
+            'NEUTRAL_THRESHOLD': '1.5',
+            'MAX_POSSIBLE_SCORE': '10.0',
+            'CHART_DPI': '120',
+            'CHART_FIGSIZE': '14,14',
+            'TELEGRAM_BOT_TOKEN': '',
+            'TELEGRAM_CHAT_ID': ''
+        }
+        
+        # Try to find .env file in parent directories
+        env_path = find_dotenv(raise_error_if_not_found=False)
+        env_vars = defaults.copy()
+        
+        if env_path:
+            logger.info(f"Found .env file at: {env_path}")
+            # Use custom parser
+            custom_env_vars = parse_env_file(Path(env_path))
+            if custom_env_vars:
+                env_vars.update(custom_env_vars)
+                logger.info("Successfully loaded environment variables from .env file")
+            else:
+                logger.warning("No valid environment variables found in .env file. Using defaults.")
+        else:
+            logger.warning("No .env file found. Using default values.")
+        
+        # Validate and convert values
+        for key, value in env_vars.items():
+            if key in ['RSI_OVERSOLD', 'RSI_OVERBOUGHT', 'MA_PERIOD', 'CHART_DPI']:
+                try:
+                    env_vars[key] = str(int(value))
+                except ValueError:
+                    logger.warning(f"Invalid integer value for {key}: {value}. Using default.")
+                    env_vars[key] = defaults[key]
+            elif key in ['NEUTRAL_THRESHOLD', 'MAX_POSSIBLE_SCORE']:
+                try:
+                    env_vars[key] = str(float(value))
+                except ValueError:
+                    logger.warning(f"Invalid float value for {key}: {value}. Using default.")
+                    env_vars[key] = defaults[key]
+            elif key == 'CHART_FIGSIZE':
+                try:
+                    # Ensure it's in the correct format
+                    parts = value.split(',')
+                    if len(parts) == 2:
+                        int(parts[0])
+                        int(parts[1])
+                        env_vars[key] = value
+                    else:
+                        raise ValueError("Invalid format")
+                except (ValueError, IndexError):
+                    logger.warning(f"Invalid CHART_FIGSIZE value: {value}. Using default.")
+                    env_vars[key] = defaults[key]
+        
+        return env_vars
+        
+    except Exception as e:
+        logger.error(f"Error loading environment variables: {str(e)}")
+        raise
+
+# Initialize logging system
+logger = setup_logging()
+
+# Load environment variables
+try:
+    env_vars = load_environment_variables()
+except Exception as e:
+    logger.error(f"Failed to load environment variables: {str(e)}")
+    raise
+
+@dataclass
+class Configuration:
+    """Configuration settings for the application."""
+    
+    # Database paths
+    MAIN_DB_PATH: str = env_vars['MAIN_DB_PATH']
+    SIGNALS_DB_PATH: str = env_vars['SIGNALS_DB_PATH']
+    
+    # Output directories
+    CHARTS_DIR: str = env_vars['CHARTS_DIR']
+    DASHBOARDS_DIR: str = env_vars['DASHBOARDS_DIR']
+    
+    # Technical analysis parameters
+    RSI_OVERSOLD: int = int(env_vars['RSI_OVERSOLD'])
+    RSI_OVERBOUGHT: int = int(env_vars['RSI_OVERBOUGHT'])
+    MA_PERIOD: int = int(env_vars['MA_PERIOD'])
+    
+    # Market phase thresholds
+    NEUTRAL_THRESHOLD: float = float(env_vars['NEUTRAL_THRESHOLD'])
+    MAX_POSSIBLE_SCORE: float = float(env_vars['MAX_POSSIBLE_SCORE'])
+    
+    # Chart settings
+    CHART_DPI: int = int(env_vars['CHART_DPI'])
+    CHART_FIGSIZE: tuple = tuple(map(int, env_vars['CHART_FIGSIZE'].split(',')))
+    
+    # Telegram settings
+    TELEGRAM_BOT_TOKEN: str = env_vars['TELEGRAM_BOT_TOKEN']
+    TELEGRAM_CHAT_ID: str = env_vars['TELEGRAM_CHAT_ID']
+    
+    def __post_init__(self):
+        """Create required directories and validate configuration."""
+        # Create required directories
+        for directory in [self.CHARTS_DIR, self.DASHBOARDS_DIR]:
+            Path(directory).mkdir(parents=True, exist_ok=True)
+        
+        # Validate technical parameters
+        if self.RSI_OVERSOLD >= self.RSI_OVERBOUGHT:
+            raise ValueError("RSI_OVERSOLD must be less than RSI_OVERBOUGHT")
+        
+        if self.MA_PERIOD <= 0:
+            raise ValueError("MA_PERIOD must be positive")
+        
+        if self.NEUTRAL_THRESHOLD <= 0 or self.MAX_POSSIBLE_SCORE <= 0:
+            raise ValueError("Thresholds must be positive")
+        
+        # Validate Telegram settings
+        if not self.TELEGRAM_BOT_TOKEN or not self.TELEGRAM_CHAT_ID:
+            logger.warning("Telegram bot token or chat ID not configured. Telegram notifications will be disabled.")
+        else:
+            logger.info("Telegram credentials are configured")
+            
+        # Validate database paths
+        for db_path in [self.MAIN_DB_PATH, self.SIGNALS_DB_PATH]:
+            if not os.path.exists(os.path.dirname(db_path)):
+                raise ValueError(f"Database directory does not exist: {os.path.dirname(db_path)}")
+
+# Create global configuration instance
+config = Configuration()
+
+class DatabaseConnectionManager:
+    """Enhanced database connection manager with connection pooling and better error handling."""
+    
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self._engine = None
+        self._pool = None
+        self._initialize_connection_pool()
+    
+    def _initialize_connection_pool(self):
+        """Initialize the database connection pool."""
+        try:
+            self._engine = create_engine(
+                f'sqlite:///{self.db_path}',
+                poolclass=QueuePool,
+                pool_size=5,
+                max_overflow=10,
+                pool_timeout=30,
+                pool_recycle=1800
+            )
+            logger.info(f"Database connection pool initialized for {self.db_path}")
+        except Exception as e:
+            raise DatabaseError(f"Failed to initialize database connection pool: {str(e)}")
+    
+    @property
+    def engine(self) -> Engine:
+        """Get the SQLAlchemy engine instance."""
+        if not self._engine:
+            self._initialize_connection_pool()
+        return self._engine
+    
+    @contextmanager
+    def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection from the pool with automatic cleanup."""
+        connection = None
+        try:
+            connection = self.engine.raw_connection()
+            yield connection
+        except Exception as e:
+            raise DatabaseError(f"Failed to get database connection: {str(e)}")
+        finally:
+            if connection:
+                connection.close()
+    
+    def execute_query(self, query: str, params: tuple = None) -> list:
+        """Execute a query with retry logic and better error handling."""
+        max_retries = 3
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                with self.get_connection() as conn:
+                    cursor = conn.cursor()
+                    if params:
+                        cursor.execute(query, params)
+                    else:
+                        cursor.execute(query)
+                    return cursor.fetchall()
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    logger.warning(f"Database locked, retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    raise DatabaseError(f"Database operation failed: {str(e)}")
+            except Exception as e:
+                raise DatabaseError(f"Unexpected database error: {str(e)}")
+    
+    def execute_many(self, query: str, params_list: list[tuple]) -> None:
+        """Execute multiple queries with transaction support."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                conn.execute("BEGIN TRANSACTION")
+                try:
+                    cursor.executemany(query, params_list)
+                    conn.commit()
+                except Exception as e:
+                    conn.rollback()
+                    raise DatabaseError(f"Failed to execute batch query: {str(e)}")
+        except Exception as e:
+            raise DatabaseError(f"Failed to execute batch operation: {str(e)}")
+    
+    def close(self):
+        """Close all database connections in the pool."""
+        if self._engine:
+            self._engine.dispose()
+            logger.info("Database connection pool closed")
+
+# Create database connection managers
+main_db = DatabaseConnectionManager(config.MAIN_DB_PATH)
+signals_db = DatabaseConnectionManager(config.SIGNALS_DB_PATH)
 
 def send_signals_and_charts_summary(buy_df, sell_df, available_symbols, total_processed):
-    """Send a summary of signals and charts processed to Telegram"""
+    """Generate a summary of signals and charts processed"""
     try:
         message = "📊 PSX SIGNALS AND CHARTS SUMMARY 📊\n\n"
         
@@ -181,7 +360,6 @@ def send_signals_and_charts_summary(buy_df, sell_df, available_symbols, total_pr
         
         # Add chart locations info
         message += "🗂️ Charts have been saved in the RSI_AO_CHARTS folder\n"
-        message += "📱 Individual charts have been sent via Telegram\n\n"
         
         # Market breadth indicators
         if len(available_symbols) > 0:
@@ -204,33 +382,44 @@ def send_signals_and_charts_summary(buy_df, sell_df, available_symbols, total_pr
             else:
                 message += "\n⚪ MARKET INTERPRETATION: Neutral\n"
         
-        # Send the message
-        send_telegram_message(message)
-        return True
+        return message
     except Exception as e:
-        logging.error(f"Error sending signals and charts summary: {e}")
-        return False
+        logger.error(f"Error generating signals summary: {e}")
+        return "Error generating summary"
 
-def get_latest_sell_stocks():
-    """Get the latest sell stocks from the database"""
+def get_latest_sell_stocks() -> pd.DataFrame:
+    """Get the latest sell stocks from the database.
+    
+    Returns:
+        pd.DataFrame: DataFrame containing the latest sell signals with columns:
+            - Stock: Stock symbol
+            - Date: Current date
+            - Close: Current closing price
+            - RSI_Weekly_Avg: Weekly RSI average
+            - AO_Weekly: Weekly Awesome Oscillator
+            - Signal_Date: Date of sell signal
+            - Signal_Close: Price at sell signal
+            - update_date: Last update date (if available)
+            - days_ago: Days since sell signal
+    """
     try:
-        with sqlite3.connect(DATABASE_SIGNALS) as conn:
+        with sqlite3.connect(config.SIGNALS_DB_PATH) as conn:
             cursor = conn.cursor()
             
             # First check if the sell_stocks table exists
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sell_stocks'")
             if not cursor.fetchone():
-                logging.warning("Table 'sell_stocks' does not exist in the database")
+                logger.warning("Table 'sell_stocks' does not exist in the database")
                 return pd.DataFrame()
             
             cursor.execute("PRAGMA table_info(sell_stocks)")
             columns = [info[1] for info in cursor.fetchall()]
-            logging.info(f"Actual columns in sell_stocks: {columns}")
+            logger.info(f"Actual columns in sell_stocks: {columns}")
             
             # Get a list of all unique stocks
             cursor.execute("SELECT DISTINCT Stock FROM sell_stocks WHERE Signal_Date IS NOT NULL")
             stocks = [row[0] for row in cursor.fetchall()]
-            logging.info(f"Found {len(stocks)} unique stocks with sell signal dates")
+            logger.info(f"Found {len(stocks)} unique stocks with sell signal dates")
             
             # For each stock, get the most recent signal
             results = []
@@ -288,9 +477,9 @@ def get_latest_sell_stocks():
             return df
             
     except Exception as e:
-        logging.error(f"Error getting latest sell stocks: {e}")
+        logger.error(f"Error getting latest sell stocks: {e}")
         import traceback
-        logging.error(traceback.format_exc())
+        logger.error(traceback.format_exc())
         return pd.DataFrame()
 
 # 1. UTILITY FUNCTIONS
@@ -302,7 +491,7 @@ def execute_with_retry(func, *args, max_retries=3, delay=1, backoff_factor=2, **
         except sqlite3.OperationalError as e:
             if attempt < max_retries - 1:
                 wait_time = delay * (backoff_factor ** attempt)
-                logging.warning(f"Operation failed, retrying in {wait_time:.2f}s ({attempt+1}/{max_retries}): {e}")
+                logger.warning(f"Operation failed, retrying in {wait_time:.2f}s ({attempt+1}/{max_retries}): {e}")
                 time.sleep(wait_time)
             else:
                 raise
@@ -310,8 +499,8 @@ def execute_with_retry(func, *args, max_retries=3, delay=1, backoff_factor=2, **
 def check_database_files():
     """Check if required database files exist and are accessible"""
     required_dbs = {
-        DATABASE_MAIN: 'Main stock data database',
-        DATABASE_SIGNALS: 'Signals database'
+        config.MAIN_DB_PATH: 'Main stock data database',
+        config.SIGNALS_DB_PATH: 'Signals database'
     }
     
     missing_dbs = []
@@ -335,14 +524,14 @@ def check_database_files():
                 missing_dbs.append(f"- {db_file}: File exists but cannot be read (permission denied: {e})")
     
     if missing_dbs:
-        print("\n⚠️ DATABASE ERROR ⚠️")
-        print("The following required database files are missing or inaccessible:")
+        logger.error("\n⚠️ DATABASE ERROR ⚠️")
+        logger.error("The following required database files are missing or inaccessible:")
         for msg in missing_dbs:
-            print(msg)
-        print("\nTo use this script, please ensure:")
-        print("1. You've downloaded the latest database files from the repository")
-        print("2. The database files are in the same directory as this script")
-        print("3. You have read/write permissions for these files")
+            logger.error(msg)
+        logger.error("\nTo use this script, please ensure:")
+        logger.error("1. You've downloaded the latest database files from the repository")
+        logger.error("2. The database files are in the same directory as this script")
+        logger.error("3. You have read/write permissions for these files")
         return False
         
     return True
@@ -350,26 +539,31 @@ def check_database_files():
 def create_default_symbols_file():
     """Create a default KMI30 symbols file if it doesn't exist"""
     try:
-        file_path = os.path.join(os.getcwd(), 'psxsymbols.xlsx')
+        file_path = os.path.join(os.getcwd(), 'data/databases/production/psxsymbols.xlsx')
         
         # Check if file already exists
         if os.path.exists(file_path):
-            logging.info(f"Symbols file already exists at {file_path}")
+            logger.info(f"Symbols file already exists at {file_path}")
             return True
             
         # Default KMI30 symbols (as of March 2024)
-        kmi30_symbols = KMI30_SYMBOLS
+        kmi30_symbols = [
+            'AICL', 'ATRL', 'BAFL', 'BAHL', 'CNERGY', 'EFERT', 'ENGRO', 
+            'FFBL', 'FFC', 'FCCL', 'HUBC', 'HBL', 'ISL', 'ILP', 'LUCK', 
+            'MCB', 'MARI', 'MEBL', 'MLCF', 'MTL', 'NBP', 'NML', 'OGDC', 
+            'PAKT', 'PPL', 'PIOC', 'PSO', 'SNGP', 'SSGC', 'UBL'
+        ]
         
         # Create DataFrame and save to Excel
         symbols_df = pd.DataFrame(kmi30_symbols, columns=['Symbol'])
         with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
             symbols_df.to_excel(writer, sheet_name='KMI30', index=False)
             
-        logging.info(f"Created default symbols file at {file_path}")
+        logger.info(f"Created default symbols file at {file_path}")
         return True
         
     except Exception as e:
-        logging.error(f"Error creating symbols file: {e}")
+        logger.error(f"Error creating symbols file: {e}")
         return False
 
 def parse_args():
@@ -394,13 +588,13 @@ def fetch_table_names(cursor):
                       and table[0].endswith('_stock_data')]
         
         if not stock_tables:
-            logging.warning("No stock tables found in database")
+            logger.warning("No stock tables found in database")
         else:
-            logging.info(f"Fetched {len(stock_tables)} stock tables")
+            logger.info(f"Fetched {len(stock_tables)} stock tables")
             
         return stock_tables
     except Exception as e:
-        logging.error(f"Error fetching table names: {e}")
+        logger.error(f"Error fetching table names: {e}")
         return []
 
 def fetch_column_names(engine, table_name):
@@ -409,10 +603,10 @@ def fetch_column_names(engine, table_name):
         query = f"PRAGMA table_info({table_name})"
         df = pd.read_sql(query, engine)
         columns = df['name'].tolist()
-        logging.info(f"Columns in table {table_name}: {columns}")
+        logger.info(f"Columns in table {table_name}: {columns}")
         return columns
     except Exception as e:
-        logging.error(f"Error fetching column names for table {table_name}: {e}")
+        logger.error(f"Error fetching column names for table {table_name}: {e}")
         return []
 
 def get_available_symbols(cursor):
@@ -424,22 +618,22 @@ def get_available_symbols(cursor):
         excluded_terms = ['STOCK_DATA', 'META', 'SYSTEM', 'DATA', 'INDEX', 'CONFIG', 'TEMP', 'BACKUP']
         
         symbols = []
-        for table in table_names:
+        for table_name in table_names:
             # Extract symbol from table name
-            symbol = table.replace('PSX_', '').replace('_stock_data', '').strip().upper()
+            symbol = table_name.replace('PSX_', '').replace('_stock_data', '').strip().upper()
             
             # Skip if it's a system table or common word rather than a stock symbol
             if (symbol in excluded_terms or 
                 len(symbol) > 10 or  # Most stock symbols aren't this long
                 '_' in symbol):      # Real stock symbols typically don't have underscores
-                logging.info(f"Skipping non-stock table: {table}")
+                logger.info(f"Skipping non-stock table: {table_name}")
                 continue
                 
             symbols.append(symbol)
             
         return symbols
     except Exception as e:
-        logging.error(f"Error getting available symbols: {e}")
+        logger.error(f"Error getting available symbols: {e}")
         print(f"\n⚠️ Database access error: {e}")
         print("Please check if your database file is valid and not corrupted.")
         return []
@@ -447,17 +641,23 @@ def get_available_symbols(cursor):
 def get_latest_buy_stocks():
     """Get the latest buy stocks from the database"""
     try:
-        with sqlite3.connect(DATABASE_SIGNALS) as conn:
+        with sqlite3.connect(config.SIGNALS_DB_PATH) as conn:
             cursor = conn.cursor()
+            
+            # First check if the buy_stocks table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='buy_stocks'")
+            if not cursor.fetchone():
+                logger.warning("Table 'buy_stocks' does not exist in the database")
+                return pd.DataFrame()
             
             cursor.execute("PRAGMA table_info(buy_stocks)")
             columns = [info[1] for info in cursor.fetchall()]
-            logging.info(f"Actual columns in buy_stocks: {columns}")
+            logger.info(f"Actual columns in buy_stocks: {columns}")
             
             # Get a list of all unique stocks
             cursor.execute("SELECT DISTINCT Stock FROM buy_stocks WHERE Signal_Date IS NOT NULL")
             stocks = [row[0] for row in cursor.fetchall()]
-            logging.info(f"Found {len(stocks)} unique stocks with signal dates")
+            logger.info(f"Found {len(stocks)} unique stocks with buy signal dates")
             
             # For each stock, get the most recent signal
             results = []
@@ -468,7 +668,7 @@ def get_latest_buy_stocks():
                     # If update_date exists, use it to find the most recent entry
                     query = f"""
                         SELECT Stock, Date, Close, RSI_Weekly_Avg, AO_Weekly, Signal_Date, Signal_Close, 
-                              update_date, julianday('{current_date}') - julianday(Signal_Date) AS days_held
+                              update_date, julianday('{current_date}') - julianday(Signal_Date) AS holding_days
                         FROM buy_stocks 
                         WHERE Stock = ? AND Signal_Date IS NOT NULL
                         ORDER BY update_date DESC, Signal_Date DESC
@@ -478,7 +678,7 @@ def get_latest_buy_stocks():
                     # Otherwise just use Signal_Date
                     query = f"""
                         SELECT Stock, Date, Close, RSI_Weekly_Avg, AO_Weekly, Signal_Date, Signal_Close,
-                              julianday('{current_date}') - julianday(Signal_Date) AS days_held
+                              julianday('{current_date}') - julianday(Signal_Date) AS holding_days
                         FROM buy_stocks 
                         WHERE Stock = ? AND Signal_Date IS NOT NULL
                         ORDER BY Signal_Date DESC
@@ -514,35 +714,32 @@ def get_latest_buy_stocks():
                 
             return df
             
-    except sqlite3.Error as e:
-        logging.error(f"SQLite error getting latest buy stocks: {e}")
-        return pd.DataFrame()
     except Exception as e:
-        logging.error(f"Unexpected error getting latest buy stocks: {e}")
+        logger.error(f"Error getting latest buy stocks: {e}")
         import traceback
-        logging.error(traceback.format_exc())
+        logger.error(traceback.format_exc())
         return pd.DataFrame()
 
 def get_latest_sell_stocks():
     """Get the latest sell stocks from the database"""
     try:
-        with sqlite3.connect(DATABASE_SIGNALS) as conn:
+        with sqlite3.connect(config.SIGNALS_DB_PATH) as conn:
             cursor = conn.cursor()
             
             # First check if the sell_stocks table exists
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sell_stocks'")
             if not cursor.fetchone():
-                logging.warning("Table 'sell_stocks' does not exist in the database")
+                logger.warning("Table 'sell_stocks' does not exist in the database")
                 return pd.DataFrame()
             
             cursor.execute("PRAGMA table_info(sell_stocks)")
             columns = [info[1] for info in cursor.fetchall()]
-            logging.info(f"Actual columns in sell_stocks: {columns}")
+            logger.info(f"Actual columns in sell_stocks: {columns}")
             
             # Get a list of all unique stocks
             cursor.execute("SELECT DISTINCT Stock FROM sell_stocks WHERE Signal_Date IS NOT NULL")
             stocks = [row[0] for row in cursor.fetchall()]
-            logging.info(f"Found {len(stocks)} unique stocks with sell signal dates")
+            logger.info(f"Found {len(stocks)} unique stocks with sell signal dates")
             
             # For each stock, get the most recent signal
             results = []
@@ -600,9 +797,9 @@ def get_latest_sell_stocks():
             return df
             
     except Exception as e:
-        logging.error(f"Error getting latest sell stocks: {e}")
+        logger.error(f"Error getting latest sell stocks: {e}")
         import traceback
-        logging.error(traceback.format_exc())
+        logger.error(traceback.format_exc())
         return pd.DataFrame()
 
 def format_signals_for_telegram(signal_df, signal_type="BUY"):
@@ -667,65 +864,61 @@ def format_signals_for_telegram(signal_df, signal_type="BUY"):
         return formatted_message
     
     except Exception as e:
-        logging.error(f"Error formatting {signal_type} signals for Telegram: {e}")
+        logger.error(f"Error formatting {signal_type} signals for Telegram: {e}")
         return f"Error formatting {signal_type} signals for Telegram: {e}"
-def get_buy_sell_signals(symbol):
-    """Get buy and sell signals for a symbol from data/databases/production/PSX_investing_Stocks_KMI30.db"""
-    buy_signals = []
-    sell_signals = []
-    
+
+def get_buy_sell_signals(symbol: str) -> tuple:
+    """Get buy and sell signals for a stock"""
     try:
-        with sqlite3.connect(DATABASE_SIGNALS) as conn:
-            # First check which tables exist
+        # Get buy signals
+        buy_signals = []
+        with sqlite3.connect(config.SIGNALS_DB_PATH) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            tables = [table[0] for table in cursor.fetchall()]
-            
-            # Get buy signals if table exists
-            if 'buy_stocks' in tables:
-                query = f"SELECT Date, Signal_Date, Signal_Close FROM buy_stocks WHERE Stock = ? ORDER BY Date"
-                buy_df = pd.read_sql_query(query, conn, params=(symbol,))
-                if not buy_df.empty:
-                    for _, row in buy_df.iterrows():
-                        if pd.notna(row['Signal_Date']) and pd.notna(row['Signal_Close']):
-                            buy_signals.append((pd.to_datetime(row['Signal_Date']), row['Signal_Close']))
-            else:
-                logging.info(f"Table 'buy_stocks' not found in database - no buy signals available for {symbol}")
-            
-            # Get sell signals if table exists
-            if 'sell_stocks' in tables:
-                query = f"SELECT Date, Signal_Date, Signal_Close FROM sell_stocks WHERE Stock = ? ORDER BY Date"
-                sell_df = pd.read_sql_query(query, conn, params=(symbol,))
-                if not sell_df.empty:
-                    for _, row in sell_df.iterrows():
-                        if pd.notna(row['Signal_Date']) and pd.notna(row['Signal_Close']):
-                            sell_signals.append((pd.to_datetime(row['Signal_Date']), row['Signal_Close']))
-            else:
-                # Only log this as info since it's a normal condition in your case
-                logging.info(f"Table 'sell_stocks' not found in database - no sell signals available for {symbol}")
-                        
-        logging.info(f"Found {len(buy_signals)} buy signals and {len(sell_signals)} sell signals for {symbol}")
+            cursor.execute("""
+                SELECT Signal_Date, Signal_Close
+                FROM buy_stocks
+                WHERE Stock = ?
+                ORDER BY Signal_Date DESC
+            """, (symbol,))
+            for date, price in cursor.fetchall():
+                buy_signals.append({
+                    'date': date,
+                    'price': price
+                })
+                
+        # Get sell signals
+        sell_signals = []
+        with sqlite3.connect(config.SIGNALS_DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT Signal_Date, Signal_Close
+                FROM sell_stocks
+                WHERE Stock = ?
+                ORDER BY Signal_Date DESC
+            """, (symbol,))
+            for date, price in cursor.fetchall():
+                sell_signals.append({
+                    'date': date,
+                    'price': price
+                })
+                
+        logger.info(f"Found {len(buy_signals)} buy signals and {len(sell_signals)} sell signals for {symbol}")
         return buy_signals, sell_signals
-    
-    except sqlite3.Error as e:
-        logging.error(f"SQLite error getting buy/sell signals for {symbol}: {e}")
-        return [], []
+        
     except Exception as e:
-        logging.error(f"Unexpected error getting buy/sell signals for {symbol}: {e}")
-        import traceback
-        logging.error(traceback.format_exc())
+        logger.error(f"Error getting buy/sell signals for {symbol}: {e}")
         return [], []
 
 def remove_duplicate_buy_stocks():
     """Remove duplicate entries from the buy_stocks table, keeping only the most recent signal for each stock"""
     try:
-        with sqlite3.connect(DATABASE_SIGNALS) as conn:
+        with sqlite3.connect(config.SIGNALS_DB_PATH) as conn:
             cursor = conn.cursor()
             
             # First, check if the table exists
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='buy_stocks'")
             if not cursor.fetchone():
-                logging.warning("Table 'buy_stocks' does not exist in the database")
+                logger.warning("Table 'buy_stocks' does not exist in the database")
                 return 0
             
             # Count total records before cleaning
@@ -742,7 +935,7 @@ def remove_duplicate_buy_stocks():
             duplicated_stocks = cursor.fetchall()
             
             if not duplicated_stocks:
-                logging.info("No duplicate stocks found in buy_stocks table")
+                logger.info("No duplicate stocks found in buy_stocks table")
                 return 0
                 
             total_removed = 0
@@ -763,7 +956,7 @@ def remove_duplicate_buy_stocks():
                 
                 removed = count - 1  # We keep 1 record, remove the rest
                 total_removed += removed
-                logging.info(f"Removed {removed} duplicate entries for {stock}")
+                logger.info(f"Removed {removed} duplicate entries for {stock}")
             
             conn.commit()
             
@@ -771,12 +964,12 @@ def remove_duplicate_buy_stocks():
             cursor.execute("SELECT COUNT(*) FROM buy_stocks")
             total_after = cursor.fetchone()[0]
             
-            logging.info(f"Cleaning complete. Records before: {total_before}, after: {total_after}, removed: {total_removed}")
+            logger.info(f"Cleaning complete. Records before: {total_before}, after: {total_after}, removed: {total_removed}")
             
             return total_removed
             
     except Exception as e:
-        logging.error(f"Error removing duplicate buy stocks: {e}")
+        logger.error(f"Error removing duplicate buy stocks: {e}")
         return 0
 
 # 3. ANALYSIS FUNCTIONS
@@ -786,7 +979,7 @@ def prepare_analysis_data(df):
     
     # Calculate percentage change if it doesn't exist
     if 'pct_change' not in analysis_df.columns:
-        analysis_df['Close'].pct_change() * 100
+        analysis_df['pct_change'] = analysis_df['Close'].pct_change() * 100
         
     # Use recent data for analysis (last ~260 trading days / 1 year)
     recent_df = analysis_df.tail(260)
@@ -828,11 +1021,11 @@ def analyze_rsi_trend(analysis_df):
         # Assign score based on RSI values and trends
         rsi_score = 0
         
-        if current_rsi < RSI_OVERSOLD and rsi_trend > 0.1:  # Strong oversold with uptrend
+        if current_rsi < config.RSI_OVERSOLD and rsi_trend > 0.1:  # Strong oversold with uptrend
             rsi_score = 2.5
         elif current_rsi < 40 and rsi_trend > 0.05:  # Oversold with modest uptrend
             rsi_score = 2
-        elif current_rsi > RSI_OVERBOUGHT and rsi_trend < -0.1:  # Strong overbought with downtrend
+        elif current_rsi > config.RSI_OVERBOUGHT and rsi_trend < -0.1:  # Strong overbought with downtrend
             rsi_score = -2.5
         elif current_rsi > 60 and rsi_trend < -0.05:  # Overbought with modest downtrend
             rsi_score = -2
@@ -877,7 +1070,7 @@ def analyze_rsi_trend(analysis_df):
         return rsi_score, details
         
     except Exception as e:
-        logging.error(f"Error analyzing RSI trend: {e}")
+        logger.error(f"Error analyzing RSI trend: {e}")
         return 0, {'error': str(e)}
 
 def analyze_ao_trend(analysis_df):
@@ -940,57 +1133,7 @@ def analyze_ao_trend(analysis_df):
         return ao_score, details
         
     except Exception as e:
-        logging.error(f"Error analyzing AO trend: {e}")
-        return 0, {'error': str(e)}
-
-def analyze_ao_trend(analysis_df):
-    """Analyze Awesome Oscillator trends to detect momentum shifts"""
-    try:
-        # Get recent AO values
-        recent_ao = analysis_df['AO_weekly_AVG'].tail(30).values
-        
-        # Current AO value and trend
-        current_ao = recent_ao[-1] if len(recent_ao) > 0 else 0
-        ao_trend = np.polyfit(range(len(recent_ao)), recent_ao, 1)[0] if len(recent_ao) > 1 else 0
-        
-        # Check for recent crosses in last ~3 days (15 trading days)
-        recent_crosses = recent_ao[-15:] if len(recent_ao) >= 15 else recent_ao
-        ao_crosses_up = False
-        ao_crosses_down = False
-        
-        for i in range(1, len(recent_crosses)):
-            if recent_crosses[i-1] < 0 and recent_crosses[i] >= 0:
-                ao_crosses_up = True
-            if recent_crosses[i-1] > 0 and recent_crosses[i] <= 0:
-                ao_crosses_down = True
-        
-        # Assign score
-        ao_score = 0
-        
-        if ao_crosses_up:  # Recent bullish zero-line cross
-            ao_score = 2.5
-        elif ao_crosses_down:  # Recent bearish zero-line cross
-            ao_score = -2.5
-        elif current_ao > 0 and ao_trend > 0.02:  # Strong positive momentum above zero
-            ao_score = 2
-        elif current_ao < 0 and ao_trend < -0.02:  # Strong negative momentum below zero
-            ao_score = -2
-        elif current_ao > 0:  # Positive but not increasing strongly
-            ao_score = 1
-        elif current_ao < 0:  # Negative but not decreasing strongly
-            ao_score = -1
-            
-        details = {
-            'current_ao': round(current_ao, 2),
-            'ao_trend': round(ao_trend, 4),
-            'crosses_up': ao_crosses_up,
-            'crosses_down': ao_crosses_down
-        }
-            
-        return ao_score, details
-        
-    except Exception as e:
-        logging.error(f"Error analyzing AO trend: {e}")
+        logger.error(f"Error analyzing AO trend: {e}")
         return 0, {'error': str(e)}
 
 def analyze_volume_pattern(analysis_df):
@@ -1102,7 +1245,7 @@ def analyze_volume_pattern(analysis_df):
         return volume_score, details
         
     except Exception as e:
-        logging.error(f"Error analyzing volume pattern: {e}")
+        logger.error(f"Error analyzing volume pattern: {e}")
         return 0, {'error': str(e)}
 
 def analyze_price_ma_relationship(analysis_df):
@@ -1165,70 +1308,7 @@ def analyze_price_ma_relationship(analysis_df):
         return ma_score, details
         
     except Exception as e:
-        logging.error(f"Error analyzing price-MA relationship: {e}")
-        return 0, {'error': str(e)}
-
-def analyze_price_ma_relationship(analysis_df):
-    """Analyze price relationship to moving averages"""
-    try:
-        # Get recent price and MA data
-        recent_prices = analysis_df['Close'].tail(5).values
-        recent_ma = analysis_df['MA_30'].tail(5).values
-        
-        ma_score = 0
-        details = {}
-        
-        # Current relationship between price and multiple MAs
-        if len(recent_prices) > 0:
-            ma_columns = ['MA_10', 'MA_30', 'MA_50']
-            ma_scores = []
-            ma_details = {}
-            
-            for ma_col in ma_columns:
-                if ma_col in analysis_df.columns:
-                    recent_ma = analysis_df[ma_col].tail(5).values
-                    if len(recent_ma) > 0:
-                        price_vs_ma = (recent_prices[-1] / recent_ma[-1] - 1) * 100  # % difference
-                        price_above_ma = recent_prices[-1] > recent_ma[-1]
-                        
-                        ma_details[f'{ma_col}_pct'] = round(price_vs_ma, 2)
-                        ma_details[f'{ma_col}_above'] = price_above_ma
-                        
-                        # Score based on price-MA relationship
-                        if price_above_ma and price_vs_ma > 5:  # Price significantly above MA
-                            ma_scores.append(1.5)
-                        elif price_above_ma:  # Price moderately above MA
-                            ma_scores.append(1)
-                        elif not price_above_ma and price_vs_ma < -5:  # Price significantly below MA
-                            ma_scores.append(-1.5)
-                        elif not price_above_ma:  # Price moderately below MA
-                            ma_scores.append(-1)
-            
-            # Calculate average MA score
-            if ma_scores:
-                ma_score = sum(ma_scores) / len(ma_scores)
-                details.update(ma_details)
-                
-        # Add analysis of price trend relative to MA
-        if len(recent_prices) > 1 and len(recent_ma) > 1:
-            price_trend = np.polyfit(range(len(recent_prices)), recent_prices, 1)[0]
-            ma_trend = np.polyfit(range(len(recent_ma)), recent_ma, 1)[0]
-            
-            trend_difference = price_trend - ma_trend
-            
-            details['price_trend'] = round(price_trend, 4)
-            details['ma_trend'] = round(ma_trend, 4)
-            details['trend_difference'] = round(trend_difference, 4)
-            
-            if trend_difference > 0.01:  # Price trend significantly above MA trend
-                ma_score += 0.5
-            elif trend_difference < -0.01:  # Price trend significantly below MA trend
-                ma_score -= 0.5
-                
-        return ma_score, details
-        
-    except Exception as e:
-        logging.error(f"Error analyzing price-MA relationship: {e}")
+        logger.error(f"Error analyzing price-MA relationship: {e}")
         return 0, {'error': str(e)}
 
 def analyze_price_pattern(analysis_df):
@@ -1298,63 +1378,20 @@ def analyze_price_pattern(analysis_df):
         return pattern_score, details
         
     except Exception as e:
-        logging.error(f"Error analyzing price pattern: {e}")
+        logger.error(f"Error analyzing price pattern: {e}")
         return 0, {'error': str(e)}
 
 def calculate_final_phase_score(rsi_score, ao_score, volume_score, ma_score, pattern_score):
     """Calculate the final market phase score and determine accumulation/distribution"""
     try:
         # Calculate total score with weighted indicators
-        total_score = (
-            (rsi_score * INDICATOR_WEIGHTS['rsi_score_weight']) + 
-            (ao_score * INDICATOR_WEIGHTS['ao_score_weight']) + 
-            (volume_score * INDICATOR_WEIGHTS['volume_score_weight']) + 
-            (ma_score * INDICATOR_WEIGHTS['ma_score_weight']) + 
-            (pattern_score * INDICATOR_WEIGHTS['pattern_score_weight'])
-        )
-        
-        # Define max possible score based on max weights
-        max_possible_score = sum(INDICATOR_WEIGHTS.values())
-        
-        # Calculate probability and determine phase
-        if total_score > NEUTRAL_THRESHOLD:  # Accumulation
-            probability = min(round(((total_score - NEUTRAL_THRESHOLD) / (max_possible_score - NEUTRAL_THRESHOLD)) * 100, 2), 100)
-            phase = "ACCUMULATION"
-        elif total_score < -NEUTRAL_THRESHOLD:  # Distribution
-            probability = min(round(((abs(total_score) - NEUTRAL_THRESHOLD) / (max_possible_score - NEUTRAL_THRESHOLD)) * 100, 2), 100)
-            phase = "DISTRIBUTION"
-        else:  # Neutral zone
-            neutral_position = total_score / NEUTRAL_THRESHOLD if NEUTRAL_THRESHOLD > 0 else 0
-            probability = round(50 + (neutral_position * 25), 2)  # 25-75% within neutral zone
-            phase = "NEUTRAL"
-            
-        # Ensure probability is within 0-100 range
-        probability = max(0, min(probability, 100))
-            
-        return phase, probability, {
-            'rsi_score': rsi_score,
-            'ao_score': ao_score,
-            'volume_score': volume_score,
-            'ma_score': ma_score,
-            'pattern_score': pattern_score,
-            'total_score': round(total_score, 2)
-        }
-        
-    except Exception as e:
-        logging.error(f"Error calculating final phase score: {e}")
-        return "NEUTRAL", 50, {'error': str(e)}
-
-def calculate_final_phase_score(rsi_score, ao_score, volume_score, ma_score, pattern_score):
-    """Calculate the final market phase score and determine accumulation/distribution"""
-    try:
-        # Calculate total score 
-        total_score = rsi_score + ao_score + volume_score + ma_score + pattern_score
+        total_score = (rsi_score * 0.3) + (ao_score * 0.25) + (volume_score * 0.2) + (ma_score * 0.15) + (pattern_score * 0.1)
         
         # Define neutral threshold
-        neutral_threshold = 1.5
+        neutral_threshold = config.NEUTRAL_THRESHOLD
         
         # Define max possible score
-        max_possible_score = 10.0
+        max_possible_score = config.MAX_POSSIBLE_SCORE
         
         # Calculate probability and determine phase
         if total_score > neutral_threshold:  # Accumulation
@@ -1381,7 +1418,7 @@ def calculate_final_phase_score(rsi_score, ao_score, volume_score, ma_score, pat
         }
         
     except Exception as e:
-        logging.error(f"Error calculating final phase score: {e}")
+        logger.error(f"Error calculating final phase score: {e}")
         return "NEUTRAL", 50, {'error': str(e)}
 
 def calculate_market_phase(df, symbol_name):
@@ -1398,315 +1435,108 @@ def calculate_market_phase(df, symbol_name):
     )
 
 # 4. VISUALIZATION AND REPORTING FUNCTIONS
-def draw_indicator_trend_lines_with_signals(database_path, table_name):
-    """Draw technical indicator trend lines with buy/sell signals"""
+class FigureManager:
+    """Context manager for handling matplotlib figures"""
+    def __init__(self):
+        self.fig = None
+        
+    def __enter__(self):
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.fig is not None:
+            plt.close(self.fig)
+            
+    def create_figure(self, figsize):
+        """Create a new figure and store it"""
+        self.fig = plt.figure(figsize=figsize)
+        return self.fig
+
+def draw_indicator_trend_lines_with_signals(symbol: str) -> tuple:
+    """Draw indicator trend lines with buy/sell signals for a stock"""
     try:
-        # Extract the symbol name from the table name
-        symbol_name = table_name.replace('PSX_', '').replace('_stock_data', '').strip().upper()
-
-        # Create a connection to the database
-        engine = create_engine(f'sqlite:///{database_path}')
-        connection = engine.connect()
-
-        # Get available columns
-        available_columns = fetch_column_names(engine, table_name)
+        # Get stock data
+        table_name = f"PSX_{symbol}_stock_data"
+        df = get_stock_data(table_name)
         
-        # Define the specific columns we're looking for
-        monthly_column = 'RSI_monthly_Avg'
-        threemonth_column = 'RSI_3months_Avg'
-        
-        # Base columns we always want
-        base_columns = ["Date", "Close", "RSI_weekly_Avg", "AO_weekly_AVG", "MA_30", 
-                         "RSI_weekly", "Volume", "pct_change"]
-                         
-        # Add our specific RSI columns if they exist
-        columns_to_select = base_columns.copy()
-        
-        if monthly_column in available_columns:
-            columns_to_select.append(monthly_column)
-            logging.info(f"Found monthly RSI column: {monthly_column}")
-            
-        if threemonth_column in available_columns:
-            columns_to_select.append(threemonth_column)
-            logging.info(f"Found 3-month RSI column: {threemonth_column}")
-        
-        # Build the query
-        query = f"SELECT {', '.join(columns_to_select)} FROM {table_name}"
-        logging.info(f"Executing query: {query}")
-        
-        # Query the data from the database
-        df = pd.read_sql(query, connection)
-        connection.close()
-
-        # Check if the dataframe is empty
         if df.empty:
-            logging.warning(f"No data found in table: {table_name}")
-            return False
-
-        # Convert the date column to datetime
-        df['Date'] = pd.to_datetime(df['Date'])
-
-        # Filter data to include only the last 10 years
-        custom_years_ago = datetime.now() - timedelta(days=10*365)
-        df = df[df['Date'] >= custom_years_ago]
-
-        # Get AO change dates
-        change_dates = get_ao_change_dates(df)
-
-        # Get buy and sell signals
-        buy_signals, sell_signals = get_buy_sell_signals(symbol_name)
-        
-        # Get holding days and profit/loss for this stock
-        holding_days = None
-        profit_loss_pct = None
-        signal_price = None
-        current_price = None
-        
-        try:
-            with sqlite3.connect(DATABASE_SIGNALS) as conn:
-                cursor = conn.cursor()
-                current_date = datetime.now().strftime('%Y-%m-%d')
-                
-                # Check if %p/L column exists
-                cursor.execute("PRAGMA table_info(buy_stocks)")
-                columns = [info[1] for info in cursor.fetchall()]
-                
-                pl_column = None
-                for col in columns:
-                    if 'p/l' in col.lower() or 'profit' in col.lower() or 'loss' in col.lower() or 'gain' in col.lower():
-                        pl_column = col
-                        break
-                
-                # Get holding days and the most recent buy signal
-                query = f"""
-                    SELECT julianday('{current_date}') - julianday(Signal_Date) AS days_held,
-                           Signal_Date, Signal_Close
-                    FROM buy_stocks 
-                    WHERE Stock = ? AND Signal_Date IS NOT NULL
-                    ORDER BY Signal_Date DESC
-                    LIMIT 1
-                """
-                cursor.execute(query, (symbol_name,))
-                result = cursor.fetchone()
-                
-                if result:
-                    holding_days = int(result[0])
-                    signal_date = result[1]
-                    signal_price = result[2]
-                    logging.info(f"Stock {symbol_name} has been held for {holding_days} days, bought at {signal_price}")
-                    
-                    # If p/L column exists, get the value
-                    if pl_column:
-                        query = f"""
-                            SELECT "{pl_column}" 
-                            FROM buy_stocks 
-                            WHERE Stock = ? AND Signal_Date = ?
-                        """
-                        cursor.execute(query, (symbol_name, signal_date))
-                        pl_result = cursor.fetchone()
-                        if pl_result and pl_result[0] is not None:
-                            profit_loss_pct = float(pl_result[0])
-                    
-                    # If we couldn't get p/L from database, calculate it
-                    if profit_loss_pct is None and signal_price:
-                        # Get current price from the most recent data
-                        query = f"""
-                            SELECT Close 
-                            FROM {table_name} 
-                            ORDER BY Date DESC 
-                            LIMIT 1
-                        """
-                        cursor.execute(query)
-                        close_result = cursor.fetchone()
-                        if close_result:
-                            current_price = float(close_result[0])
-                            profit_loss_pct = ((current_price - signal_price) / signal_price) * 100
-                            logging.info(f"Calculated profit/loss: {profit_loss_pct:.2f}% (Current: {current_price}, Signal: {signal_price})")
-        except Exception as e:
-            logging.error(f"Error getting holding days and profit/loss for {symbol_name}: {e}")
+            logger.error(f"No data found for {symbol}")
+            return None, None
             
-        # Determine stock status (buy/sell/neutral)
-        # Priority: most recent signal type or neutral if no signals
-        stock_status = "OPPORTUNITY"  # Default status
+        # Get buy/sell signals
+        buy_signals, sell_signals = get_buy_sell_signals(symbol)
         
-        if buy_signals and sell_signals:
-            latest_buy = max(buy_signals, key=lambda x: x[0])
-            latest_sell = max(sell_signals, key=lambda x: x[0])
-            
-            if latest_buy[0] > latest_sell[0]:
-                stock_status = "BUY/HOLD"
-            else:
-                stock_status = "SELL"
-        elif buy_signals:
-            stock_status = "BUY/HOLD"
-        elif sell_signals:
-            stock_status = "SELL"
+        # Create figure with subplots
+        fig = plt.figure(figsize=(14, 14))
+        gs = fig.add_gridspec(4, 1, height_ratios=[3, 1, 1, 1])
         
-        # Calculate market phase (accumulation/distribution)
-        market_phase, phase_probability, phase_details = calculate_market_phase(df, symbol_name)
+        # Price and MA subplot
+        ax1 = fig.add_subplot(gs[0])
+        ax1.plot(df.index, df['Close'], label='Close Price', color='blue')
+        ax1.plot(df.index, df['MA'], label='MA', color='red')
         
-        # Plot the trend lines
-        plt.figure(figsize=CHART_FIGSIZE)
-
-        # Plot RSI_weekly_Avg and RSI_weekly overlapped
-        plt.subplot(5, 1, 1)
-        plt.plot(df['Date'], df['RSI_weekly_Avg'], label='RSI_weekly_Avg', color='blue')
-        plt.plot(df['Date'], df['RSI_weekly'], label='RSI_weekly', color='purple')
-        plt.axhline(y=RSI_OVERSOLD, color='green', linestyle='--', label=f'RSI {RSI_OVERSOLD}')
-        plt.axhline(y=RSI_OVERBOUGHT, color='red', linestyle='--', label=f'RSI {RSI_OVERBOUGHT}')
-        plt.title(f'{symbol_name} - RSI Weekly Average and RSI Weekly Trend Line')
-        plt.xlabel('Date')
-        plt.ylabel('RSI Values')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-
-        # Plot AO_weekly_AVG with different colors for positive and negative values
-        plt.subplot(5, 1, 2)
-        
-        # Dual color plot for AO_weekly_AVG
-        positive_ao = df[df['AO_weekly_AVG'] >= 0]
-        negative_ao = df[df['AO_weekly_AVG'] < 0]
-        
-        plt.plot(positive_ao['Date'], positive_ao['AO_weekly_AVG'], color='green', label='AO_weekly_AVG Positive')
-        plt.plot(negative_ao['Date'], negative_ao['AO_weekly_AVG'], color='red', label='AO_weekly_AVG Negative')
-        plt.axhline(y=0, color='gray', linestyle='--')
-        
-        plt.title(f'{symbol_name} - AO Weekly Average Trend Line')
-        plt.xlabel('Date')
-        plt.ylabel('AO_weekly_AVG')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-
-        # Plot stars for AO change dates
-        for date, close in change_dates['negative_to_positive']:
-            plt.plot(date, 0, marker='*', color='green', markersize=10)
-        for date, close in change_dates['positive_to_negative']:
-            plt.plot(date, 0, marker='*', color='red', markersize=10)
-
-        # Plot Close and MA_30 overlapped
-        ax3 = plt.subplot(5, 1, 3)
-        plt.plot(df['Date'], df['Close'], label='Close', color='orange')
-        plt.plot(df['Date'], df['MA_30'], label='MA_30', color='red')
-        plt.title(f'{symbol_name} - Close Price and MA30 Trend Line')
-        plt.xlabel('Date')
-        plt.ylabel('Price')
-        plt.grid(True, alpha=0.3)
-        
-        # Add buy signals
+        # Add buy/sell signals
         for date, price in buy_signals:
-            plt.plot(date, price, marker='^', color='green', markersize=10)
-            plt.annotate('Buy', (date, price), textcoords="offset points", 
-                         xytext=(0,10), ha='center', fontsize=9, color='green')
-        
-        # Add sell signals
+            ax1.scatter(date, price, color='green', marker='^', s=100, label='Buy Signal')
         for date, price in sell_signals:
-            plt.plot(date, price, marker='v', color='red', markersize=10)
-            plt.annotate('Sell', (date, price), textcoords="offset points", 
-                         xytext=(0,10), ha='center', fontsize=9, color='red')
-        
-        # Format x-axis to show dates clearly
-        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
-        ax3.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-        plt.xticks(rotation=45)
-        plt.legend()
-
-        # Plot Volume
-        plt.subplot(5, 1, 4)
-        plt.bar(df['Date'], df['Volume'], color='blue', alpha=0.6)
-        plt.title(f'{symbol_name} - Trading Volume')
-        plt.xlabel('Date')
-        plt.ylabel('Volume')
-        plt.grid(True, axis='y', alpha=0.3)
-
-        # Plot RSI Monthly and RSI 3-Month
-        plt.subplot(5, 1, 5)
-        
-        # Track if we have any monthly indicators to plot
-        has_monthly_data = False
-        
-        # Plot monthly RSI if available
-        if monthly_column in df.columns and df[monthly_column].notna().any():
-            plt.plot(df['Date'], df[monthly_column], label='RSI Monthly', color='green')
-            has_monthly_data = True
-            logging.info(f"Successfully plotting RSI Monthly for {symbol_name}")
-        
-        # Plot 3-month RSI if available
-        if threemonth_column in df.columns and df[threemonth_column].notna().any():
-            plt.plot(df['Date'], df[threemonth_column], label='RSI 3-Month', color='blue')
-            has_monthly_data = True
-            logging.info(f"Successfully plotting RSI 3-Month for {symbol_name}")
-        
-        if not has_monthly_data:
-            plt.text(0.5, 0.5, 'No monthly RSI data available', 
-                     ha='center', va='center', transform=plt.gca().transAxes)
-            logging.warning(f"No monthly RSI data available for {symbol_name}")
-        
-        plt.axhline(y=RSI_OVERSOLD, color='green', linestyle='--', label=f'RSI {RSI_OVERSOLD}')
-        plt.axhline(y=RSI_OVERBOUGHT, color='red', linestyle='--', label=f'RSI {RSI_OVERBOUGHT}')
-        plt.title(f'{symbol_name} - Monthly and 3-Month RSI')
-        plt.xlabel('Date')
-        plt.ylabel('RSI Values')
-        plt.grid(True, alpha=0.3)
-        plt.legend()
-
-        # Add a title with current date, signal status, and market phase
-        current_date = datetime.now().strftime('%Y-%m-%d')
-        title_text = f'{symbol_name} Technical Analysis - {stock_status}'
-        if holding_days is not None and stock_status == "BUY/HOLD":
-            title_text += f' - Held for {holding_days} days'
-        if profit_loss_pct is not None:
-            title_text += f' - P/L: {profit_loss_pct:.2f}%'
-        title_text += f' - {market_phase} {phase_probability:.2f}% - Generated on {current_date}'
-
-        # Add watermark
-        watermark_color = STATUS_COLORS.get(stock_status, "gray")
-        
-        # Create watermark text with holding days, profit/loss, and market phase
-        watermark_text = stock_status
-        
-        # Add holding days for BUY/HOLD stocks
-        if holding_days is not None and stock_status == "BUY/HOLD":
-            watermark_text = f"{stock_status}\n{holding_days} DAYS"
+            ax1.scatter(date, price, color='red', marker='v', s=100, label='Sell Signal')
             
-        # Add profit/loss if available
-        if profit_loss_pct is not None:
-            profit_loss_sign = "+" if profit_loss_pct >= 0 else ""
-            watermark_text += f"\n{profit_loss_sign}{profit_loss_pct:.2f}%"
+        ax1.set_title(f'{symbol} Price and Signals')
+        ax1.legend()
+        ax1.grid(True)
+        
+        # RSI subplot
+        ax2 = fig.add_subplot(gs[1])
+        ax2.plot(df.index, df['RSI'], label='RSI', color='purple')
+        ax2.axhline(y=70, color='r', linestyle='--')
+        ax2.axhline(y=30, color='g', linestyle='--')
+        ax2.set_title('RSI')
+        ax2.legend()
+        ax2.grid(True)
+        
+        # AO subplot
+        ax3 = fig.add_subplot(gs[2])
+        ax3.plot(df.index, df['AO'], label='AO', color='orange')
+        ax3.axhline(y=0, color='black', linestyle='-')
+        ax3.set_title('Awesome Oscillator')
+        ax3.legend()
+        ax3.grid(True)
+        
+        # Volume subplot
+        ax4 = fig.add_subplot(gs[3])
+        ax4.bar(df.index, df['Volume'], label='Volume', color='gray', alpha=0.5)
+        ax4.set_title('Volume')
+        ax4.legend()
+        ax4.grid(True)
+        
+        # Format x-axis dates
+        for ax in [ax1, ax2, ax3, ax4]:
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
             
-        # Add market phase information
-        phase_color = PHASE_COLORS.get(market_phase, "gray")
+        # Adjust layout
+        plt.tight_layout()
         
-        fig = plt.gcf()
-        # Main watermark with status and days
-        fig.text(0.5, 0.55, watermark_text, fontsize=80, color=watermark_color, 
-                 ha='center', va='center', alpha=0.2, rotation=30)
-                # Add market phase at the bottom of the watermark with more separation
-        fig.text(0.5, 0.25, f"{market_phase} {phase_probability:.2f}%", 
-                 fontsize=60, color=phase_color, 
-                 ha='center', va='center', alpha=0.2, rotation=30)
-
-        # Adjust layout and save the plot as an image file
-        plt.tight_layout(rect=[0, 0, 1, 0.95])  # Make room for the title
-        os.makedirs(CHARTS_FOLDER, exist_ok=True)
-        plot_filename = os.path.join(CHARTS_FOLDER, f'{symbol_name}_trend_lines_with_signals.png')
-        plt.savefig(plot_filename, bbox_inches='tight', dpi=120)
-
-        # Send the plot to Telegram
-        message = title_text
-        send_telegram_message_with_image(plot_filename, message)
-
-        # Close the figure to avoid memory issues
-        plt.close()  
+        # Save the chart
+        os.makedirs('outputs/charts/RSI_AO_CHARTS', exist_ok=True)
+        plot_filename = os.path.join('outputs/charts/RSI_AO_CHARTS', f'{symbol}_trend_lines_with_signals.png')
+        plt.savefig(plot_filename, dpi=120, bbox_inches='tight')
+        plt.close()
         
-        return True
+        # Generate title text
+        title_text = f"{symbol} Technical Analysis"
+        
+        logger.info(f"Generated chart for {symbol} at {plot_filename}")
+        return plot_filename, title_text
+        
     except Exception as e:
-        logging.error(f"Error drawing trend lines for table {table_name}: {e}")
-        return False
+        logger.error(f"Error drawing chart for {symbol}: {e}")
+        return None, None
 
 def generate_stock_dashboard():
     """Generate a dashboard showing buy, sell and neutral stocks with key metrics"""
     try:
-        database_path = DATABASE_MAIN
+        database_path = 'data/databases/production/psx_consolidated_data_indicators_PSX.db'
         
         # Create a connection to the database
         engine = create_engine(f'sqlite:///{database_path}')
@@ -1724,7 +1554,7 @@ def generate_stock_dashboard():
         all_results = []
         
         # Process each symbol individually
-        print("Analyzing all available stocks for dashboard...")
+        logger.info("Analyzing all available stocks for dashboard...")
         for symbol in tqdm(available_symbols, desc="Processing stocks"):
             try:
                 # Get stock data for this specific symbol only
@@ -1733,7 +1563,7 @@ def generate_stock_dashboard():
                 # First, check which columns exist in this table
                 available_columns = fetch_column_names(engine, table_name)
                 if not available_columns:
-                    logging.warning(f"No columns found for {table_name}")
+                    logger.warning(f"No columns found for {table_name}")
                     continue
                 
                 # Define required and optional columns
@@ -1748,7 +1578,7 @@ def generate_stock_dashboard():
                 
                 # Check if required columns exist
                 if not all(col in available_columns for col in required_cols):
-                    logging.warning(f"Missing required columns in {table_name}")
+                    logger.warning(f"Missing required columns in {table_name}")
                     continue
                 
                 # Build SELECT clause with only available columns
@@ -1842,7 +1672,7 @@ def generate_stock_dashboard():
                 all_results.append(result)
                 
             except Exception as e:
-                logging.error(f"Error processing {symbol} for dashboard: {e}")
+                logger.error(f"Error processing {symbol} for dashboard: {e}")
                 continue
         
         # Convert results to DataFrame
@@ -1857,19 +1687,19 @@ def generate_stock_dashboard():
         return dashboard_df
         
     except Exception as e:
-        logging.error(f"Error generating dashboard: {e}")
+        logger.error(f"Error generating dashboard: {e}")
         import traceback
-        logging.error(traceback.format_exc())
+        logger.error(traceback.format_exc())
         return pd.DataFrame()
 
 def create_dashboard_visualization(df):
     """Create visual dashboard using Matplotlib"""
     if df.empty:
-        logging.error("No data available for dashboard visualization")
+        logger.error("No data available for dashboard visualization")
         return False
     
     # Create a figure with multiple subplots - 3x3 grid
-    fig = plt.figure(figsize=DASHBOARD_FIGSIZE)
+    fig = plt.figure(figsize=(20, 16))
     plt.subplots_adjust(hspace=0.8, wspace=0.4)  # Increased spacing between plots
     
     # Add a title
@@ -1880,15 +1710,17 @@ def create_dashboard_visualization(df):
     # 1. Status Distribution Pie Chart
     plt.subplot(3, 3, 1)
     status_counts = df['Status'].value_counts()
-    status_colors = [STATUS_COLORS.get(s, 'gray') for s in status_counts.index]
+    colors = {'BUY/HOLD': 'green', 'SELL': 'red', 'OPPORTUNITY': 'blue'}
+    status_colors = [colors.get(s, 'gray') for s in status_counts.index]
     plt.pie(status_counts, labels=status_counts.index, autopct='%.2f%%', colors=status_colors)
     plt.title('Stock Signal Distribution')
     
     # 2. Market Phase Distribution Pie Chart
     plt.subplot(3, 3, 2)
     phase_counts = df['Market_Phase'].value_counts()
+    phase_colors = {'ACCUMULATION': 'green', 'DISTRIBUTION': 'red', 'NEUTRAL': 'gray'}
     plt.pie(phase_counts, labels=phase_counts.index, autopct='%.2f%%',
-            colors=[PHASE_COLORS.get(p, 'blue') for p in phase_counts.index])
+            colors=[phase_colors.get(p, 'blue') for p in phase_counts.index])
     plt.title('Market Phase Distribution')
     
     # 3. Market Breadth Indicator
@@ -2146,187 +1978,22 @@ def create_dashboard_visualization(df):
         ax9.axis('off')
     
     # Save dashboard
-    os.makedirs(DASHBOARDS_FOLDER, exist_ok=True)
+    dashboards_folder = 'outputs/dashboards/PSX_DASHBOARDS'
+    os.makedirs(dashboards_folder, exist_ok=True)
     current_date = datetime.now().strftime('%Y-%m-%d')
-    dashboard_path = os.path.join(DASHBOARDS_FOLDER, f'psx_dashboard_{current_date}.png')
+    dashboard_path = os.path.join(dashboards_folder, f'psx_dashboard_{current_date}.png')
     plt.savefig(dashboard_path, dpi=120, bbox_inches='tight')
     plt.close()
     
     # Create tabular dashboards
-    create_category_tables(df, DASHBOARDS_FOLDER, current_date)
+    create_category_tables(df, dashboards_folder, current_date)
     
     # Send dashboard to Telegram
     message = f"PSX Market Dashboard - Generated on {current_date}"
     send_telegram_message_with_image(dashboard_path, message)
     
-    print(f"Dashboard saved to {dashboard_path} and sent to Telegram")
+    logger.info(f"Dashboard saved to {dashboard_path} and sent to Telegram")
     return True
-
-    # Add risk-adjusted performance matrix
-    fig = plt.figure(figsize=(22, 18))  # Increase overall figure size
-    plt.subplots_adjust(hspace=0.8, wspace=0.4)
-    
-    # After the existing 9 charts, add the following:
-    
-    # 10. Risk-Adjusted Performance Matrix
-    ax10 = plt.subplot(4, 3, 10)  # Change to 4x3 grid
-    ax10.set_title('Risk-Adjusted Performance Matrix', fontsize=12)
-    
-    # Only use BUY/HOLD stocks with valid data
-    perf_df = df[(df['Status'] == 'BUY/HOLD') & df['Profit_Loss'].notna() & df['Holding_Days'].notna()].copy()
-    
-    if not perf_df.empty and len(perf_df) >= 3:
-        # Calculate daily return and volatility
-        perf_df['Daily_Return'] = perf_df['Profit_Loss'] / perf_df['Holding_Days']
-        perf_df['Risk_Category'] = pd.qcut(perf_df['Profit_Loss'].abs(), 3, labels=['Low', 'Medium', 'High'])
-        perf_df['Return_Category'] = pd.qcut(perf_df['Daily_Return'], 3, labels=['Low', 'Medium', 'High'])
-        
-        # Create scatter plot
-        risk_colors = {'Low': 'green', 'Medium': 'orange', 'High': 'red'}
-        for risk, group in perf_df.groupby('Risk_Category'):
-            ax10.scatter(group['Holding_Days'], group['Profit_Loss'], 
-                        label=f'{risk} Risk', color=risk_colors[risk], 
-                        alpha=0.7, s=100)
-            
-            # Label top performers in each category
-            for _, row in top.iterrows():
-                ax10.annotate(row['Symbol'], 
-                             (row['Holding_Days'], row['Profit_Loss']),
-                             xytext=(5, 5), textcoords='offset points')
-                             
-        # Add optimal hold period range
-        if len(perf_df) > 5:
-            # Find optimal holding period range (highest avg daily returns)
-            perf_df['Hold_Bucket'] = pd.cut(perf_df['Holding_Days'], 
-                                          bins=[0, 10, 30, 60, 120, float('inf')],
-                                          labels=['0-10d', '11-30d', '31-60d', '61-120d', '>120d'])
-            best_bucket = perf_df.groupby('Hold_Bucket')['Daily_Return'].mean().idxmax()
-            
-            # Shade the optimal region
-            bucket_ranges = {'0-10d': (0, 10), '11-30d': (11, 30), 
-                           '31-60d': (31, 60), '61-120d': (61, 120), '>120d': (121, 200)}
-            if best_bucket in bucket_ranges:
-                min_x, max_x = bucket_ranges[best_bucket]
-                ax10.axvspan(min_x, max_x, alpha=0.2, color='green')
-                ax10.text((min_x + max_x)/2, ax10.get_ylim()[1]*0.9, 
-                         f"Optimal Hold: {best_bucket}", ha='center',
-                         bbox=dict(facecolor='white', alpha=0.8))
-            
-        ax10.axhline(y=0, color='black', linestyle='--', alpha=0.5)
-        ax10.set_xlabel('Holding Period (Days)')
-        ax10.set_ylabel('Profit/Loss (%)')
-        ax10.legend(title='Risk Level')
-        ax10.grid(True, alpha=0.3)
-    else:
-        ax10.text(0.5, 0.5, 'Insufficient data for performance matrix',
-                 ha='center', va='center', transform=ax10.transAxes)
-
-    # 11. Decision Support - Action Recommendations
-    ax11 = plt.subplot(4, 3, 11)
-    ax11.set_title('Action Recommendations', fontsize=12)
-    
-    # Create decision support categories
-    action_counts = {
-        'Strong Buy': len(df[(df['Market_Phase'] == 'ACCUMULATION') & 
-                             (df['Phase_Probability'] > 70) & 
-                             (df['RSI'] < 50) & 
-                             (df['AO'] > 0)]),
-        'Buy': len(df[(df['Market_Phase'] == 'ACCUMULATION') & 
-                      (df['Phase_Probability'] > 55)]),
-        'Hold': len(df[(df['Status'] == 'BUY/HOLD') & 
-                       (df['Market_Phase'] != 'DISTRIBUTION')]),
-        'Take Profit': len(df[(df['Status'] == 'BUY/HOLD') & 
-                             (df['Market_Phase'] == 'DISTRIBUTION') & 
-                             (df['Profit_Loss'] > 0 if 'Profit_Loss' in df.columns else False)]),
-        'Cut Loss': len(df[(df['Status'] == 'BUY/HOLD') & 
-                          (df['Market_Phase'] == 'DISTRIBUTION') & 
-                          (df['Profit_Loss'] < 0 if 'Profit_Loss' in df.columns else False)]),
-        'Avoid': len(df[(df['Market_Phase'] == 'DISTRIBUTION') & 
-                       (df['Phase_Probability'] > 70)])
-    }
-    
-    # Create action guidance visualization
-    actions = list(action_counts.keys())
-    values = list(action_counts.values())
-    colors = ['darkgreen', 'green', 'blue', 'orange', 'red', 'darkred']
-    
-    bars = ax11.bar(actions, values, color=colors)
-    
-    # Add value labels on top of bars
-    for bar in bars:
-        height = bar.get_height()
-        if height > 0:
-            ax11.text(bar.get_x() + bar.get_width()/2, height + 0.1,
-                     str(int(height)), ha='center', va='bottom')
-    
-    ax11.set_ylabel('Number of Stocks')
-    ax11.set_xticklabels(actions, rotation=45, ha='right')
-    ax11.grid(True, axis='y', alpha=0.3)
-    
-    # Add a note for how to use this chart
-    ax11.text(0.5, -0.3, 'Focus on Strong Buy for new entries, Take Profit for overbought positions',
-             transform=ax11.transAxes, ha='center', fontsize=9)
-
-    # 12. Sector Rotation Heat Map
-    ax12 = plt.subplot(4, 3, 12)
-    ax12.set_title('Market Sector Performance', fontsize=12)
-    
-    # Create sector categories (could be based on industry or market cap)
-    if 'Price_Category' in df.columns:
-        # We already have price categories from previous analysis
-        # Get average RSI and AO values by category
-        sector_metrics = df.groupby('Price_Category').agg({
-            'RSI': 'mean',
-            'AO': 'mean',
-            'Phase_Probability': 'mean',
-            'Symbol': 'count'
-        }).reset_index()
-        
-        sector_metrics = sector_metrics.rename(columns={'Symbol': 'Count'})
-        
-        if not sector_metrics.empty:
-            # Create array for heatmap
-            sectors = sector_metrics['Price_Category'].tolist()
-            metrics = ['RSI', 'AO', 'Phase_Probability']
-            data = sector_metrics[metrics].values
-            
-            # Create heatmap
-            im = ax12.imshow(data.T, cmap='RdYlGn', aspect='auto')
-            
-            # Add labels
-            ax12.set_xticks(np.arange(len(sectors)))
-            ax12.set_yticks(np.arange(len(metrics)))
-            ax12.set_xticklabels(sectors)
-            ax12.set_yticklabels(metrics)
-            plt.setp(ax12.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
-            
-            # Add text annotations in each cell
-            for i in range(len(sectors)):
-                for j in range(len(metrics)):
-                    value = data[i, j]
-                    text_color = 'black' if 30 < value < 70 else 'white'
-                    ax12.text(i, j, f"{value:.1f}", ha="center", va="center", 
-                             color=text_color, fontweight="bold")
-            
-            # Add count below each column
-            for i, count in enumerate(sector_metrics['Count']):
-                ax12.text(i, len(metrics), f"n={count}", ha="center", va="center")
-                
-            # Add a title explaining what we're seeing
-            lead_sector = sector_metrics.loc[sector_metrics['Phase_Probability'].idxmax(), 'Price_Category']
-            ax12.set_title(f'Market Sector Performance (Leader: {lead_sector})', fontsize=12)
-            
-            # Add colorbar
-            cbar = plt.colorbar(im, ax=ax12, orientation='horizontal', pad=0.2)
-            cbar.set_label('Score (Higher is Better)')
-        else:
-            ax12.text(0.5, 0.5, 'Insufficient data for sector analysis',
-                     ha='center', va='center', transform=ax12.transAxes)
-            ax12.axis('off')
-    else:
-        ax12.text(0.5, 0.5, 'Sector data not available',
-                 ha='center', va='center', transform=ax12.transAxes)
-        ax12.axis('off')
 
 def create_category_tables(df, folder, date):
     """Create and save tabular dashboards for each category"""
@@ -2578,16 +2245,16 @@ def generate_portfolio_recommendations(df):
     market_score = (accumulation_pct + bullish_rsi_pct + positive_ao_pct) / 3
     
     # Define market condition
-    if market_score > MARKET_THRESHOLDS['STRONGLY_BULLISH']:
-        market_condition = "STRONGLY_BULLISH"
-    elif market_score > MARKET_THRESHOLDS['MODERATELY_BULLISH']:
-        market_condition = "MODERATELY_BULLISH"
-    elif market_score > MARKET_THRESHOLDS['NEUTRAL']:
+    if market_score > 65:
+        market_condition = "STRONGLY BULLISH"
+    elif market_score > 55:
+        market_condition = "MODERATELY BULLISH"
+    elif market_score > 45:
         market_condition = "NEUTRAL"
-    elif market_score > MARKET_THRESHOLDS['MODERATELY_BEARISH']:
-        market_condition = "MODERATELY_BEARISH"
+    elif market_score > 35:
+        market_condition = "MODERATELY BEARISH"
     else:
-        market_condition = "STRONGLY_BEARISH"
+        market_condition = "STRONGLY BEARISH"
     
     # Top picks for different strategies
     if len(df) > 5:
@@ -2611,52 +2278,20 @@ def generate_portfolio_recommendations(df):
     recommendations = f"🔍 PORTFOLIO RECOMMENDATIONS ({market_condition} MARKET)\n\n"
     
     # Position sizing recommendation based on market condition
-    # Define fallback allocation targets in case of lookup failures
-    allocation_targets_fallback = {
-        'STRONGLY_BULLISH': (80, 100),
-        'MODERATELY_BULLISH': (70, 90),
-        'NEUTRAL': (60, 80),
-        'MODERATELY_BEARISH': (40, 60),
-        'STRONGLY_BEARISH': (30, 50)
-    }
-    
-    # Try to get allocation from ALLOCATION_TARGETS, with fallback handling
-    try:
-        if market_condition in ALLOCATION_TARGETS:
-            allocation_range = ALLOCATION_TARGETS[market_condition]
-        else:
-            # Try with normalized key (replacing spaces with underscores)
-            normalized_key = market_condition.replace(' ', '_')
-            if normalized_key in ALLOCATION_TARGETS:
-                allocation_range = ALLOCATION_TARGETS[normalized_key]
-            else:
-                # Use fallback if not found in ALLOCATION_TARGETS
-                allocation_range = allocation_targets_fallback[market_condition]
-                
-        # Extract min and max values
-        if isinstance(allocation_range, (list, tuple)) and len(allocation_range) >= 2:
-            allocation_min, allocation_max = allocation_range[0], allocation_range[1]
-        else:
-            allocation_min, allocation_max = 60, 80  # Default moderate values
-    except Exception as e:
-        logging.warning(f"Error accessing allocation targets for {market_condition}: {e}")
-        allocation_min, allocation_max = 60, 80  # Default moderate values
-    
-    # Use the allocation values in the recommendations
-    if market_condition in ["STRONGLY_BULLISH", "MODERATELY_BULLISH"]:
+    if market_condition in ["STRONGLY BULLISH", "MODERATELY BULLISH"]:
         recommendations += "📊 POSITION SIZING: Standard to aggressive position sizes recommended\n"
-        recommendations += f"🎯 TARGET ALLOCATION: {allocation_min}-{allocation_max}% invested\n"
+        recommendations += "🎯 TARGET ALLOCATION: 80-100% invested\n"
     elif market_condition == "NEUTRAL":
         recommendations += "📊 POSITION SIZING: Standard position sizes recommended\n"
-        recommendations += f"🎯 TARGET ALLOCATION: {allocation_min}-{allocation_max}% invested\n"
+        recommendations += "🎯 TARGET ALLOCATION: 60-80% invested\n"
     else:
         recommendations += "📊 POSITION SIZING: Reduced position sizes recommended\n" 
-        recommendations += f"🎯 TARGET ALLOCATION: {allocation_min}-{allocation_max}% invested\n"
+        recommendations += "🎯 TARGET ALLOCATION: 30-50% invested\n"
     
     # Strategy recommendations
     recommendations += f"\n💼 STRATEGY RECOMMENDATIONS ({market_score:.1f}% bullish score):\n"
     
-    if market_condition in ["STRONGLY_BULLISH", "MODERATELY_BULLISH"]:
+    if market_condition in ["STRONGLY BULLISH", "MODERATELY BULLISH"]:
         recommendations += "✅ Focus on growth and momentum stocks\n"
         recommendations += "✅ Consider pyramiding profitable positions\n" 
         recommendations += "✅ Let winners run with trailing stops\n"
@@ -2702,7 +2337,7 @@ if __name__ == "__main__":
         exit(1)
     
     # database path
-    database_path = DATABASE_MAIN
+    database_path = 'data/databases/production/psx_consolidated_data_indicators_PSX.db'
     # Create a connection to the database
     engine = create_engine(f'sqlite:///{database_path}')
     connection = engine.connect()
@@ -2712,7 +2347,7 @@ if __name__ == "__main__":
     available_symbols = get_available_symbols(cursor)
     
     if not available_symbols:
-        logging.error("No stock symbols found in the database.")
+        logger.error("No stock symbols found in the database.")
         connection.close()
         exit(1)
         
@@ -2720,8 +2355,8 @@ if __name__ == "__main__":
     create_default_symbols_file()
     
     # Display all buy stocks sorted by update_date (most recent first), then by holding days
-    print("\n🟢 ALL BUY SIGNALS (SORTED BY UPDATE DATE) 🟢")
-    print("============================================")
+    logger.info("\n🟢 ALL BUY SIGNALS (SORTED BY UPDATE DATE) 🟢")
+    logger.info("============================================")
     
     latest_buy_df = get_latest_buy_stocks()
     
@@ -2740,88 +2375,77 @@ if __name__ == "__main__":
     
     if not latest_buy_df.empty:
         # Format and display the buy signals in console as before
-        # ...existing code...
+        # ...existing code for displaying buy signals in console...
         
         # Get unique symbols from the buy signals
-        # Filter buy signals to only include those with holding days less than 180
-        if 'holding_days' in latest_buy_df.columns:
-            filtered_buy_df = latest_buy_df[latest_buy_df['holding_days'] < MAX_HOLDING_DAYS]
-            latest_buy_symbols = filtered_buy_df['Stock'].unique().tolist()
-            ignored_symbols = set(latest_buy_df['Stock'].unique()) - set(filtered_buy_df['Stock'].unique())
-            if ignored_symbols:
-                print(f"\n⚠️ Skipping {len(ignored_symbols)} stocks with holding days ≥ {MAX_HOLDING_DAYS}: {', '.join(ignored_symbols)}")
-        else:
-            latest_buy_symbols = latest_buy_df['Stock'].unique().tolist()
-            print("Warning: 'holding_days' column not found, processing all buy signals")
+        latest_buy_symbols = latest_buy_df['Stock'].unique().tolist()
         
-        print(f"\n📊 GENERATING CHARTS FOR BUY SIGNALS WITH HOLDING DAYS < {MAX_HOLDING_DAYS} DAYS 📊")
-        print("==================================================================")
+        logger.info("\n📊 GENERATING CHARTS FOR BUY SIGNALS ONLY 📊")
+        logger.info("===========================================")
         
         success_count = 0
         fail_count = 0
         
-        # Only generate charts for stocks with active buy signals and holding days < 180
+        # Only generate charts for stocks with active buy signals
         if latest_buy_symbols:
             for symbol in tqdm(latest_buy_symbols, desc="Generating charts"):
                 if symbol in available_symbols:
                     table_name = f"PSX_{symbol}_stock_data"
-                    print(f"Processing {symbol}...")
+                    logger.info(f"Processing {symbol}...")
                     
-                    success = draw_indicator_trend_lines_with_signals(database_path, table_name)
+                    success, title_text = draw_indicator_trend_lines_with_signals(symbol)
                     if success:
                         success_count += 1
-                        print(f"✅ Chart for {symbol} has been generated and sent to Telegram")
+                        logger.info(f"✅ Chart for {symbol} has been generated and sent to Telegram")
                     else:
                         fail_count += 1
-                        print(f"❌ Failed to generate chart for {symbol}")
+                        logger.info(f"❌ Failed to generate chart for {symbol}")
                 else:
-                    print(f"⚠️ Symbol {symbol} not found in available data tables")
+                    logger.warning(f"⚠️ Symbol {symbol} not found in available data tables")
                     fail_count += 1
             
-            print(f"\nCompleted processing {len(latest_buy_symbols)} buy signal stocks.")
-            print(f"✅ Successfully generated: {success_count} charts")
-            print(f"❌ Failed to generate: {fail_count} charts")
-            print(f"Charts saved in the RSI_AO_CHARTS folder.")
+            logger.info(f"\nCompleted processing {len(latest_buy_symbols)} buy signal stocks.")
+            logger.info(f"✅ Successfully generated: {success_count} charts")
+            logger.info(f"❌ Failed to generate: {fail_count} charts")
+            logger.info(f"Charts saved in the RSI_AO_CHARTS folder.")
             
             # Send signals and charts summary to Telegram
             send_signals_and_charts_summary(latest_buy_df, latest_sell_df, available_symbols, success_count)
         else:
-            print("No buy signals to process for chart generation.")
+            logger.info("No buy signals to process for chart generation.")
     else:
-        print("No buy signals found in the database.")
+        logger.info("No buy signals found in the database.")
     
     # Generate comprehensive market dashboard
-    print("\n📈 GENERATING MARKET DASHBOARD 📈")
-    print("================================")
+    logger.info("\n📈 GENERATING MARKET DASHBOARD 📈")
+    logger.info("================================")
     dashboard_df = generate_stock_dashboard()
     if not dashboard_df.empty:
-        print(f"Dashboard generated successfully with {len(dashboard_df)} stocks analyzed")
-        
-        # Strategy recommendations will be handled later in the code
+        logger.info(f"Dashboard generated successfully with {len(dashboard_df)} stocks analyzed")
         
         # Display summary statistics
         buy_count = len(dashboard_df[dashboard_df['Status'] == 'BUY/HOLD'])
         sell_count = len(dashboard_df[dashboard_df['Status'] == 'SELL'])
         opp_count = len(dashboard_df[dashboard_df['Status'] == 'OPPORTUNITY'])
         
-        print(f"\nSummary Statistics:")
-        print(f"- BUY/HOLD signals: {buy_count}")
-        print(f"- SELL signals: {sell_count}")
-        print(f"- OPPORTUNITY signals: {opp_count}")
+        logger.info(f"\nSummary Statistics:")
+        logger.info(f"- BUY/HOLD signals: {buy_count}")
+        logger.info(f"- SELL signals: {sell_count}")
+        logger.info(f"- OPPORTUNITY signals: {opp_count}")
         
         # Display accumulation/distribution stats
         acc_count = len(dashboard_df[dashboard_df['Market_Phase'] == 'ACCUMULATION'])
         dist_count = len(dashboard_df[dashboard_df['Market_Phase'] == 'DISTRIBUTION'])
         neut_count = len(dashboard_df[dashboard_df['Market_Phase'] == 'NEUTRAL'])
         
-        print(f"\nMarket Phase Statistics:")
-        print(f"- ACCUMULATION: {acc_count} stocks ({acc_count/len(dashboard_df)*100:.2f}%)")
-        print(f"- DISTRIBUTION: {dist_count} stocks ({dist_count/len(dashboard_df)*100:.2f}%)")
-        print(f"- NEUTRAL: {neut_count} stocks ({neut_count/len(dashboard_df)*100:.2f}%)")
+        logger.info(f"\nMarket Phase Statistics:")
+        logger.info(f"- ACCUMULATION: {acc_count} stocks ({acc_count/len(dashboard_df)*100:.2f}%)")
+        logger.info(f"- DISTRIBUTION: {dist_count} stocks ({dist_count/len(dashboard_df)*100:.2f}%)")
+        logger.info(f"- NEUTRAL: {neut_count} stocks ({neut_count/len(dashboard_df)*100:.2f}%)")
         
         # Dashboard files location
         current_date = datetime.now().strftime('%Y-%m-%d')
-        print(f"\nDashboard saved in PSX_DASHBOARDS folder with date {current_date}")
+        logger.info(f"\nDashboard saved in PSX_DASHBOARDS folder with date {current_date}")
         
         # Define dashboards folder (this was missing)
         dashboards_folder = 'outputs/dashboards/PSX_DASHBOARDS'
@@ -2838,10 +2462,1174 @@ if __name__ == "__main__":
         # Send recommendations via Telegram
         send_telegram_message(portfolio_recommendations)
     else:
-        print("Failed to generate market dashboard")
+        logger.error("Failed to generate market dashboard")
     
     # Close the connection
     connection.close()
     
-# full and final working code. please use this one for the final code.
+def get_latest_sell_stocks():
+    """Get the latest sell stocks from the database"""
+    try:
+        with sqlite3.connect('data/databases/production/PSX_investing_Stocks_KMI30.db') as conn:
+            cursor = conn.cursor()
+            
+            # First check if the sell_stocks table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sell_stocks'")
+            if not cursor.fetchone():
+                logger.warning("Table 'sell_stocks' does not exist in the database")
+                return pd.DataFrame()
+            
+            cursor.execute("PRAGMA table_info(sell_stocks)")
+            columns = [info[1] for info in cursor.fetchall()]
+            logger.info(f"Actual columns in sell_stocks: {columns}")
+            
+            # Get a list of all unique stocks
+            cursor.execute("SELECT DISTINCT Stock FROM sell_stocks WHERE Signal_Date IS NOT NULL")
+            stocks = [row[0] for row in cursor.fetchall()]
+            logger.info(f"Found {len(stocks)} unique stocks with sell signal dates")
+            
+            # For each stock, get the most recent signal
+            results = []
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            
+            for stock in stocks:
+                if 'update_date' in columns:
+                    # If update_date exists, use it to find the most recent entry
+                    query = f"""
+                        SELECT Stock, Date, Close, RSI_Weekly_Avg, AO_Weekly, Signal_Date, Signal_Close, 
+                              update_date, julianday('{current_date}') - julianday(Signal_Date) AS days_ago
+                        FROM sell_stocks 
+                        WHERE Stock = ? AND Signal_Date IS NOT NULL
+                        ORDER BY update_date DESC, Signal_Date DESC
+                        LIMIT 1
+                    """
+                else:
+                    # Otherwise just use Signal_Date
+                    query = f"""
+                        SELECT Stock, Date, Close, RSI_Weekly_Avg, AO_Weekly, Signal_Date, Signal_Close,
+                              julianday('{current_date}') - julianday(Signal_Date) AS days_ago
+                        FROM sell_stocks 
+                        WHERE Stock = ? AND Signal_Date IS NOT NULL
+                        ORDER BY Signal_Date DESC
+                        LIMIT 1
+                    """
+                
+                cursor.execute(query, (stock,))
+                row = cursor.fetchone()
+                
+                if row:
+                    results.append(row)
+            
+            # Convert the results to a DataFrame
+            if 'update_date' in columns:
+                column_names = ['Stock', 'Date', 'Close', 'RSI_Weekly_Avg', 'AO_Weekly', 
+                               'Signal_Date', 'Signal_Close', 'update_date', 'days_ago']
+            else:
+                column_names = ['Stock', 'Date', 'Close', 'RSI_Weekly_Avg', 'AO_Weekly', 
+                               'Signal_Date', 'Signal_Close', 'days_ago']
+                
+            df = pd.DataFrame(results, columns=column_names)
+            
+            # Sort by the most recent update_date first, then by days_ago
+            if 'update_date' in columns and not df.empty:
+                df['update_date'] = pd.to_datetime(df['update_date'])
+                df = df.sort_values(['update_date', 'days_ago'], ascending=[False, True])
+            else:
+                df = df.sort_values('days_ago')
+                
+            # Convert days_ago to integer
+            if not df.empty:
+                df['days_ago'] = df['days_ago'].astype(int)
+                
+            return df
+            
+    except Exception as e:
+        logger.error(f"Error getting latest sell stocks: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return pd.DataFrame()
+
+class StockAnalysisError(Exception):
+    """Base exception class for stock analysis errors"""
+    pass
+
+class DatabaseError(StockAnalysisError):
+    """Exception raised for database-related errors"""
+    pass
+
+class DataProcessingError(StockAnalysisError):
+    """Exception raised for data processing errors"""
+    pass
+
+class ChartGenerationError(StockAnalysisError):
+    """Exception raised for chart generation errors"""
+    pass
+
+class TelegramError(StockAnalysisError):
+    """Exception raised for Telegram-related errors"""
+    pass
+
+def handle_error(error: Exception, context: str = "") -> None:
+    """Enhanced error handling with detailed logging and notification."""
+    error_type = type(error).__name__
+    error_msg = str(error)
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Create detailed error message
+    error_details = {
+        'timestamp': timestamp,
+        'error_type': error_type,
+        'error_message': error_msg,
+        'context': context,
+        'traceback': traceback.format_exc()
+    }
+    
+    # Log error with different levels based on type
+    if isinstance(error, DatabaseError):
+        logger.error(f"Database Error: {error_msg}", extra=error_details)
+    elif isinstance(error, DataProcessingError):
+        logger.error(f"Data Processing Error: {error_msg}", extra=error_details)
+    elif isinstance(error, ChartGenerationError):
+        logger.error(f"Chart Generation Error: {error_msg}", extra=error_details)
+    elif isinstance(error, TelegramError):
+        logger.error(f"Telegram Notification Error: {error_msg}", extra=error_details)
+    else:
+        logger.error(f"Unexpected Error: {error_msg}", extra=error_details)
+    
+    # Send error notification if Telegram is configured
+    try:
+        config = Configuration()
+        if config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID:
+            notifier = TelegramNotifier(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID)
+            error_notification = (
+                f"🚨 Error Alert\n"
+                f"Type: {error_type}\n"
+                f"Context: {context}\n"
+                f"Message: {error_msg}\n"
+                f"Time: {timestamp}"
+            )
+            notifier.send_message(error_notification)
+    except Exception as e:
+        logger.error(f"Failed to send error notification: {str(e)}")
+
+class DataValidator:
+    """Class for validating data before processing"""
+    
+    @staticmethod
+    def validate_stock_data(df: pd.DataFrame, required_columns: list) -> bool:
+        """Validate stock data DataFrame"""
+        if df.empty:
+            raise DataProcessingError("DataFrame is empty")
+            
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise DataProcessingError(f"Missing required columns: {missing_columns}")
+            
+        if df['Date'].dtype != 'datetime64[ns]':
+            raise DataProcessingError("Date column must be datetime type")
+            
+        if not df['Date'].is_monotonic_increasing:
+            raise DataProcessingError("Date column must be sorted in ascending order")
+            
+        return True
+    
+    @staticmethod
+    def validate_technical_indicators(df: pd.DataFrame) -> bool:
+        """Validate technical indicators in DataFrame"""
+        required_indicators = ['RSI', 'AO', 'Close', 'Volume']
+        missing_indicators = [ind for ind in required_indicators if ind not in df.columns]
+        
+        if missing_indicators:
+            raise DataProcessingError(f"Missing required technical indicators: {missing_indicators}")
+            
+        if df['RSI'].isna().any():
+            raise DataProcessingError("RSI column contains NaN values")
+            
+        if df['AO'].isna().any():
+            raise DataProcessingError("AO column contains NaN values")
+            
+        if df['Close'].isna().any():
+            raise DataProcessingError("Close column contains NaN values")
+            
+        if df['Volume'].isna().any():
+            raise DataProcessingError("Volume column contains NaN values")
+            
+        return True
+    
+    @staticmethod
+    def validate_signal_data(signal_df: pd.DataFrame) -> bool:
+        """Validate signal data DataFrame"""
+        required_columns = ['Stock', 'Date', 'Close', 'Signal_Date', 'Signal_Close']
+        missing_columns = [col for col in required_columns if col not in signal_df.columns]
+        
+        if missing_columns:
+            raise DataProcessingError(f"Missing required columns in signal data: {missing_columns}")
+            
+        if signal_df['Date'].dtype != 'datetime64[ns]':
+            raise DataProcessingError("Date column must be datetime type")
+            
+        if signal_df['Signal_Date'].dtype != 'datetime64[ns]':
+            raise DataProcessingError("Signal_Date column must be datetime type")
+            
+        return True
+
+class ChartGenerator:
+    """Class for generating stock analysis charts"""
+    
+    def __init__(self, symbol: str, df: pd.DataFrame):
+        """Initialize chart generator"""
+        self.symbol = symbol
+        self.df = df
+        self.fig = None
+        self.ax1 = None
+        self.ax2 = None
+        self.ax3 = None
+        
+    def setup_figure(self):
+        """Setup the figure with subplots"""
+        self.fig = plt.figure(figsize=config.CHART_FIGSIZE, dpi=config.CHART_DPI)
+        gs = gridspec.GridSpec(3, 1, height_ratios=[2, 1, 1])
+        
+        self.ax1 = plt.subplot(gs[0])  # Price and MA
+        self.ax2 = plt.subplot(gs[1], sharex=self.ax1)  # RSI
+        self.ax3 = plt.subplot(gs[2], sharex=self.ax1)  # AO
+        
+        plt.subplots_adjust(hspace=0)
+        
+    def plot_price_and_ma(self):
+        """Plot price and moving average"""
+        self.ax1.plot(self.df['Date'], self.df['Close'], label='Close Price', color='blue')
+        self.ax1.plot(self.df['Date'], self.df['MA'], label=f'MA{config.MA_PERIOD}', color='red')
+        self.ax1.set_title(f'{self.symbol} Price and Indicators')
+        self.ax1.legend()
+        self.ax1.grid(True)
+        
+    def plot_rsi(self):
+        """Plot RSI indicator"""
+        self.ax2.plot(self.df['Date'], self.df['RSI'], label='RSI', color='purple')
+        self.ax2.axhline(y=config.RSI_OVERSOLD, color='green', linestyle='--', label=f'RSI {config.RSI_OVERSOLD}')
+        self.ax2.axhline(y=config.RSI_OVERBOUGHT, color='red', linestyle='--', label=f'RSI {config.RSI_OVERBOUGHT}')
+        self.ax2.set_ylabel('RSI')
+        self.ax2.legend()
+        self.ax2.grid(True)
+        
+    def plot_ao(self):
+        """Plot Awesome Oscillator"""
+        self.ax3.plot(self.df['Date'], self.df['AO'], label='AO', color='orange')
+        self.ax3.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+        self.ax3.set_ylabel('AO')
+        self.ax3.legend()
+        self.ax3.grid(True)
+        
+    def add_signals(self, buy_signals: list, sell_signals: list):
+        """Add buy and sell signals to the chart"""
+        for date, price in buy_signals:
+            self.ax1.scatter(date, price, color='green', marker='^', s=100, label='Buy Signal')
+            
+        for date, price in sell_signals:
+            self.ax1.scatter(date, price, color='red', marker='v', s=100, label='Sell Signal')
+            
+        # Remove duplicate labels
+        handles, labels = self.ax1.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        self.ax1.legend(by_label.values(), by_label.keys())
+        
+    def save_chart(self, output_path: str):
+        """Save the chart to file"""
+        plt.savefig(output_path, bbox_inches='tight', dpi=config.CHART_DPI)
+        plt.close()
+        
+    def generate_chart(self, buy_signals: list, sell_signals: list, output_path: str):
+        """Generate complete chart with all components"""
+        try:
+            self.setup_figure()
+            self.plot_price_and_ma()
+            self.plot_rsi()
+            self.plot_ao()
+            self.add_signals(buy_signals, sell_signals)
+            self.save_chart(output_path)
+            return True
+        except Exception as e:
+            raise ChartGenerationError(f"Error generating chart for {self.symbol}: {str(e)}")
+
+class DashboardGenerator:
+    """Class for generating market dashboard"""
+    
+    def __init__(self, df: pd.DataFrame):
+        """Initialize dashboard generator"""
+        self.df = df
+        self.validator = DataValidator()
+        self.fig = None
+        self.ax = None
+        
+    def setup_figure(self):
+        """Setup the figure for dashboard"""
+        self.fig, self.ax = plt.subplots(figsize=config.CHART_FIGSIZE, dpi=config.CHART_DPI)
+        
+    def plot_market_phases(self):
+        """Plot market phases distribution"""
+        phase_counts = self.df['Market_Phase'].value_counts()
+        colors = ['green', 'red', 'gray']
+        
+        self.ax.pie(phase_counts, labels=phase_counts.index, colors=colors, autopct='%1.1f%%')
+        self.ax.set_title('Market Phase Distribution')
+        
+    def add_summary_statistics(self):
+        """Add summary statistics to dashboard"""
+        total_stocks = len(self.df)
+        buy_count = len(self.df[self.df['Status'] == 'BUY/HOLD'])
+        sell_count = len(self.df[self.df['Status'] == 'SELL'])
+        opp_count = len(self.df[self.df['Status'] == 'OPPORTUNITY'])
+        
+        stats_text = (
+            f"Total Stocks: {total_stocks}\n"
+            f"BUY/HOLD Signals: {buy_count} ({buy_count/total_stocks*100:.1f}%)\n"
+            f"SELL Signals: {sell_count} ({sell_count/total_stocks*100:.1f}%)\n"
+            f"OPPORTUNITY Signals: {opp_count} ({opp_count/total_stocks*100:.1f}%)"
+        )
+        
+        self.ax.text(1.2, 0.5, stats_text, transform=self.ax.transAxes,
+                    bbox=dict(facecolor='white', alpha=0.8))
+        
+    def add_portfolio_recommendations(self):
+        """Add portfolio recommendations to dashboard"""
+        # Get top 5 stocks by phase score for each category
+        buy_stocks = self.df[self.df['Status'] == 'BUY/HOLD'].nlargest(5, 'Phase_Score')
+        sell_stocks = self.df[self.df['Status'] == 'SELL'].nlargest(5, 'Phase_Score')
+        opp_stocks = self.df[self.df['Status'] == 'OPPORTUNITY'].nlargest(5, 'Phase_Score')
+        
+        recommendations = (
+            "Top 5 BUY/HOLD Stocks:\n" +
+            "\n".join([f"{row['Stock']} ({row['Phase_Score']:.1f})" for _, row in buy_stocks.iterrows()]) +
+            "\n\nTop 5 SELL Stocks:\n" +
+            "\n".join([f"{row['Stock']} ({row['Phase_Score']:.1f})" for _, row in sell_stocks.iterrows()]) +
+            "\n\nTop 5 OPPORTUNITY Stocks:\n" +
+            "\n".join([f"{row['Stock']} ({row['Phase_Score']:.1f})" for _, row in opp_stocks.iterrows()])
+        )
+        
+        self.ax.text(1.2, 0.2, recommendations, transform=self.ax.transAxes,
+                    bbox=dict(facecolor='white', alpha=0.8))
+        
+    def save_dashboard(self, output_path: str):
+        """Save dashboard to file"""
+        plt.savefig(output_path, bbox_inches='tight', dpi=config.CHART_DPI)
+        plt.close()
+        
+    def generate_dashboard(self, output_path: str) -> bool:
+        """Generate complete dashboard"""
+        try:
+            self.validator.validate_stock_data(self.df, ['Stock', 'Status', 'Market_Phase', 'Phase_Score'])
+            
+            self.setup_figure()
+            self.plot_market_phases()
+            self.add_summary_statistics()
+            self.add_portfolio_recommendations()
+            self.save_dashboard(output_path)
+            
+            return True
+            
+        except Exception as e:
+            raise ChartGenerationError(f"Error generating dashboard: {str(e)}")
+
+class TelegramNotifier:
+    """Class for sending notifications via Telegram"""
+    
+    def __init__(self, bot_token: str, chat_id: str):
+        """Initialize Telegram notifier"""
+        self.bot_token = bot_token
+        self.chat_id = chat_id
+        self.logger = logger
+        self.logger.info("Initializing Telegram notifier")
+        
+    def send_message(self, message: str) -> bool:
+        """Send a text message to Telegram"""
+        try:
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+            data = {
+                "chat_id": self.chat_id,
+                "text": message,
+                "parse_mode": "HTML"
+            }
+            response = requests.post(url, data=data)
+            if response.status_code == 200:
+                self.logger.info("Successfully sent message to Telegram")
+                return True
+            else:
+                self.logger.error(f"Failed to send message to Telegram. Status code: {response.status_code}")
+                return False
+        except Exception as e:
+            self.logger.error(f"Error sending message to Telegram: {e}")
+            return False
+            
+    def send_photo(self, photo_path: str, caption: str = "") -> bool:
+        """Send a photo to Telegram"""
+        try:
+            if not os.path.exists(photo_path):
+                self.logger.error(f"Photo file not found: {photo_path}")
+                return False
+                
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"
+            
+            # Open the file in binary mode
+            with open(photo_path, 'rb') as photo:
+                files = {
+                    'photo': photo
+                }
+                data = {
+                    'chat_id': self.chat_id,
+                    'caption': caption,
+                    'parse_mode': 'HTML'
+                }
+                
+                self.logger.info(f"Attempting to send photo {photo_path} to Telegram")
+                response = requests.post(url, files=files, data=data)
+                
+                if response.status_code == 200:
+                    self.logger.info(f"Successfully sent photo {photo_path} to Telegram")
+                    return True
+                else:
+                    self.logger.error(f"Failed to send photo to Telegram. Status code: {response.status_code}")
+                    self.logger.error(f"Response: {response.text}")
+                    return False
+                    
+        except Exception as e:
+            self.logger.error(f"Error sending photo to Telegram: {e}")
+            return False
+        finally:
+            # Ensure the file is closed
+            if 'files' in locals() and 'photo' in files:
+                files['photo'].close()
+
+class StockAnalysisExecutor:
+    """Main class for executing stock analysis"""
+    
+    def __init__(self):
+        """Initialize stock analysis executor"""
+        self.config = config
+        self.logger = logger
+        self.db_manager = DatabaseConnectionManager(self.config.MAIN_DB_PATH)
+        self.signals_db_manager = DatabaseConnectionManager(self.config.SIGNALS_DB_PATH)
+        self.history = StockAnalysisHistory(self.db_manager)
+        self.telegram_notifier = None
+        self.charts_sent = 0
+        
+        # Initialize Telegram notifier if credentials are available
+        if self.config.TELEGRAM_BOT_TOKEN and self.config.TELEGRAM_CHAT_ID:
+            self.telegram_notifier = TelegramNotifier(
+                self.config.TELEGRAM_BOT_TOKEN,
+                self.config.TELEGRAM_CHAT_ID
+            )
+            logger.info("Telegram notifier initialized")
+        else:
+            logger.warning("Telegram credentials not configured")
+
+    def run(self):
+        """Run the stock analysis process."""
+        try:
+            # Reset chart counter
+            self.charts_sent = 0
+            
+            # Get latest buy signals
+            buy_signals = get_latest_buy_stocks()
+            if buy_signals.empty:
+                logger.warning("No buy signals found")
+                return
+            
+            # Send signal tables first
+            if self.telegram_notifier:
+                send_signal_tables_to_telegram(self.telegram_notifier)
+            
+            # Process each buy signal
+            for _, signal in buy_signals.iterrows():
+                if self.charts_sent >= 10:
+                    break
+                    
+                symbol = signal['symbol']
+                logger.info(f"Processing buy signal for {symbol}")
+                
+                # Analyze stock and get chart
+                phase, score, details = self.analyze_stock(symbol, send_to_telegram=True)
+                
+                if details and self.telegram_notifier:
+                    # Create detailed caption
+                    caption = (
+                        f"📈 {symbol} Analysis\n"
+                        f"Phase: {phase}\n"
+                        f"Score: {score:.1f}\n"
+                        f"Signal Date: {signal['signal_date']}\n"
+                        f"Price: {signal['price']:.2f}\n"
+                        f"RSI: {signal['rsi']:.1f}\n"
+                        f"AO: {signal['ao']:.3f}"
+                    )
+                    
+                    # Send chart
+                    if self.telegram_notifier.send_photo(details['chart_path'], caption):
+                        self.charts_sent += 1
+                        logger.info(f"Successfully sent chart for {symbol} to Telegram")
+                    else:
+                        logger.error(f"Failed to send chart for {symbol} to Telegram")
+                
+                time.sleep(1)  # Prevent rate limiting
+            
+            logger.info(f"Successfully processed {self.charts_sent} buy signals")
+            
+        except Exception as e:
+            logger.error(f"Error in run method: {str(e)}")
+            raise
+
+    def analyze_stock(self, symbol: str, send_to_telegram: bool = False) -> tuple:
+        """Analyze a stock and optionally send chart to Telegram"""
+        try:
+            self.logger.info(f"Analyzing stock {symbol} (send_to_telegram={send_to_telegram})")
+            
+            # Get stock data
+            table_name = f"PSX_{symbol}_stock_data"
+            df = get_stock_data(table_name)
+            
+            if df.empty:
+                self.logger.error(f"No data found for {symbol}")
+                return "NEUTRAL", 50, {'error': 'No data found'}
+                
+            # Calculate market phase and score
+            analyzer = SignalAnalyzer(df)
+            phase, score, details = analyzer.calculate_market_phase()
+            
+            # Save analysis to history
+            self.history.add_analysis(symbol, phase, score)
+            
+            # Generate and send chart if requested
+            if send_to_telegram and self.telegram_notifier and self.charts_sent < 10:
+                # Generate chart
+                plot_filename, title_text = draw_indicator_trend_lines_with_signals(symbol)
+                if not plot_filename:
+                    self.logger.error(f"Failed to generate chart for {symbol}")
+                    return phase, score, details
+                    
+                # Send to Telegram
+                caption = (
+                    f"{title_text}\n"
+                    f"Phase: {phase}\n"
+                    f"Score: {score:.1f}"
+                )
+                self.logger.info(f"Attempting to send chart for {symbol} to Telegram")
+                success = self.telegram_notifier.send_photo(plot_filename, caption)
+                if success:
+                    self.charts_sent += 1
+                    self.logger.info(f"Successfully sent chart for {symbol} to Telegram (chart {self.charts_sent} of 10)")
+                else:
+                    self.logger.error(f"Failed to send chart for {symbol} to Telegram")
+                    
+                details['chart_path'] = plot_filename
+            
+            return phase, score, details
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing stock {symbol}: {e}")
+            return "NEUTRAL", 50, {'error': str(e)}
+            
+    def get_available_symbols(self) -> list:
+        """Get list of available stock symbols"""
+        try:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                return get_available_symbols(cursor)
+        except Exception as e:
+            handle_error(e, "getting available symbols")
+            return []
+            
+    def run(self):
+        """Run the stock analysis process"""
+        try:
+            # Get latest buy signals
+            buy_df = get_latest_buy_stocks()
+            if buy_df.empty:
+                self.logger.error("No buy signals found")
+                return
+                
+            # Get the latest 10 buy signals
+            latest_buy_signals = buy_df.head(10)['Stock'].tolist()
+            self.logger.info(f"Found {len(latest_buy_signals)} latest buy signals")
+            
+            # Process latest buy signals and send to Telegram
+            self.telegram_charts_sent = 0  # Reset counter
+            for symbol in latest_buy_signals:
+                self.logger.info(f"Processing buy signal for: {symbol}")
+                self.analyze_stock(symbol, send_to_telegram=True)
+                
+            # Send summary message if any charts were sent
+            if self.notifier and self.telegram_charts_sent > 0:
+                message = f"📊 Latest {self.telegram_charts_sent} Buy Signals Analysis\n\n"
+                for symbol in latest_buy_signals[:self.telegram_charts_sent]:
+                    history = self.history.get_stock_analysis_history(symbol, limit=1)
+                    if history:
+                        date, phase, score = history[0]
+                        message += f"• {symbol} ({phase}, Score: {score:.1f})\n"
+                self.logger.info("Sending summary message to Telegram")
+                self.notifier.send_message(message)
+                self.logger.info(f"Sent summary message for {self.telegram_charts_sent} stocks")
+            else:
+                self.logger.warning("No charts were sent to Telegram")
+                
+            # Generate market dashboard locally
+            self.generate_market_dashboard()
+            
+        except Exception as e:
+            self.logger.error(f"Error running stock analysis: {e}")
+            
+    def generate_market_dashboard(self) -> pd.DataFrame:
+        """Generate market dashboard without sending to Telegram"""
+        try:
+            # Get all analyzed stocks
+            all_symbols = self.get_available_symbols()
+            dashboard_data = []
+            
+            for symbol in all_symbols:
+                try:
+                    phase, score, details = self.analyze_stock(symbol, send_to_telegram=False)
+                    dashboard_data.append({
+                        'Symbol': symbol,
+                        'Phase': phase,
+                        'Score': score,
+                        'Details': details
+                    })
+                except Exception as e:
+                    self.logger.error(f"Error analyzing {symbol}: {str(e)}")
+                    continue
+            
+            # Create dashboard DataFrame
+            dashboard_df = pd.DataFrame(dashboard_data)
+            
+            # Generate dashboard visualization locally
+            if not dashboard_df.empty:
+                dashboard_generator = DashboardGenerator(dashboard_df)
+                dashboard_path = os.path.join(self.config.DASHBOARDS_DIR, f"market_dashboard_{datetime.now().strftime('%Y%m%d')}.png")
+                dashboard_generator.generate_dashboard(dashboard_path)
+            
+            return dashboard_df
+            
+        except Exception as e:
+            handle_error(e, "generating market dashboard")
+            return pd.DataFrame()
+
+class StockAnalysisHistory:
+    """Class for managing stock analysis history"""
+    
+    def __init__(self, db_manager: DatabaseConnectionManager):
+        """Initialize stock analysis history"""
+        self.db_manager = db_manager
+        self._ensure_table_exists()
+        
+    def _ensure_table_exists(self):
+        """Ensure the stock_analysis_history table exists"""
+        try:
+            query = """
+            CREATE TABLE IF NOT EXISTS stock_analysis_history (
+                stock TEXT,
+                analysis_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                phase TEXT,
+                score REAL,
+                PRIMARY KEY (stock, analysis_date)
+            )
+            """
+            with self.db_manager.get_connection() as conn:
+                conn.execute(query)
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Error creating stock_analysis_history table: {e}")
+            
+    def add_analysis(self, stock: str, phase: str, score: float):
+        """Add a new stock analysis record"""
+        try:
+            query = """
+            INSERT OR REPLACE INTO stock_analysis_history (stock, phase, score)
+            VALUES (?, ?, ?)
+            """
+            with self.db_manager.get_connection() as conn:
+                conn.execute(query, (stock, phase, score))
+                conn.commit()
+                logger.info(f"Added analysis record for {stock}: Phase={phase}, Score={score}")
+        except Exception as e:
+            logger.error(f"Error adding analysis record for {stock}: {e}")
+            
+    def get_latest_analyzed_stocks(self, limit: int = 10) -> list:
+        """Get the most recently analyzed stocks"""
+        try:
+            query = """
+            SELECT DISTINCT stock
+            FROM stock_analysis_history
+            ORDER BY analysis_date DESC
+            LIMIT ?
+            """
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (limit,))
+                results = cursor.fetchall()
+                stocks = [row[0] for row in results]
+                logger.info(f"Retrieved {len(stocks)} latest analyzed stocks: {stocks}")
+                return stocks
+        except Exception as e:
+            logger.error(f"Error getting latest analyzed stocks: {e}")
+            return []
+            
+    def get_stock_analysis_history(self, stock: str, limit: int = 10) -> list:
+        """Get analysis history for a specific stock"""
+        try:
+            query = """
+            SELECT analysis_date, phase, score
+            FROM stock_analysis_history
+            WHERE stock = ?
+            ORDER BY analysis_date DESC
+            LIMIT ?
+            """
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (stock, limit))
+                return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Error getting analysis history for {stock}: {e}")
+            return []
+
+class ChartScheduler:
+    """Manages scheduled chart generation and distribution"""
+    
+    def __init__(self, executor: 'StockAnalysisExecutor'):
+        self.executor = executor
+        self.history = StockAnalysisHistory(executor.db_manager)
+        self.last_monthly_run = None
+        self.daily_charts_sent = False
+        
+    def should_run_monthly(self) -> bool:
+        """Check if it's time to run monthly full list"""
+        today = datetime.now()
+        # Check if it's Monday and first week of month
+        is_monday = today.weekday() == 0
+        is_first_week = today.day <= 7
+        
+        # Check if we haven't run this month
+        if self.last_monthly_run:
+            last_run_month = self.last_monthly_run.month
+            last_run_year = self.last_monthly_run.year
+            if last_run_month == today.month and last_run_year == today.year:
+                return False
+                
+        return is_monday and is_first_week
+        
+    def should_run_daily(self) -> bool:
+        """Check if daily charts should be sent"""
+        if not self.daily_charts_sent:
+            return True
+            
+        # Reset daily flag at midnight
+        now = datetime.now()
+        if now.hour == 0 and now.minute == 0:
+            self.daily_charts_sent = False
+            return True
+            
+        return False
+        
+    def get_stock_category(self, phase: str, score: float) -> str:
+        """Determine stock category based on phase and score"""
+        if phase == "ACCUMULATION" and score >= 70:
+            return "BUY/HOLD"
+        elif phase == "DISTRIBUTION" and score <= 30:
+            return "SELL"
+        else:
+            return "OPPORTUNITY"
+            
+    def send_latest_charts(self):
+        """Send charts for 10 most recently analyzed stocks"""
+        try:
+            # Get latest 10 stocks
+            latest_stocks = self.history.get_latest_analyzed_stocks(limit=10)
+            
+            if not latest_stocks:
+                self.executor.logger.warning("No recently analyzed stocks found")
+                return
+                
+            # Generate and send charts
+            message = "📊 Latest 10 Stock Analyses\n\n"
+            for stock in latest_stocks:
+                try:
+                    # Analyze stock and get phase/score
+                    phase, score, _ = self.executor.analyze_stock(stock)
+                    
+                    # Generate chart
+                    chart_path = os.path.join(self.executor.config.CHARTS_DIR, f"{stock}_analysis.png")
+                    
+                    # Send chart with analysis details
+                    caption = (
+                        f"Analysis for {stock}\n"
+                        f"Phase: {phase}\n"
+                        f"Score: {score:.1f}"
+                    )
+                    self.executor.notifier.send_photo(chart_path, caption)
+                    
+                    message += f"• {stock} ({phase}, Score: {score:.1f})\n"
+                    
+                except Exception as e:
+                    self.executor.logger.error(f"Error processing {stock}: {e}")
+                    continue
+                    
+            # Send summary message
+            self.executor.notifier.send_message(message)
+            self.daily_charts_sent = True
+            
+        except Exception as e:
+            handle_error(e, "sending latest charts")
+            
+    def send_monthly_full_list(self):
+        """Send charts for all stocks on first Monday of month"""
+        try:
+            if not self.should_run_monthly():
+                return
+                
+            # Get all stocks
+            all_stocks = self.executor.get_available_symbols()
+            
+            # Categorize stocks
+            categories = {
+                'BUY/HOLD': [],
+                'SELL': [],
+                'OPPORTUNITY': []
+            }
+            
+            # Process each stock
+            for stock in tqdm(all_stocks, desc="Processing monthly charts"):
+                try:
+                    # Analyze stock
+                    phase, score, _ = self.executor.analyze_stock(stock)
+                    category = self.get_stock_category(phase, score)
+                    categories[category].append((stock, score))
+                    
+                except Exception as e:
+                    self.executor.logger.error(f"Error processing {stock}: {e}")
+                    continue
+                    
+            # Send summary message
+            message = "📈 Monthly Full Market Analysis\n\n"
+            for category, stocks in categories.items():
+                message += f"\n{category} Stocks:\n"
+                # Sort stocks by score
+                stocks.sort(key=lambda x: x[1], reverse=True)
+                for stock, score in stocks:
+                    message += f"• {stock} (Score: {score:.1f})\n"
+                    
+            self.executor.notifier.send_message(message)
+            self.last_monthly_run = datetime.now()
+            
+        except Exception as e:
+            handle_error(e, "sending monthly full list")
+
+class SignalAnalyzer:
+    """Enhanced signal analyzer with validation and error handling."""
+    
+    def __init__(self, df: pd.DataFrame):
+        """Initialize the signal analyzer with data validation."""
+        if df is None or df.empty:
+            raise DataProcessingError("Input DataFrame is empty or None")
+        
+        required_columns = ['close', 'rsi', 'ao', 'volume', 'ma']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise DataProcessingError(f"Missing required columns: {missing_columns}")
+        
+        self.df = df.copy()
+        self._validate_data()
+    
+    def _validate_data(self):
+        """Validate the input data for analysis."""
+        # Check for NaN values
+        nan_columns = self.df.columns[self.df.isna().any()].tolist()
+        if nan_columns:
+            logger.warning(f"NaN values found in columns: {nan_columns}")
+            self.df = self.df.fillna(method='ffill').fillna(method='bfill')
+        
+        # Validate numeric ranges
+        if (self.df['rsi'] < 0).any() or (self.df['rsi'] > 100).any():
+            raise DataProcessingError("RSI values must be between 0 and 100")
+        
+        if (self.df['close'] <= 0).any():
+            raise DataProcessingError("Price values must be positive")
+        
+        if (self.df['volume'] < 0).any():
+            raise DataProcessingError("Volume values must be non-negative")
+    
+    def calculate_market_phase(self) -> tuple:
+        """Calculate market phase with enhanced analysis."""
+        try:
+            # Calculate individual scores
+            rsi_score = self._analyze_rsi()
+            ao_score = self._analyze_ao()
+            volume_score = self._analyze_volume()
+            ma_score = self._analyze_ma()
+            pattern_score = self._analyze_patterns()
+            
+            # Calculate final score
+            final_score = self._calculate_final_score(
+                rsi_score, ao_score, volume_score, ma_score, pattern_score
+            )
+            
+            # Determine market phase
+            phase = self._determine_market_phase(final_score)
+            
+            # Create details dictionary
+            details = {
+                'rsi_score': rsi_score,
+                'ao_score': ao_score,
+                'volume_score': volume_score,
+                'ma_score': ma_score,
+                'pattern_score': pattern_score,
+                'final_score': final_score
+            }
+            
+            return phase, final_score, details
+            
+        except Exception as e:
+            raise DataProcessingError(f"Failed to calculate market phase: {str(e)}")
+    
+    def _analyze_rsi(self) -> float:
+        """Analyze RSI with trend detection."""
+        try:
+            current_rsi = self.df['rsi'].iloc[-1]
+            rsi_trend = self.df['rsi'].diff().iloc[-5:].mean()
+            
+            # Score based on RSI value and trend
+            if current_rsi < 30:
+                base_score = 2.0
+            elif current_rsi < 40:
+                base_score = 1.5
+            elif current_rsi > 70:
+                base_score = 0.5
+            elif current_rsi > 60:
+                base_score = 1.0
+            else:
+                base_score = 1.0
+            
+            # Adjust score based on trend
+            if rsi_trend > 0:
+                base_score *= 1.2
+            elif rsi_trend < 0:
+                base_score *= 0.8
+            
+            return min(max(base_score, 0), 2.0)
+            
+        except Exception as e:
+            raise DataProcessingError(f"Failed to analyze RSI: {str(e)}")
+    
+    def _analyze_ao(self) -> float:
+        """Analyze Awesome Oscillator with momentum detection."""
+        try:
+            current_ao = self.df['ao'].iloc[-1]
+            ao_trend = self.df['ao'].diff().iloc[-5:].mean()
+            
+            # Score based on AO value and trend
+            if current_ao > 0 and ao_trend > 0:
+                return 2.0
+            elif current_ao > 0:
+                return 1.5
+            elif current_ao < 0 and ao_trend < 0:
+                return 0.5
+            else:
+                return 1.0
+                
+        except Exception as e:
+            raise DataProcessingError(f"Failed to analyze AO: {str(e)}")
+    
+    def _analyze_volume(self) -> float:
+        """Analyze volume with trend confirmation."""
+        try:
+            avg_volume = self.df['volume'].rolling(20).mean()
+            current_volume = self.df['volume'].iloc[-1]
+            volume_trend = self.df['volume'].diff().iloc[-5:].mean()
+            
+            # Score based on volume relative to average and trend
+            volume_ratio = current_volume / avg_volume.iloc[-1]
+            
+            if volume_ratio > 1.5 and volume_trend > 0:
+                return 2.0
+            elif volume_ratio > 1.2:
+                return 1.5
+            elif volume_ratio < 0.8 and volume_trend < 0:
+                return 0.5
+            else:
+                return 1.0
+                
+        except Exception as e:
+            raise DataProcessingError(f"Failed to analyze volume: {str(e)}")
+    
+    def _analyze_ma(self) -> float:
+        """Analyze Moving Average relationship."""
+        try:
+            current_price = self.df['close'].iloc[-1]
+            current_ma = self.df['ma'].iloc[-1]
+            price_ma_ratio = current_price / current_ma
+            
+            if price_ma_ratio > 1.05:
+                return 2.0
+            elif price_ma_ratio > 1.02:
+                return 1.5
+            elif price_ma_ratio < 0.95:
+                return 0.5
+            else:
+                return 1.0
+                
+        except Exception as e:
+            raise DataProcessingError(f"Failed to analyze MA: {str(e)}")
+    
+    def _analyze_patterns(self) -> float:
+        """Analyze price patterns."""
+        try:
+            # Simple pattern detection
+            last_5_prices = self.df['close'].iloc[-5:]
+            price_changes = last_5_prices.diff()
+            
+            # Check for uptrend
+            if (price_changes > 0).all():
+                return 2.0
+            # Check for downtrend
+            elif (price_changes < 0).all():
+                return 0.5
+            # Check for consolidation
+            elif abs(price_changes).mean() < 0.01:
+                return 1.0
+            else:
+                return 1.5
+                
+        except Exception as e:
+            raise DataProcessingError(f"Failed to analyze patterns: {str(e)}")
+    
+    def _calculate_final_score(self, rsi_score: float, ao_score: float,
+                             volume_score: float, ma_score: float,
+                             pattern_score: float) -> float:
+        """Calculate final market phase score with weighted components."""
+        weights = {
+            'rsi': 0.25,
+            'ao': 0.25,
+            'volume': 0.20,
+            'ma': 0.15,
+            'pattern': 0.15
+        }
+        
+        final_score = (
+            rsi_score * weights['rsi'] +
+            ao_score * weights['ao'] +
+            volume_score * weights['volume'] +
+            ma_score * weights['ma'] +
+            pattern_score * weights['pattern']
+        )
+        
+        return min(max(final_score, 0), 2.0)
+    
+    def _determine_market_phase(self, score: float) -> str:
+        """Determine market phase based on final score."""
+        if score >= 1.5:
+            return "BULLISH"
+        elif score <= 0.5:
+            return "BEARISH"
+        else:
+            return "NEUTRAL"
+
+def get_stock_data(table_name: str) -> pd.DataFrame:
+    """Get stock data from the database"""
+    try:
+        conn = sqlite3.connect(config.MAIN_DB_PATH)
+        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+        conn.close()
+        
+        if not df.empty:
+            # Convert Date column to datetime index
+            df['Date'] = pd.to_datetime(df['Date'])
+            df.set_index('Date', inplace=True)
+            
+            # Calculate MA if not present
+            if 'MA' not in df.columns:
+                df['MA'] = df['Close'].rolling(window=config.MA_PERIOD).mean()
+                
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error getting stock data for {table_name}: {e}")
+        return pd.DataFrame()
+
+def create_signal_tables():
+    """Create detailed tables for buy, sell, and opportunity signals."""
+    try:
+        # Get latest signals
+        buy_df = get_latest_buy_stocks()
+        sell_df = get_latest_sell_stocks()
+        
+        # Create opportunity signals (stocks with high scores)
+        opportunity_df = pd.DataFrame()
+        if not buy_df.empty:
+            opportunity_df = buy_df[buy_df['score'] >= 7.0].copy()
+        
+        # Format tables for Telegram
+        buy_table = format_signal_table(buy_df, "BUY")
+        sell_table = format_signal_table(sell_df, "SELL")
+        opportunity_table = format_signal_table(opportunity_df, "OPPORTUNITY")
+        
+        return buy_table, sell_table, opportunity_table
+    except Exception as e:
+        logger.error(f"Error creating signal tables: {str(e)}")
+        return "", "", ""
+
+def format_signal_table(df: pd.DataFrame, signal_type: str) -> str:
+    """Format signal data into a readable table."""
+    if df.empty:
+        return f"No {signal_type} signals available"
+    
+    try:
+        # Select and rename columns
+        columns = {
+            'symbol': 'Symbol',
+            'signal_date': 'Date',
+            'price': 'Price',
+            'score': 'Score',
+            'phase': 'Phase',
+            'rsi': 'RSI',
+            'ao': 'AO',
+            'volume': 'Volume'
+        }
+        
+        # Format the data
+        formatted_df = df[columns.keys()].copy()
+        formatted_df.columns = columns.values()
+        
+        # Format numeric columns
+        formatted_df['Price'] = formatted_df['Price'].map('{:.2f}'.format)
+        formatted_df['Score'] = formatted_df['Score'].map('{:.1f}'.format)
+        formatted_df['RSI'] = formatted_df['RSI'].map('{:.1f}'.format)
+        formatted_df['AO'] = formatted_df['AO'].map('{:.3f}'.format)
+        formatted_df['Volume'] = formatted_df['Volume'].map('{:.0f}'.format)
+        
+        # Create table
+        table = f"📊 {signal_type} SIGNALS\n\n"
+        table += tabulate(formatted_df, headers='keys', tablefmt='grid', showindex=False)
+        return table
+    except Exception as e:
+        logger.error(f"Error formatting {signal_type} table: {str(e)}")
+        return f"Error formatting {signal_type} signals"
+
+def send_signal_tables_to_telegram(notifier: TelegramNotifier):
+    """Send formatted signal tables to Telegram."""
+    try:
+        # Create tables
+        buy_table, sell_table, opportunity_table = create_signal_tables()
+        
+        # Send each table
+        if buy_table:
+            notifier.send_message(buy_table)
+            time.sleep(1)  # Prevent rate limiting
+        
+        if sell_table:
+            notifier.send_message(sell_table)
+            time.sleep(1)
+        
+        if opportunity_table:
+            notifier.send_message(opportunity_table)
+            time.sleep(1)
+            
+        logger.info("Successfully sent signal tables to Telegram")
+    except Exception as e:
+        logger.error(f"Error sending signal tables to Telegram: {str(e)}")
 

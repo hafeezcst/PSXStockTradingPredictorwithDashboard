@@ -615,7 +615,7 @@ def format_neutral_signals(data_source_name: str, df: pd.DataFrame) -> str:
 
 
 def send_telegram_message(message: str) -> bool:
-    """Send message to Telegram channel."""
+    """Send message to Telegram channel with rate limit handling."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("Error: Telegram bot token or chat ID not configured")
         return False
@@ -649,30 +649,53 @@ def send_telegram_message(message: str) -> bool:
     messages = [escaped_message[i:i+max_length] for i in range(0, len(escaped_message), max_length)]
     
     success = True
+    base_delay = 2  # Base delay in seconds
+    max_retries = 5  # Maximum number of retries per message
+    
     for chunk in messages:
-        try:
-            payload = {
-                'chat_id': TELEGRAM_CHAT_ID,
-                'text': chunk,
-                'parse_mode': 'MarkdownV2',  # Using MarkdownV2 for better escaping support
-                'disable_web_page_preview': True
-            }
-            
-            response = requests.post(url, json=payload)
-            response.raise_for_status()
-            
-            # Add delay between messages to avoid rate limiting
-            if len(messages) > 1:
-                time.sleep(1)
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                payload = {
+                    'chat_id': TELEGRAM_CHAT_ID,
+                    'text': chunk,
+                    'parse_mode': 'MarkdownV2',
+                    'disable_web_page_preview': True
+                }
                 
-        except requests.RequestException as e:
-            print(f"Error sending message to Telegram: {e}")
-            if response:
-                print(f"Response content: {response.text}")
-            success = False
-            
+                response = requests.post(url, json=payload)
+                
+                if response.status_code == 429:  # Rate limit hit
+                    retry_after = int(response.headers.get('Retry-After', base_delay))
+                    wait_time = retry_after * (2 ** retry_count)  # Exponential backoff
+                    logging.info(f"Rate limit hit. Waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
+                    retry_count += 1
+                    continue
+                    
+                response.raise_for_status()
+                logging.info(f"Successfully sent chunk of length {len(chunk)}")
+                
+                # Add delay between messages to avoid rate limiting
+                if len(messages) > 1:
+                    time.sleep(base_delay)
+                break
+                
+            except requests.RequestException as e:
+                if response and response.status_code == 429:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        continue
+                logging.error(f"Error sending message to Telegram: {e}")
+                if response:
+                    logging.error(f"Response content: {response.text}")
+                success = False
+                break
+    
     if success:
-        print("Successfully sent message(s) to Telegram")
+        logging.info("Successfully sent all message chunks to Telegram")
+    else:
+        logging.error("Failed to send some message chunks to Telegram")
     
     return success
 

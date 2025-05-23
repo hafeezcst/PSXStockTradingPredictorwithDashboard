@@ -6,3 +6,35 @@ SQLAlchemy>=1.4.0
 python-dotenv>=1.0.0
 logging>=0.5.0
 typing>=3.7.4
+numpy>=1.26.0
+pandas>=2.1.0
+requests>=2.28.0
+beautifulsoup4>=4.11.0
+sqlalchemy>=2.0.0
+python-dateutil>=2.8.2
+configparser>=5.3.0
+openpyxl>=3.1.0
+scikit-learn>=1.2.0
+matplotlib>=3.8.0
+plotly>=5.14.0
+pandas-ta 
+
+# Development tools
+pytest==7.4.3
+pytest-cov==4.1.0
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.1
+bandit==1.7.5
+pre-commit==3.5.0
+watchdog==3.0.0  # For better Streamlit performance
+
+ipython>=8.0.0
+jupyter>=1.0.0 
+tensorflow>=2.12.0
+prophet>=1.1.0
+joblib>=1.2.0
+pmdarima>=2.0.0
+statsmodels>=0.13.0
+gunicorn>=20.0.0
+python-dotenv>=1.0.0 

@@ -63,6 +63,7 @@ from src.data_processing.dashboard.components.signal_tracker import display_sign
 from src.data_processing.dashboard.utils.styles import apply_custom_css
 from src.data_processing.dashboard.components.analysis_tool import create_analysis_tool_dashboard
 from src.data_processing.dashboard.components.shared_styles import apply_shared_styles
+from src.data_processing.dashboard.components.signal_analysis import display_signal_analysis
 
 def get_remaining_time(current_time, end_time):
     """
@@ -424,6 +425,7 @@ def display_sidebar():
         "🔍 Analysis Tools": [
             "Technical Indicators",
             "Trading Signals",
+            "Signal Analysis",
             "Signal Tracker",
             "Financial Reports",
             "Analysis Tool"
@@ -524,6 +526,9 @@ def main():
         st.markdown("## Technical Analysis")
         display_charts(config)
         
+        st.markdown("## Signal Analysis")
+        display_signal_analysis(config)
+        
         st.markdown("## Mutual Funds")
         display_mutual_funds(config)
         
@@ -557,6 +562,10 @@ def main():
     elif selected_page == "Trading Signals":
         st.markdown("## Trading Signals")
         display_trading_signals(config)
+    
+    elif selected_page == "Signal Analysis":
+        st.markdown("## Signal Analysis")
+        display_signal_analysis(config)
     
     elif selected_page == "Signal Tracker":
         st.markdown("## Signal Tracker")
@@ -593,9 +602,9 @@ def initialize_config():
         },
         "databases": {
             "main_db_path": str(PROJECT_ROOT / "psx_consolidated_data_indicators_PSX.db"),
-            "signals_db_path": str(PROJECT_ROOT / "data" / "databases" / "production" / "PSX_investing_Stocks_KMI30.db"),
+            "signals_db_path": str(PROJECT_ROOT / "data" / "databases" / "production" / "fairvalue.db"),
         },
-        "database_path": str(PROJECT_ROOT / "data" / "databases" / "production" / "PSX_investing_Stocks_KMI30.db"),
+        "database_path": str(PROJECT_ROOT / "data" / "databases" / "production" / "fairvalue.db"),
     }
     return config
 

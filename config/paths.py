@@ -16,6 +16,7 @@ DATA_PROCESSED_DIR = DATA_DIR / "processed"
 DATA_RAW_DIR = DATA_DIR / "raw"
 DATA_REPORTS_DIR = DATA_DIR / "reports"
 PSX_DASHBOARDS_DIR = DATA_DIR / "dashboards" / "psx"
+# "/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/data/reports/mutual_funds_favorites.csv")
 
 # Database specific paths
 PRODUCTION_DB_DIR = DATA_DATABASES_DIR / "production"
@@ -23,6 +24,7 @@ PSX_DB_PATH = PRODUCTION_DB_DIR / "PSX_consolidated_data_PSX.db"
 PSX_SYM_PATH = PRODUCTION_DB_DIR / "psxsymbols.db"
 PSX_IND_DB_PATH = PRODUCTION_DB_DIR / "psx_consolidated_data_indicators_PSX.db"
 PSX_INVESTING_DB_PATH = PRODUCTION_DB_DIR / "PSX_investing_Stocks_KMI30.db"
+PSX_MUTUAL_FUNDS_DB_PATH = DATA_REPORTS_DIR / "mutual_funds_favorites.csv"
 
 # Config files
 SYMBOLS_FILE = CONFIG_DIR / "psxsymbols.xlsx"
