@@ -29,6 +29,8 @@ if 'deepseek_api_key' not in st.session_state:
     st.session_state.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY', '')
 if 'google_api_key' not in st.session_state:
     st.session_state.google_api_key = os.getenv('GOOGLE_API_KEY', '')
+if 'xai_api_key' not in st.session_state:
+    st.session_state.xai_api_key = os.getenv('XAI_API_KEY', '')
 
 # Set page config as the first Streamlit command
 st.set_page_config(

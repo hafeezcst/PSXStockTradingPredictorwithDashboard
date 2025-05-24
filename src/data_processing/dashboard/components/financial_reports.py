@@ -56,6 +56,7 @@ DEFAULT_CONFIG = {
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 HUGGINGFACE_API_KEY = os.getenv('HUGGINGFACE_API_KEY')
+XAI_API_KEY = os.getenv('XAI_API_KEY')
 
 # Version lock configuration
 VERSION = "1.0.0"
@@ -185,8 +186,11 @@ def load_api_keys():
     if HUGGINGFACE_API_KEY and (not keys.get('huggingface') or keys.get('huggingface') == ''):
         keys['huggingface'] = HUGGINGFACE_API_KEY
     
+    if XAI_API_KEY and (not keys.get('xai') or keys.get('xai') == ''):
+        keys['xai'] = XAI_API_KEY
+    
     # Ensure all keys exist in the dictionary
-    for key_type in ['deepseek', 'anthropic', 'huggingface']:
+    for key_type in ['deepseek', 'anthropic', 'huggingface', 'xai']:
         if key_type not in keys:
             keys[key_type] = ''
     
@@ -2399,7 +2403,32 @@ def format_analysis_output(analysis: str, company1_info: Dict, company2_info: Di
     formatted_analysis += f"*Report Types: {company1_info['category']}"
     if company2_info:
         formatted_analysis += f" vs {company2_info['category']}"
-    formatted_analysis += "*"
+    formatted_analysis += "*\n"
+    
+    # Get selected model and settings from session state
+    selected_model = st.session_state.get('selected_model', DEFAULT_MODEL)
+    analysis_settings = st.session_state.get('analysis_settings', {})
+    
+    # Add model information
+    formatted_analysis += "\n### 🤖 Analysis Details\n"
+    formatted_analysis += f"**Primary Model:** {selected_model}\n"
+    if selected_model in MODEL_OPTIONS:
+        model_info = MODEL_OPTIONS[selected_model]
+        formatted_analysis += f"**Model Type:** {model_info['description']}\n"
+        formatted_analysis += "**Model Strengths:**\n"
+        for strength in model_info['strengths']:
+            formatted_analysis += f"- {strength}\n"
+    
+    # Add analysis settings
+    if analysis_settings:
+        formatted_analysis += "\n**Analysis Configuration:**\n"
+        formatted_analysis += f"- Analysis Depth: {analysis_settings.get('analysis_depth', 'Standard')}\n"
+        formatted_analysis += f"- Output Format: {analysis_settings.get('output_format', 'Detailed')}\n"
+        if analysis_settings.get('custom_focus'):
+            formatted_analysis += f"- Focus Areas: {', '.join(analysis_settings['custom_focus'])}\n"
+    
+    # Add disclaimer
+    formatted_analysis += "\n*Note: This analysis is generated using AI models and should be used as one of many inputs in your investment decision-making process. Always conduct your own research and consult with financial advisors before making investment decisions.*"
     
     return formatted_analysis
 
@@ -3006,3 +3035,6 @@ def display_enhanced_buy_signals(signals: Dict[str, Dict]):
             st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info("No valid buy signals to display.")
+
+if 'xai_api_key' not in st.session_state:
+    st.session_state.xai_api_key = os.getenv('XAI_API_KEY', '')
