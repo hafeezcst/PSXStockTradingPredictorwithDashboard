@@ -2408,6 +2408,47 @@ Please provide a professional investment analysis in the following format:
 - Industry developments to watch
 
 Please ensure the analysis is clear, professional, and focused on long-term investment value rather than short-term trading opportunities. Consider both quantitative metrics and qualitative factors in your analysis.
+
+Additional Guidelines:
+1. For stocks with limited financial data (like PAEL), focus on:
+   - Technical analysis and price patterns
+   - Volume analysis and liquidity
+   - Market sentiment and momentum
+   - Recent announcements and news
+   - Industry trends and peer comparison
+   - Risk assessment and volatility
+
+2. For stocks with complete financial data, include:
+   - Detailed financial ratio analysis
+   - Growth projections
+   - Valuation models
+   - Dividend analysis
+   - Management quality assessment
+
+3. Always consider:
+   - Market conditions and sector trends
+   - Regulatory environment
+   - Competitive landscape
+   - Risk factors and mitigation strategies
+   - Entry and exit points
+   - Position sizing recommendations
+
+4. Provide specific price targets and levels:
+   - Support and resistance levels
+   - Stop loss recommendations
+   - Take profit targets
+   - Risk-reward ratios
+   - Entry price ranges
+   - Exit criteria
+
+5. Include risk warnings and disclaimers:
+   - Market risk factors
+   - Company-specific risks
+   - Liquidity concerns
+   - Regulatory risks
+   - Industry-specific risks
+
+Please provide a balanced analysis that considers both opportunities and risks, with clear recommendations and actionable insights.
 """
             
             logger.info(f"Prepared AI analysis prompt for {symbol}")
@@ -2522,10 +2563,44 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                 "Content-Type": "application/json"
             }
             
+            # Enhanced system prompt for better financial analysis
+            system_prompt = """You are a professional financial analyst specializing in the Pakistan Stock Exchange (PSX). 
+Your analysis should be comprehensive, balanced, and focused on long-term investment value. 
+Consider both quantitative metrics and qualitative factors in your analysis.
+
+Key responsibilities:
+1. Provide detailed analysis of company fundamentals, financial health, and growth prospects
+2. Evaluate technical indicators and market sentiment
+3. Assess management quality and corporate governance
+4. Consider industry trends and competitive position
+5. Analyze dividend history and sustainability
+6. Provide specific price targets and investment recommendations
+7. Include clear risk assessments and monitoring points
+
+Format your response with clear section headers and bullet points.
+Always provide specific numbers and metrics when available.
+Include both opportunities and risks in your analysis.
+Focus on actionable insights and clear recommendations.
+Consider the unique characteristics of the PSX market and regulatory environment.
+
+For stocks with limited financial data:
+- Focus on technical analysis and market sentiment
+- Consider recent announcements and news
+- Analyze industry trends and peer comparison
+- Assess liquidity and trading patterns
+- Evaluate risk factors and volatility
+
+For stocks with complete financial data:
+- Provide detailed financial ratio analysis
+- Include growth projections and valuation models
+- Analyze dividend history and policy
+- Assess management quality and corporate governance
+- Consider competitive position and industry outlook"""
+            
             payload = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "You are a professional financial analyst. Always provide specific price targets and levels in your analysis. Format your response with clear section headers and bullet points."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ],
                 "max_tokens": 2000,
@@ -2566,7 +2641,14 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                         'risk_assessment': {},
                         'growth_catalysts': [],
                         'management_quality': '',
-                        'corporate_governance': ''
+                        'corporate_governance': '',
+                        'dividend_analysis': {},
+                        'technical_analysis': {},
+                        'market_sentiment': {},
+                        'industry_analysis': {},
+                        'regulatory_analysis': {},
+                        'liquidity_analysis': {},
+                        'volatility_analysis': {}
                     }
                     
                     # Split the analysis into sections
@@ -2607,6 +2689,36 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                             if current_section:
                                 ai_analysis[current_section] = '\n'.join(section_content)
                             current_section = 'monitoring_points'
+                            section_content = []
+                        elif 'TECHNICAL ANALYSIS' in section:
+                            if current_section:
+                                ai_analysis[current_section] = '\n'.join(section_content)
+                            current_section = 'technical_analysis'
+                            section_content = []
+                        elif 'MARKET SENTIMENT' in section:
+                            if current_section:
+                                ai_analysis[current_section] = '\n'.join(section_content)
+                            current_section = 'market_sentiment'
+                            section_content = []
+                        elif 'INDUSTRY ANALYSIS' in section:
+                            if current_section:
+                                ai_analysis[current_section] = '\n'.join(section_content)
+                            current_section = 'industry_analysis'
+                            section_content = []
+                        elif 'REGULATORY ANALYSIS' in section:
+                            if current_section:
+                                ai_analysis[current_section] = '\n'.join(section_content)
+                            current_section = 'regulatory_analysis'
+                            section_content = []
+                        elif 'LIQUIDITY ANALYSIS' in section:
+                            if current_section:
+                                ai_analysis[current_section] = '\n'.join(section_content)
+                            current_section = 'liquidity_analysis'
+                            section_content = []
+                        elif 'VOLATILITY ANALYSIS' in section:
+                            if current_section:
+                                ai_analysis[current_section] = '\n'.join(section_content)
+                            current_section = 'volatility_analysis'
                             section_content = []
                         else:
                             if current_section:
@@ -2699,6 +2811,69 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                     if governance_match:
                         ai_analysis['corporate_governance'] = governance_match.group(1).strip()
                     
+                    # Extract dividend analysis
+                    dividend_pattern = r'dividend analysis.*?({.*?})'
+                    dividend_match = re.search(dividend_pattern, analysis.lower())
+                    if dividend_match:
+                        try:
+                            ai_analysis['dividend_analysis'] = json.loads(dividend_match.group(1))
+                        except:
+                            pass
+                    
+                    # Extract technical analysis
+                    technical_pattern = r'technical analysis.*?({.*?})'
+                    technical_match = re.search(technical_pattern, analysis.lower())
+                    if technical_match:
+                        try:
+                            ai_analysis['technical_analysis'] = json.loads(technical_match.group(1))
+                        except:
+                            pass
+                    
+                    # Extract market sentiment
+                    sentiment_pattern = r'market sentiment.*?({.*?})'
+                    sentiment_match = re.search(sentiment_pattern, analysis.lower())
+                    if sentiment_match:
+                        try:
+                            ai_analysis['market_sentiment'] = json.loads(sentiment_match.group(1))
+                        except:
+                            pass
+                    
+                    # Extract industry analysis
+                    industry_pattern = r'industry analysis.*?({.*?})'
+                    industry_match = re.search(industry_pattern, analysis.lower())
+                    if industry_match:
+                        try:
+                            ai_analysis['industry_analysis'] = json.loads(industry_match.group(1))
+                        except:
+                            pass
+                    
+                    # Extract regulatory analysis
+                    regulatory_pattern = r'regulatory analysis.*?({.*?})'
+                    regulatory_match = re.search(regulatory_pattern, analysis.lower())
+                    if regulatory_match:
+                        try:
+                            ai_analysis['regulatory_analysis'] = json.loads(regulatory_match.group(1))
+                        except:
+                            pass
+                    
+                    # Extract liquidity analysis
+                    liquidity_pattern = r'liquidity analysis.*?({.*?})'
+                    liquidity_match = re.search(liquidity_pattern, analysis.lower())
+                    if liquidity_match:
+                        try:
+                            ai_analysis['liquidity_analysis'] = json.loads(liquidity_match.group(1))
+                        except:
+                            pass
+                    
+                    # Extract volatility analysis
+                    volatility_pattern = r'volatility analysis.*?({.*?})'
+                    volatility_match = re.search(volatility_pattern, analysis.lower())
+                    if volatility_match:
+                        try:
+                            ai_analysis['volatility_analysis'] = json.loads(volatility_match.group(1))
+                        except:
+                            pass
+                    
                     logger.info("Successfully parsed AI analysis")
                     return ai_analysis
                     
@@ -2706,11 +2881,11 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                     logger.error(f"Error parsing AI response: {e}")
                     return None
             else:
-                logger.error(f"AI API request failed with status code {response.status_code}")
+                logger.error(f"API call failed with status code: {response.status_code}")
                 return None
                 
         except Exception as e:
-            logger.error(f"Error calling AI model: {e}")
+            logger.error(f"Error in AI model call: {e}")
             return None
 
     def get_symbols_with_missing_data(self) -> List[str]:
