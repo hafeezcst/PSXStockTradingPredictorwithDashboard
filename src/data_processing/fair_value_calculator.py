@@ -1271,6 +1271,66 @@ Provide a detailed analysis in the following format:
                 # Send notification
                 self.send_telegram_notification(message)
             
+            # Enhanced notification for buy signals
+            if current_signal in ['BUY', 'STRONG_BUY']:
+                message = f"🎯 <b>Buy Signal Alert</b>\n\n"
+                message += f"Symbol: <b>{symbol}</b>\n"
+                message += f"Signal Type: {current_signal}\n"
+                message += f"Current Price: {current_analysis.get('close', 'N/A')}\n"
+                message += f"Signal Strength: {current_analysis.get('signal_strength', 'N/A')}\n"
+                message += f"Confidence Score: {current_analysis.get('confidence_score', 'N/A')}\n\n"
+                
+                # Add technical indicators
+                message += "<b>Technical Indicators:</b>\n"
+                if current_analysis.get('rsi'):
+                    message += f"• RSI: {current_analysis['rsi']:.2f}\n"
+                if current_analysis.get('macd'):
+                    message += f"• MACD: {current_analysis['macd']:.2f}\n"
+                if current_analysis.get('macd_signal'):
+                    message += f"• MACD Signal: {current_analysis['macd_signal']:.2f}\n"
+                
+                # Add moving averages
+                message += "\n<b>Moving Averages:</b>\n"
+                if current_analysis.get('sma_20'):
+                    message += f"• SMA20: {current_analysis['sma_20']:.2f}\n"
+                if current_analysis.get('sma_50'):
+                    message += f"• SMA50: {current_analysis['sma_50']:.2f}\n"
+                if current_analysis.get('sma_200'):
+                    message += f"• SMA200: {current_analysis['sma_200']:.2f}\n"
+                
+                # Add trading levels
+                message += "\n<b>Trading Levels:</b>\n"
+                if current_analysis.get('support_level'):
+                    message += f"• Support: {current_analysis['support_level']:.2f}\n"
+                if current_analysis.get('resistance_level'):
+                    message += f"• Resistance: {current_analysis['resistance_level']:.2f}\n"
+                if current_analysis.get('stop_loss'):
+                    message += f"• Stop Loss: {current_analysis['stop_loss']:.2f}\n"
+                if current_analysis.get('take_profit'):
+                    message += f"• Take Profit: {current_analysis['take_profit']:.2f}\n"
+                if current_analysis.get('risk_reward_ratio'):
+                    message += f"• Risk/Reward: {current_analysis['risk_reward_ratio']:.2f}\n"
+                
+                # Add AI analysis if available
+                if current_analysis.get('ai_analysis'):
+                    ai_data = current_analysis['ai_analysis']
+                    message += "\n<b>AI Analysis:</b>\n"
+                    if ai_data.get('confidence_score'):
+                        message += f"• AI Confidence: {ai_data['confidence_score']:.2f}\n"
+                    if ai_data.get('recommendation'):
+                        message += f"• AI Recommendation: {ai_data['recommendation']}\n"
+                    if ai_data.get('price_targets'):
+                        message += f"• AI Price Targets: {json.dumps(ai_data['price_targets'])}\n"
+                
+                # Add analysis summary
+                if current_analysis.get('analysis_summary'):
+                    message += "\n<b>Key Points:</b>\n"
+                    for summary in current_analysis['analysis_summary'][:5]:  # Show top 5 points
+                        message += f"• {summary}\n"
+                
+                # Send notification
+                self.send_telegram_notification(message)
+            
             # Check for profit-taking opportunities
             if current_signal in ['BUY', 'STRONG_BUY'] and previous_signal in ['BUY', 'STRONG_BUY']:
                 current_price = current_analysis.get('close')
