@@ -1315,9 +1315,15 @@ Provide a detailed analysis in the following format:
             
             # Prepare AI-related fields
             ai_data = analysis.get('ai_analysis', {})
+            
+            # Convert dictionary values to JSON strings
             ai_price_targets = json.dumps(ai_data.get('price_targets', {}))
             ai_entry_points = json.dumps(ai_data.get('entry_points', []))
             ai_exit_points = json.dumps(ai_data.get('exit_points', []))
+            ai_pattern_recognition = json.dumps(ai_data.get('pattern_recognition', ''))
+            ai_signal_strength = json.dumps(ai_data.get('signal_strength', ''))
+            ai_risk_assessment = json.dumps(ai_data.get('risk_assessment', ''))
+            ai_recommendation = json.dumps(ai_data.get('recommendation', ''))
             
             cursor.execute('''
             INSERT OR REPLACE INTO tradingview_signals
@@ -1350,10 +1356,10 @@ Provide a detailed analysis in the following format:
                 current_time,
                 ai_data.get('confidence_score', 0.0),
                 ai_data.get('confidence_score', 0.0),
-                ai_data.get('pattern_recognition', ''),
-                ai_data.get('signal_strength', ''),
-                ai_data.get('risk_assessment', ''),
-                ai_data.get('recommendation', ''),
+                ai_pattern_recognition,
+                ai_signal_strength,
+                ai_risk_assessment,
+                ai_recommendation,
                 ai_price_targets,
                 ai_entry_points,
                 ai_exit_points,
