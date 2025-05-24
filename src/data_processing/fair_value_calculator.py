@@ -509,7 +509,7 @@ class FairValueCalculator:
                 'recent_announcements': []
             }
 
-    def analyze_with_deepseek(self, symbol: str, financial_data: Dict, announcements: List[Dict]) -> Dict:
+    def analyze_with_ai(self, symbol: str, technical_analysis: Dict, financial_analysis: Dict) -> Dict:
         """Analyze stock data using DeepSeek AI"""
         try:
             # Get API key from environment
@@ -521,17 +521,17 @@ class FairValueCalculator:
             # Prepare financial data summary
             financial_summary = f"""
 Financial Metrics:
-- EPS Growth: {financial_data.get('eps_growth', 'N/A')}%
-- Revenue Growth: {financial_data.get('revenue_growth', 'N/A')}%
-- Profit Margin: {financial_data.get('profit_margin', 'N/A')}%
-- Debt-to-Equity: {financial_data.get('debt_to_equity', 'N/A')}
-- Current Ratio: {financial_data.get('current_ratio', 'N/A')}
-- ROE: {financial_data.get('roe', 'N/A')}%
+- EPS Growth: {financial_analysis.get('eps_growth', 'N/A')}%
+- Revenue Growth: {financial_analysis.get('revenue_growth', 'N/A')}%
+- Profit Margin: {financial_analysis.get('profit_margin', 'N/A')}%
+- Debt-to-Equity: {financial_analysis.get('debt_to_equity', 'N/A')}
+- Current Ratio: {financial_analysis.get('current_ratio', 'N/A')}
+- ROE: {financial_analysis.get('roe', 'N/A')}%
 """
             
             # Prepare announcements summary
             announcements_summary = "Recent Announcements:\n"
-            for announcement in announcements:
+            for announcement in financial_analysis.get('recent_announcements', []):
                 announcements_summary += f"- {announcement['date']}: {announcement['title']}\n"
             
             # Prepare the prompt
@@ -768,9 +768,28 @@ Provide a detailed analysis in the following format:
                 previous_analysis = dict(zip(columns, previous_analysis))
                 logger.info(f"Found previous analysis for {symbol}")
             
+            # Get last signal information from KMI30 database
+            last_signal_info = self._get_last_signal_info(symbol)
+            if last_signal_info:
+                logger.info(f"Found last signal for {symbol}: {last_signal_info['last_signal_type']} "
+                          f"at {last_signal_info['last_signal_price']} on {last_signal_info['last_signal_date']}")
+            
             # Perform technical analysis
             analysis = self._perform_technical_analysis(stock_data, previous_analysis)
             logger.info(f"Completed technical analysis for {symbol}")
+            
+            # Add last signal information to analysis
+            if last_signal_info:
+                analysis['last_signal_date'] = last_signal_info.get('last_signal_date')
+                analysis['last_signal_price'] = last_signal_info.get('last_signal_price')
+                analysis['last_signal_type'] = last_signal_info.get('last_signal_type')
+                
+                # Calculate price change since last signal
+                if analysis.get('close') and last_signal_info.get('last_signal_price'):
+                    price_change = round(((analysis['close'] - last_signal_info['last_signal_price']) / 
+                                  last_signal_info['last_signal_price'] * 100), 2)
+                    analysis['price_change_since_last_signal'] = price_change
+                    logger.info(f"Price change since last signal: {price_change:.2f}%")
             
             # Get financial analysis
             financial_analysis = self.analyze_financial_data(symbol)
@@ -1044,9 +1063,9 @@ Provide a detailed analysis in the following format:
                 bb_lower = stock_data['bb_lower']
                 close = stock_data['close']
                 
-                bb_range = bb_upper - bb_lower
-                volatility = bb_range / close * 100
-                price_position = (close - bb_lower) / bb_range * 100
+                bb_range = round(bb_upper - bb_lower, 2)
+                volatility = round(bb_range / close * 100, 2)
+                price_position = round((close - bb_lower) / bb_range * 100, 2)
                 
                 volatility_strength = 0
                 
@@ -1178,16 +1197,27 @@ Provide a detailed analysis in the following format:
                     reward = analysis['take_profit'] - current_price
                 
                 if risk != 0:
-                    analysis['risk_reward_ratio'] = reward / risk
-                    logger.debug(f"Calculated risk-reward ratio: {analysis['risk_reward_ratio']}")
+                    analysis['risk_reward_ratio'] = round(reward / risk, 2)
+                    logger.debug(f"Calculated risk-reward ratio: {analysis['risk_reward_ratio']:.2f}")
                 else:
-                    analysis['risk_reward_ratio'] = 0.0
-                    logger.debug("Risk is zero, setting risk-reward ratio to 0")
+                    analysis['risk_reward_ratio'] = 0.00
+                    logger.debug("Risk is zero, setting risk-reward ratio to 0.00")
                 
                 logger.info(f"Calculated trading levels for {analysis.get('symbol', 'unknown')}:")
                 logger.info(f"Stop Loss: {analysis['stop_loss']:.2f}")
                 logger.info(f"Take Profit: {analysis['take_profit']:.2f}")
                 logger.info(f"Risk-Reward Ratio: {analysis['risk_reward_ratio']:.2f}")
+                
+                # Round calculated values to 2 decimal places
+                analysis['stop_loss'] = round(analysis['stop_loss'], 2)
+                analysis['take_profit'] = round(analysis['take_profit'], 2)
+                analysis['technical_score'] = round(analysis['technical_score'], 2)
+                analysis['trend_score'] = round(analysis['trend_score'], 2)
+                analysis['momentum_score'] = round(analysis['momentum_score'], 2)
+                analysis['volume_score'] = round(analysis['volume_score'], 2)
+                analysis['volatility_score'] = round(analysis['volatility_score'], 2)
+                analysis['signal_strength'] = round(analysis['signal_strength'], 2)
+                analysis['confidence_score'] = round(analysis['confidence_score'], 2)
             else:
                 logger.warning(f"Missing close price for {analysis.get('symbol', 'unknown')}, cannot calculate trading levels")
                 analysis['stop_loss'] = None
@@ -1278,7 +1308,16 @@ Provide a detailed analysis in the following format:
                 message += f"Signal Type: {current_signal}\n"
                 message += f"Current Price: {current_analysis.get('close', 'N/A')}\n"
                 message += f"Signal Strength: {current_analysis.get('signal_strength', 'N/A')}\n"
-                message += f"Confidence Score: {current_analysis.get('confidence_score', 'N/A')}\n\n"
+                message += f"Confidence Score: {current_analysis.get('confidence_score', 'N/A')}\n"
+                
+                # Add last signal information if available
+                if current_analysis.get('last_signal_date'):
+                    message += f"\nLast Signal: {current_analysis['last_signal_type']}\n"
+                    message += f"Last Signal Date: {current_analysis['last_signal_date']}\n"
+                    message += f"Last Signal Price: {current_analysis['last_signal_price']}\n"
+                    if current_analysis.get('price_change_since_last_signal'):
+                        message += f"Price Change: {current_analysis['price_change_since_last_signal']:.2f}%\n"
+                message += "\n"
                 
                 # Add technical indicators
                 message += "<b>Technical Indicators:</b>\n"
@@ -2547,14 +2586,90 @@ Corporate Governance: {processed_analysis['corporate_governance']}
             logger.error(f"Error in AI analysis for {symbol}: {e}")
             return None
 
-    def call_ai_model(self, prompt: str) -> Dict:
-        """Call AI model for analysis"""
+    def _retry_with_backoff(self, func, max_retries=3, initial_delay=1, max_delay=32):
+        """Helper method to retry operations with exponential backoff"""
+        delay = initial_delay
+        last_exception = None
+        
+        for retry in range(max_retries):
+            try:
+                return func()
+            except requests.exceptions.Timeout as e:
+                last_exception = e
+                logger.warning(f"Request timed out (attempt {retry + 1}/{max_retries}). Retrying in {delay} seconds...")
+            except requests.exceptions.ConnectionError as e:
+                last_exception = e
+                logger.warning(f"Connection error (attempt {retry + 1}/{max_retries}). Retrying in {delay} seconds...")
+            except Exception as e:
+                last_exception = e
+                logger.warning(f"Error during API call (attempt {retry + 1}/{max_retries}): {str(e)}. Retrying in {delay} seconds...")
+            
+            time.sleep(delay)
+            delay = min(delay * 2, max_delay)  # Exponential backoff with max delay
+        
+        logger.error(f"Failed after {max_retries} retries. Last error: {str(last_exception)}")
+        return None
+
+    def _validate_api_key(self) -> bool:
+        """Validate the DeepSeek API key with a simple test call"""
         try:
-            # Get API key from environment
             api_key = os.getenv('DEEPSEEK_API_KEY')
             if not api_key:
                 logger.warning("DeepSeek API key not found in environment variables")
+                return False
+            
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "Test API key validation"},
+                    {"role": "user", "content": "Test"}
+                ],
+                "max_tokens": 10,
+                "temperature": 0.7
+            }
+            
+            def test_api_call():
+                response = requests.post(
+                    "https://api.deepseek.com/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    return True
+                elif response.status_code == 401:
+                    logger.error("Invalid API key or authentication failed")
+                    return False
+                elif response.status_code == 429:
+                    raise requests.exceptions.RequestException("Rate limit exceeded")
+                else:
+                    raise requests.exceptions.RequestException(f"API request failed with status code {response.status_code}")
+            
+            # Try the test call with retries
+            result = self._retry_with_backoff(test_api_call, max_retries=2, initial_delay=1)
+            return bool(result)
+            
+        except Exception as e:
+            logger.error(f"Error validating API key: {e}")
+            return False
+
+    def call_ai_model(self, prompt: str) -> Dict:
+        """Call AI model for analysis with improved error handling and retries"""
+        try:
+            # Validate API key first
+            if not self._validate_api_key():
+                logger.error("Failed to validate DeepSeek API key")
                 return None
+            
+            # Get API key from environment
+            api_key = os.getenv('DEEPSEEK_API_KEY')
+            logger.info("DeepSeek API key validated, proceeding with API call")
             
             logger.info("DeepSeek API key found, proceeding with API call")
             
@@ -2563,94 +2678,74 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                 "Content-Type": "application/json"
             }
             
-            # Enhanced system prompt for better financial analysis
-            system_prompt = """You are a professional financial analyst specializing in the Pakistan Stock Exchange (PSX). 
-Your analysis should be comprehensive, balanced, and focused on long-term investment value. 
-Consider both quantitative metrics and qualitative factors in your analysis.
-
-Key responsibilities:
-1. Provide detailed analysis of company fundamentals, financial health, and growth prospects
-2. Evaluate technical indicators and market sentiment
-3. Assess management quality and corporate governance
-4. Consider industry trends and competitive position
-5. Analyze dividend history and sustainability
-6. Provide specific price targets and investment recommendations
-7. Include clear risk assessments and monitoring points
-
-Format your response with clear section headers and bullet points.
-Always provide specific numbers and metrics when available.
-Include both opportunities and risks in your analysis.
-Focus on actionable insights and clear recommendations.
-Consider the unique characteristics of the PSX market and regulatory environment.
-
-For stocks with limited financial data:
-- Focus on technical analysis and market sentiment
-- Consider recent announcements and news
-- Analyze industry trends and peer comparison
-- Assess liquidity and trading patterns
-- Evaluate risk factors and volatility
-
-For stocks with complete financial data:
-- Provide detailed financial ratio analysis
-- Include growth projections and valuation models
-- Analyze dividend history and policy
-- Assess management quality and corporate governance
-- Consider competitive position and industry outlook"""
-            
             payload = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": "You are a professional financial analyst."},
                     {"role": "user", "content": prompt}
                 ],
                 "max_tokens": 2000,
                 "temperature": 0.7
             }
             
-            logger.info("Making API call to DeepSeek...")
-            response = requests.post(
-                "https://api.deepseek.com/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=60
-            )
+            # Define the API call function
+            def make_api_call():
+                logger.info("Making API call to DeepSeek...")
+                response = requests.post(
+                    "https://api.deepseek.com/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=120  # Increased timeout
+                )
+                
+                logger.info(f"API Response Status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    return response.json()['choices'][0]['message']['content']
+                elif response.status_code == 429:
+                    raise requests.exceptions.RequestException("Rate limit exceeded")
+                elif response.status_code == 401:
+                    raise requests.exceptions.RequestException("Authentication failed")
+                else:
+                    raise requests.exceptions.RequestException(f"API request failed with status code {response.status_code}")
             
-            logger.info(f"API Response Status: {response.status_code}")
+            # Make API call with retries
+            analysis = self._retry_with_backoff(make_api_call)
             
-            if response.status_code == 200:
+            if analysis:
+                logger.info("Successfully received AI analysis")
+                
+                # Initialize analysis dictionary with all required sections
+                ai_analysis = {
+                    'company_overview': '',
+                    'financial_health': '',
+                    'investment_thesis': '',
+                    'valuation_analysis': '',
+                    'investment_recommendation': '',
+                    'monitoring_points': '',
+                    'confidence_score': 0.0,
+                    'fair_value': None,
+                    'target_price': None,
+                    'entry_range': [],
+                    'investment_horizon': '',
+                    'position_size': '',
+                    'dcf_value': None,
+                    'peer_comparison': {},
+                    'risk_assessment': {},
+                    'growth_catalysts': [],
+                    'management_quality': '',
+                    'corporate_governance': '',
+                    'dividend_analysis': {},
+                    'technical_analysis': {},
+                    'market_sentiment': {},
+                    'industry_analysis': {},
+                    'regulatory_analysis': {},
+                    'liquidity_analysis': {},
+                    'volatility_analysis': {}
+                }
+                
+                # Process the analysis sections and extract data
                 try:
-                    analysis = response.json()['choices'][0]['message']['content']
-                    logger.info("Successfully received AI analysis")
-                    
-                    # Initialize analysis dictionary with all required sections
-                    ai_analysis = {
-                        'company_overview': '',
-                        'financial_health': '',
-                        'investment_thesis': '',
-                        'valuation_analysis': '',
-                        'investment_recommendation': '',
-                        'monitoring_points': '',
-                        'confidence_score': 0.0,
-                        'fair_value': None,
-                        'target_price': None,
-                        'entry_range': [],
-                        'investment_horizon': '',
-                        'position_size': '',
-                        'dcf_value': None,
-                        'peer_comparison': {},
-                        'risk_assessment': {},
-                        'growth_catalysts': [],
-                        'management_quality': '',
-                        'corporate_governance': '',
-                        'dividend_analysis': {},
-                        'technical_analysis': {},
-                        'market_sentiment': {},
-                        'industry_analysis': {},
-                        'regulatory_analysis': {},
-                        'liquidity_analysis': {},
-                        'volatility_analysis': {}
-                    }
-                    
                     # Split the analysis into sections
                     sections = analysis.split('\n\n')
                     current_section = None
@@ -2660,66 +2755,16 @@ For stocks with complete financial data:
                         section = section.strip()
                         if not section:
                             continue
-                            
-                        # Check for section headers
-                        if 'COMPANY OVERVIEW' in section:
-                            current_section = 'company_overview'
-                            section_content = []
-                        elif 'FINANCIAL HEALTH' in section:
-                            if current_section:
-                                ai_analysis[current_section] = '\n'.join(section_content)
-                            current_section = 'financial_health'
-                            section_content = []
-                        elif 'INVESTMENT THESIS' in section:
-                            if current_section:
-                                ai_analysis[current_section] = '\n'.join(section_content)
-                            current_section = 'investment_thesis'
-                            section_content = []
-                        elif 'VALUATION ANALYSIS' in section:
-                            if current_section:
-                                ai_analysis[current_section] = '\n'.join(section_content)
-                            current_section = 'valuation_analysis'
-                            section_content = []
-                        elif 'INVESTMENT RECOMMENDATION' in section:
-                            if current_section:
-                                ai_analysis[current_section] = '\n'.join(section_content)
-                            current_section = 'investment_recommendation'
-                            section_content = []
-                        elif 'MONITORING POINTS' in section:
-                            if current_section:
-                                ai_analysis[current_section] = '\n'.join(section_content)
-                            current_section = 'monitoring_points'
-                            section_content = []
-                        elif 'TECHNICAL ANALYSIS' in section:
-                            if current_section:
-                                ai_analysis[current_section] = '\n'.join(section_content)
-                            current_section = 'technical_analysis'
-                            section_content = []
-                        elif 'MARKET SENTIMENT' in section:
-                            if current_section:
-                                ai_analysis[current_section] = '\n'.join(section_content)
-                            current_section = 'market_sentiment'
-                            section_content = []
-                        elif 'INDUSTRY ANALYSIS' in section:
-                            if current_section:
-                                ai_analysis[current_section] = '\n'.join(section_content)
-                            current_section = 'industry_analysis'
-                            section_content = []
-                        elif 'REGULATORY ANALYSIS' in section:
-                            if current_section:
-                                ai_analysis[current_section] = '\n'.join(section_content)
-                            current_section = 'regulatory_analysis'
-                            section_content = []
-                        elif 'LIQUIDITY ANALYSIS' in section:
-                            if current_section:
-                                ai_analysis[current_section] = '\n'.join(section_content)
-                            current_section = 'liquidity_analysis'
-                            section_content = []
-                        elif 'VOLATILITY ANALYSIS' in section:
-                            if current_section:
-                                ai_analysis[current_section] = '\n'.join(section_content)
-                            current_section = 'volatility_analysis'
-                            section_content = []
+                        
+                        # Check for section headers and process content
+                        for section_name in ai_analysis.keys():
+                            header = section_name.upper().replace('_', ' ')
+                            if header in section:
+                                if current_section:
+                                    ai_analysis[current_section] = '\n'.join(section_content)
+                                current_section = section_name
+                                section_content = []
+                                break
                         else:
                             if current_section:
                                 section_content.append(section)
@@ -2728,151 +2773,40 @@ For stocks with complete financial data:
                     if current_section and section_content:
                         ai_analysis[current_section] = '\n'.join(section_content)
                     
-                    # Extract specific values using regex patterns
-                    # Extract confidence score
-                    confidence_pattern = r'confidence score.*?(\d+\.?\d*)'
-                    confidence_match = re.search(confidence_pattern, analysis.lower())
-                    if confidence_match:
-                        ai_analysis['confidence_score'] = float(confidence_match.group(1))
+                    # Extract metrics using regex patterns
+                    patterns = {
+                        'confidence_score': r'confidence score.*?(\d+\.?\d*)',
+                        'fair_value': r'fair value.*?(\d+\.?\d*)',
+                        'target_price': r'target price.*?(\d+\.?\d*)',
+                        'entry_range': r'entry range.*?(\d+\.?\d*)\s*-\s*(\d+\.?\d*)',
+                        'investment_horizon': r'investment horizon.*?(\d+\s*(?:months|years))',
+                        'position_size': r'position size.*?(\d+\.?\d*%)',
+                        'dcf_value': r'dcf value.*?(\d+\.?\d*)'
+                    }
                     
-                    # Extract fair value
-                    fair_value_pattern = r'fair value.*?(\d+\.?\d*)'
-                    fair_value_match = re.search(fair_value_pattern, analysis.lower())
-                    if fair_value_match:
-                        ai_analysis['fair_value'] = float(fair_value_match.group(1))
+                    for metric, pattern in patterns.items():
+                        match = re.search(pattern, analysis.lower())
+                        if match:
+                            if metric == 'entry_range':
+                                ai_analysis[metric] = [float(match.group(1)), float(match.group(2))]
+                            elif metric in ['confidence_score', 'fair_value', 'target_price', 'dcf_value']:
+                                ai_analysis[metric] = float(match.group(1))
+                            else:
+                                ai_analysis[metric] = match.group(1)
                     
-                    # Extract target price
-                    target_pattern = r'target price.*?(\d+\.?\d*)'
-                    target_match = re.search(target_pattern, analysis.lower())
-                    if target_match:
-                        ai_analysis['target_price'] = float(target_match.group(1))
+                    # Extract JSON-formatted sections
+                    json_sections = ['peer_comparison', 'risk_assessment', 'growth_catalysts', 
+                                   'technical_analysis', 'market_sentiment', 'industry_analysis',
+                                   'regulatory_analysis', 'liquidity_analysis', 'volatility_analysis']
                     
-                    # Extract entry range
-                    entry_pattern = r'entry range.*?(\d+\.?\d*)\s*-\s*(\d+\.?\d*)'
-                    entry_match = re.search(entry_pattern, analysis.lower())
-                    if entry_match:
-                        ai_analysis['entry_range'] = [
-                            float(entry_match.group(1)),
-                            float(entry_match.group(2))
-                        ]
-                    
-                    # Extract investment horizon
-                    horizon_pattern = r'investment horizon.*?(\d+\s*(?:months|years))'
-                    horizon_match = re.search(horizon_pattern, analysis.lower())
-                    if horizon_match:
-                        ai_analysis['investment_horizon'] = horizon_match.group(1)
-                    
-                    # Extract position size
-                    position_pattern = r'position size.*?(\d+\.?\d*%)'
-                    position_match = re.search(position_pattern, analysis.lower())
-                    if position_match:
-                        ai_analysis['position_size'] = position_match.group(1)
-                    
-                    # Extract DCF value
-                    dcf_pattern = r'DCF value.*?(\d+\.?\d*)'
-                    dcf_match = re.search(dcf_pattern, analysis.lower())
-                    if dcf_match:
-                        ai_analysis['dcf_value'] = float(dcf_match.group(1))
-                    
-                    # Extract peer comparison
-                    peer_pattern = r'peer comparison.*?({.*?})'
-                    peer_match = re.search(peer_pattern, analysis.lower())
-                    if peer_match:
-                        try:
-                            ai_analysis['peer_comparison'] = json.loads(peer_match.group(1))
-                        except:
-                            pass
-                    
-                    # Extract risk assessment
-                    risk_pattern = r'risk assessment.*?({.*?})'
-                    risk_match = re.search(risk_pattern, analysis.lower())
-                    if risk_match:
-                        try:
-                            ai_analysis['risk_assessment'] = json.loads(risk_match.group(1))
-                        except:
-                            pass
-                    
-                    # Extract growth catalysts
-                    catalyst_pattern = r'growth catalysts.*?\[(.*?)\]'
-                    catalyst_match = re.search(catalyst_pattern, analysis.lower())
-                    if catalyst_match:
-                        catalysts = catalyst_match.group(1).split(',')
-                        ai_analysis['growth_catalysts'] = [c.strip() for c in catalysts]
-                    
-                    # Extract management quality
-                    management_pattern = r'management quality.*?([A-Za-z\s]+)'
-                    management_match = re.search(management_pattern, analysis.lower())
-                    if management_match:
-                        ai_analysis['management_quality'] = management_match.group(1).strip()
-                    
-                    # Extract corporate governance
-                    governance_pattern = r'corporate governance.*?([A-Za-z\s]+)'
-                    governance_match = re.search(governance_pattern, analysis.lower())
-                    if governance_match:
-                        ai_analysis['corporate_governance'] = governance_match.group(1).strip()
-                    
-                    # Extract dividend analysis
-                    dividend_pattern = r'dividend analysis.*?({.*?})'
-                    dividend_match = re.search(dividend_pattern, analysis.lower())
-                    if dividend_match:
-                        try:
-                            ai_analysis['dividend_analysis'] = json.loads(dividend_match.group(1))
-                        except:
-                            pass
-                    
-                    # Extract technical analysis
-                    technical_pattern = r'technical analysis.*?({.*?})'
-                    technical_match = re.search(technical_pattern, analysis.lower())
-                    if technical_match:
-                        try:
-                            ai_analysis['technical_analysis'] = json.loads(technical_match.group(1))
-                        except:
-                            pass
-                    
-                    # Extract market sentiment
-                    sentiment_pattern = r'market sentiment.*?({.*?})'
-                    sentiment_match = re.search(sentiment_pattern, analysis.lower())
-                    if sentiment_match:
-                        try:
-                            ai_analysis['market_sentiment'] = json.loads(sentiment_match.group(1))
-                        except:
-                            pass
-                    
-                    # Extract industry analysis
-                    industry_pattern = r'industry analysis.*?({.*?})'
-                    industry_match = re.search(industry_pattern, analysis.lower())
-                    if industry_match:
-                        try:
-                            ai_analysis['industry_analysis'] = json.loads(industry_match.group(1))
-                        except:
-                            pass
-                    
-                    # Extract regulatory analysis
-                    regulatory_pattern = r'regulatory analysis.*?({.*?})'
-                    regulatory_match = re.search(regulatory_pattern, analysis.lower())
-                    if regulatory_match:
-                        try:
-                            ai_analysis['regulatory_analysis'] = json.loads(regulatory_match.group(1))
-                        except:
-                            pass
-                    
-                    # Extract liquidity analysis
-                    liquidity_pattern = r'liquidity analysis.*?({.*?})'
-                    liquidity_match = re.search(liquidity_pattern, analysis.lower())
-                    if liquidity_match:
-                        try:
-                            ai_analysis['liquidity_analysis'] = json.loads(liquidity_match.group(1))
-                        except:
-                            pass
-                    
-                    # Extract volatility analysis
-                    volatility_pattern = r'volatility analysis.*?({.*?})'
-                    volatility_match = re.search(volatility_pattern, analysis.lower())
-                    if volatility_match:
-                        try:
-                            ai_analysis['volatility_analysis'] = json.loads(volatility_match.group(1))
-                        except:
-                            pass
+                    for section in json_sections:
+                        pattern = f"{section.replace('_', ' ')}.*?({{\n.*?\n}})"
+                        match = re.search(pattern, analysis, re.DOTALL | re.IGNORECASE)
+                        if match:
+                            try:
+                                ai_analysis[section] = json.loads(match.group(1))
+                            except json.JSONDecodeError:
+                                logger.warning(f"Failed to parse JSON for {section}")
                     
                     logger.info("Successfully parsed AI analysis")
                     return ai_analysis
@@ -2881,7 +2815,7 @@ For stocks with complete financial data:
                     logger.error(f"Error parsing AI response: {e}")
                     return None
             else:
-                logger.error(f"API call failed with status code: {response.status_code}")
+                logger.warning("No analysis received from AI model")
                 return None
                 
         except Exception as e:
@@ -2960,6 +2894,45 @@ For stocks with complete financial data:
         except Exception as e:
             logger.error(f"Error in requery_missing_data: {e}")
             return {symbol: False for symbol in symbols}
+
+    def _get_last_signal_info(self, symbol: str) -> Dict:
+        """Get the last signal date and price for a symbol from KMI30 database"""
+        try:
+            kmi30_db_path = 'data/databases/production/PSX_investing_Stocks_KMI30.db'
+            
+            if not os.path.exists(kmi30_db_path):
+                logger.warning(f"KMI30 database not found at {kmi30_db_path}")
+                return {}
+            
+            conn = sqlite3.connect(kmi30_db_path)
+            cursor = conn.cursor()
+            
+            # Get the latest signal
+            cursor.execute("""
+                SELECT date, price, signal_type
+                FROM buy_stocks 
+                WHERE symbol = ? 
+                ORDER BY date DESC 
+                LIMIT 1
+            """, (symbol,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                return {
+                    'last_signal_date': result[0],
+                    'last_signal_price': result[1],
+                    'last_signal_type': result[2]
+                }
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Error getting last signal info for {symbol}: {e}")
+            if 'conn' in locals():
+                conn.close()
+            return {}
 
 def main():
     """Main function to create and initialize the database"""
