@@ -9,6 +9,11 @@ import os
 from tradingview_ta import TA_Handler, Interval
 import time
 import pandas as pd
+import json
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +21,7 @@ class FairValueCalculator:
     def __init__(self):
         """Initialize the FairValueCalculator with database path and headers"""
         self.db_path = 'data/databases/production/fairvalue.db'
+        self.dividend_db_path = 'data/databases/production/PSX_Dividend_Schedule.db'
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
@@ -71,12 +77,7 @@ class FairValueCalculator:
             )
             ''')
             
-            # Verify table creation
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tradingview_ta'")
-            if not cursor.fetchone():
-                raise Exception("Failed to create tradingview_ta table")
-            
-            # Create tradingview_signals table
+            # Create tradingview_signals table with enhanced schema
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS tradingview_signals (
                 symbol TEXT,
@@ -97,6 +98,16 @@ class FairValueCalculator:
                 analysis_summary TEXT,
                 indicators_used TEXT,
                 last_updated TEXT,
+                ai_score REAL,
+                ai_confidence REAL,
+                ai_pattern_recognition TEXT,
+                ai_signal_strength TEXT,
+                ai_risk_assessment TEXT,
+                ai_recommendation TEXT,
+                ai_price_targets TEXT,
+                ai_entry_points TEXT,
+                ai_exit_points TEXT,
+                ai_analysis_date TEXT,
                 PRIMARY KEY (symbol, date)
             )
             ''')
@@ -136,7 +147,7 @@ class FairValueCalculator:
             logger.error(f"Error initializing database: {str(e)}")
             if 'conn' in locals():
                 conn.close()
-            raise  # Re-raise the exception to handle it in the calling code
+            raise
 
     def fetch_psx_symbols(self) -> List[str]:
         """Fetch list of PSX symbols from Excel file"""
@@ -637,93 +648,106 @@ Provide a detailed analysis in the following format:
     def adjust_signal_with_ai(self, technical_analysis: Dict, financial_analysis: Dict) -> Dict:
         """Adjust trading signals using AI-based analysis"""
         try:
-            # Initialize adjusted analysis
-            adjusted_analysis = technical_analysis.copy()
-            
-            # Get DeepSeek AI analysis
-            symbol = financial_analysis.get('symbol', '')
-            announcements = financial_analysis.get('recent_announcements', [])
-            ai_analysis = self.analyze_with_deepseek(symbol, financial_analysis, announcements)
+            # Get AI analysis
+            symbol = technical_analysis.get('symbol', '')
+            ai_analysis = self.analyze_with_ai(symbol, technical_analysis, financial_analysis)
             
             if ai_analysis:
+                # Initialize adjusted analysis
+                adjusted_analysis = technical_analysis.copy()
+                
                 # Calculate weighted scores
                 technical_weight = 0.4
                 financial_weight = 0.3
                 ai_weight = 0.3
                 
-                # Adjust technical score based on financial analysis and AI insights
-                if financial_analysis['confidence'] > 0.5:  # Only adjust if we have sufficient data
-                    # Calculate announcement impact
-                    announcement_impact = 0.0
-                    if financial_analysis['recent_announcements']:
-                        announcement_impact = sum(a['impact'] for a in financial_analysis['recent_announcements'])
-                    
-                    # Calculate AI impact
-                    ai_impact = 0.0
-                    if ai_analysis['confidence_score'] > 0.7:
-                        ai_impact = 0.3
-                    elif ai_analysis['confidence_score'] > 0.5:
-                        ai_impact = 0.1
-                    elif ai_analysis['confidence_score'] < 0.3:
-                        ai_impact = -0.3
-                    elif ai_analysis['confidence_score'] < 0.5:
-                        ai_impact = -0.1
-                    
-                    adjusted_score = (
-                        technical_analysis['technical_score'] * technical_weight +
-                        financial_analysis['financial_score'] * financial_weight +
-                        (ai_impact * 100) * ai_weight  # Scale AI impact
-                    )
-                    
-                    # Determine if signal should be adjusted
-                    if (technical_analysis['signal_type'] in ['STRONG_SELL', 'SELL'] and 
-                        (financial_analysis['financial_signal'] in ['STRONG_BUY', 'BUY'] or 
-                         announcement_impact > 0.3 or ai_impact > 0.2)):
-                        # If technical is bearish but other indicators are bullish, move to neutral
-                        if abs(technical_analysis['technical_score']) > 40:
-                            adjusted_analysis['signal_type'] = 'NEUTRAL'
-                            adjusted_analysis['signal_strength'] = 0.5
-                            adjusted_analysis['analysis_summary'].append(
-                                "Signal adjusted to NEUTRAL due to strong financial performance, positive announcements, and AI analysis"
-                            )
-                    
-                    elif (technical_analysis['signal_type'] in ['STRONG_BUY', 'BUY'] and 
-                          (financial_analysis['financial_signal'] in ['STRONG_SELL', 'SELL'] or 
-                           announcement_impact < -0.3 or ai_impact < -0.2)):
-                        # If technical is bullish but other indicators are bearish, reduce signal strength
-                        if technical_analysis['signal_strength'] > 0.7:
-                            adjusted_analysis['signal_strength'] *= 0.7
-                            adjusted_analysis['analysis_summary'].append(
-                                "Signal strength reduced due to poor financial performance, negative announcements, and AI analysis"
-                            )
-                    
-                    # Add AI analysis to summary
-                    adjusted_analysis['analysis_summary'].append("\nAI Analysis:")
-                    adjusted_analysis['analysis_summary'].append(ai_analysis['financial_health'])
-                    adjusted_analysis['analysis_summary'].append(ai_analysis['recent_developments'])
+                # Adjust technical score based on AI insights
+                if ai_analysis.get('confidence_score', 0) > 0.7:
+                    # Strong AI confidence
+                    ai_impact = 0.3
+                elif ai_analysis.get('confidence_score', 0) > 0.5:
+                    # Moderate AI confidence
+                    ai_impact = 0.1
+                elif ai_analysis.get('confidence_score', 0) < 0.3:
+                    # Low AI confidence
+                    ai_impact = -0.3
+                elif ai_analysis.get('confidence_score', 0) < 0.5:
+                    # Very low AI confidence
+                    ai_impact = -0.1
+                else:
+                    ai_impact = 0
+                
+                # Calculate final score
+                adjusted_score = (
+                    technical_analysis['technical_score'] * technical_weight +
+                    financial_analysis['financial_score'] * financial_weight +
+                    (ai_impact * 100) * ai_weight  # Scale AI impact
+                )
+                
+                # Determine if signal should be adjusted
+                if (technical_analysis['signal_type'] in ['STRONG_SELL', 'SELL'] and 
+                    (financial_analysis['financial_signal'] in ['STRONG_BUY', 'BUY'] or 
+                     ai_impact > 0.2)):
+                    # If technical is bearish but other indicators are bullish, move to neutral
+                    if abs(technical_analysis['technical_score']) > 40:
+                        adjusted_analysis['signal_type'] = 'NEUTRAL'
+                        adjusted_analysis['signal_strength'] = 0.5
+                        adjusted_analysis['analysis_summary'].append(
+                            "Signal adjusted to NEUTRAL due to strong financial performance and AI analysis"
+                        )
+                
+                elif (technical_analysis['signal_type'] in ['STRONG_BUY', 'BUY'] and 
+                      (financial_analysis['financial_signal'] in ['STRONG_SELL', 'SELL'] or 
+                       ai_impact < -0.2)):
+                    # If technical is bullish but other indicators are bearish, reduce signal strength
+                    if technical_analysis['signal_strength'] > 0.7:
+                        adjusted_analysis['signal_strength'] *= 0.7
+                        adjusted_analysis['analysis_summary'].append(
+                            "Signal strength reduced due to poor financial performance and AI analysis"
+                        )
+                
+                # Add AI analysis to summary
+                adjusted_analysis['analysis_summary'].append("\nAI Analysis:")
+                
+                # Safely add AI analysis sections if they exist
+                if ai_analysis.get('market_overview'):
+                    adjusted_analysis['analysis_summary'].append(ai_analysis['market_overview'])
+                if ai_analysis.get('technical_analysis'):
                     adjusted_analysis['analysis_summary'].append(ai_analysis['technical_analysis'])
-                    adjusted_analysis['analysis_summary'].append(ai_analysis['recommendation'])
-                    
-                    # Update confidence score
-                    adjusted_analysis['confidence_score'] = (
-                        technical_analysis['confidence_score'] * technical_weight +
-                        financial_analysis['confidence'] * financial_weight +
-                        ai_analysis['confidence_score'] * ai_weight
-                    )
-                    
-                    # Add price target if available
-                    if ai_analysis['price_target']:
-                        adjusted_analysis['price_target'] = ai_analysis['price_target']
+                if ai_analysis.get('risk_assessment'):
+                    adjusted_analysis['analysis_summary'].append(ai_analysis['risk_assessment'])
+                if ai_analysis.get('trading_recommendation'):
+                    adjusted_analysis['analysis_summary'].append(ai_analysis['trading_recommendation'])
+                
+                # Update confidence score
+                adjusted_analysis['confidence_score'] = (
+                    technical_analysis['confidence_score'] * technical_weight +
+                    financial_analysis['confidence'] * financial_weight +
+                    ai_analysis.get('confidence_score', 0) * ai_weight
+                )
+                
+                # Add price targets and entry/exit points if they exist
+                if ai_analysis.get('price_targets'):
+                    adjusted_analysis['price_targets'] = ai_analysis['price_targets']
+                if ai_analysis.get('entry_points'):
+                    adjusted_analysis['entry_points'] = ai_analysis['entry_points']
+                if ai_analysis.get('exit_points'):
+                    adjusted_analysis['exit_points'] = ai_analysis['exit_points']
+                
+                return adjusted_analysis
             
-            return adjusted_analysis
+            return technical_analysis
             
         except Exception as e:
             logger.error(f"Error adjusting signal with AI: {e}")
             return technical_analysis
 
     def analyze_stock_indicators(self, stock_data: Dict) -> Dict:
-        """Analyze stock data using multiple technical indicators with enhanced logic"""
+        """Analyze stock data using multiple technical indicators with enhanced AI integration"""
         try:
+            symbol = stock_data['symbol']
+            logger.info(f"Starting stock analysis for {symbol}")
+            
             # Get previous analysis from database
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -733,7 +757,7 @@ Provide a detailed analysis in the following format:
                 WHERE symbol = ? 
                 ORDER BY date DESC 
                 LIMIT 1
-            """, (stock_data['symbol'],))
+            """, (symbol,))
             
             previous_analysis = cursor.fetchone()
             conn.close()
@@ -742,7 +766,56 @@ Provide a detailed analysis in the following format:
             if previous_analysis:
                 columns = [description[0] for description in cursor.description]
                 previous_analysis = dict(zip(columns, previous_analysis))
+                logger.info(f"Found previous analysis for {symbol}")
             
+            # Perform technical analysis
+            analysis = self._perform_technical_analysis(stock_data, previous_analysis)
+            logger.info(f"Completed technical analysis for {symbol}")
+            
+            # Get financial analysis
+            financial_analysis = self.analyze_financial_data(symbol)
+            logger.info(f"Completed financial analysis for {symbol}")
+            
+            # Get AI analysis
+            logger.info(f"Starting AI analysis integration for {symbol}")
+            ai_analysis = self.analyze_with_ai(symbol, analysis, financial_analysis)
+            
+            if ai_analysis:
+                # Integrate AI analysis
+                analysis['ai_analysis'] = ai_analysis
+                
+                # Adjust signal based on AI insights
+                analysis = self.adjust_signal_with_ai(analysis, financial_analysis)
+                
+                # Add AI metrics to analysis
+                analysis['ai_score'] = ai_analysis.get('confidence_score', 0.0)
+                analysis['ai_confidence'] = ai_analysis.get('confidence_score', 0.0)
+                analysis['ai_pattern_recognition'] = ai_analysis.get('pattern_recognition', '')
+                analysis['ai_signal_strength'] = ai_analysis.get('signal_strength', '')
+                analysis['ai_risk_assessment'] = ai_analysis.get('risk_assessment', '')
+                analysis['ai_recommendation'] = ai_analysis.get('recommendation', '')
+                analysis['ai_price_targets'] = ai_analysis.get('price_targets', {})
+                analysis['ai_entry_points'] = ai_analysis.get('entry_points', [])
+                analysis['ai_exit_points'] = ai_analysis.get('exit_points', [])
+                
+                logger.info(f"Successfully integrated AI analysis for {symbol}")
+                logger.info(f"Final AI Score: {analysis['ai_score']}")
+                logger.info(f"Final AI Confidence: {analysis['ai_confidence']}")
+            else:
+                logger.warning(f"No AI analysis available for {symbol}")
+            
+            # Check for signal transitions and send notifications
+            self.check_signal_transitions(symbol, analysis, previous_analysis)
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error analyzing stock indicators for {symbol}: {str(e)}")
+            return None
+
+    def _perform_technical_analysis(self, stock_data: Dict, previous_analysis: Dict = None) -> Dict:
+        """Perform technical analysis on stock data"""
+        try:
             analysis = {
                 'signal_type': 'NEUTRAL',
                 'signal_strength': 0.0,
@@ -761,7 +834,41 @@ Provide a detailed analysis in the following format:
                 'indicators_used': []
             }
             
-            # 1. Trend Analysis (40 points)
+            # Add symbol to analysis
+            analysis['symbol'] = stock_data['symbol']
+            
+            # Copy price and indicator data from stock_data to analysis
+            price_fields = ['close', 'open', 'high', 'low', 'volume', 'change', 'change_percent']
+            indicator_fields = ['rsi', 'macd', 'macd_signal', 'sma_20', 'sma_50', 'sma_200', 'bb_upper', 'bb_lower']
+            
+            for field in price_fields + indicator_fields:
+                if field in stock_data:
+                    analysis[field] = stock_data[field]
+            
+            # Perform trend analysis
+            self._analyze_trend(stock_data, analysis, previous_analysis)
+            
+            # Perform momentum analysis
+            self._analyze_momentum(stock_data, analysis, previous_analysis)
+            
+            # Perform volume analysis
+            self._analyze_volume(stock_data, analysis, previous_analysis)
+            
+            # Perform volatility analysis
+            self._analyze_volatility(stock_data, analysis, previous_analysis)
+            
+            # Calculate final scores and determine signal
+            self._calculate_final_scores(analysis)
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error performing technical analysis: {e}")
+            return None
+
+    def _analyze_trend(self, stock_data: Dict, analysis: Dict, previous_analysis: Dict = None):
+        """Analyze trend indicators"""
+        try:
             if all(x is not None for x in [stock_data['close'], stock_data['sma_20'], stock_data['sma_50'], stock_data['sma_200']]):
                 analysis['indicators_used'].append('SMA')
                 close = stock_data['close']
@@ -774,7 +881,6 @@ Provide a detailed analysis in the following format:
                 price_above_sma50 = (close - sma50) / sma50 * 100
                 price_above_sma200 = (close - sma200) / sma200 * 100
                 
-                # Enhanced trend analysis
                 trend_strength = 0
                 
                 # Golden Cross (SMA20 crosses above SMA50)
@@ -789,7 +895,7 @@ Provide a detailed analysis in the following format:
                 
                 # Strong uptrend conditions
                 if close > sma20 > sma50 > sma200:
-                    if price_above_sma20 > 5:  # Price significantly above SMA20
+                    if price_above_sma20 > 5:
                         trend_strength += 25
                         analysis['analysis_summary'].append(f"Strong uptrend: Price {price_above_sma20:.2f}% above SMA20")
                     else:
@@ -797,7 +903,7 @@ Provide a detailed analysis in the following format:
                         analysis['analysis_summary'].append(f"Moderate uptrend: Price {price_above_sma20:.2f}% above SMA20")
                 # Strong downtrend conditions
                 elif close < sma20 < sma50 < sma200:
-                    if price_above_sma20 < -5:  # Price significantly below SMA20
+                    if price_above_sma20 < -5:
                         trend_strength -= 25
                         analysis['analysis_summary'].append(f"Strong downtrend: Price {abs(price_above_sma20):.2f}% below SMA20")
                     else:
@@ -805,8 +911,13 @@ Provide a detailed analysis in the following format:
                         analysis['analysis_summary'].append(f"Moderate downtrend: Price {abs(price_above_sma20):.2f}% below SMA20")
                 
                 analysis['trend_score'] = trend_strength
-            
-            # 2. Momentum Analysis (35 points)
+                
+        except Exception as e:
+            logger.error(f"Error analyzing trend: {e}")
+
+    def _analyze_momentum(self, stock_data: Dict, analysis: Dict, previous_analysis: Dict = None):
+        """Analyze momentum indicators"""
+        try:
             if all(x is not None for x in [stock_data['rsi'], stock_data['macd'], stock_data['macd_signal'], stock_data['ao']]):
                 analysis['indicators_used'].extend(['RSI', 'MACD', 'AO'])
                 rsi = stock_data['rsi']
@@ -816,7 +927,7 @@ Provide a detailed analysis in the following format:
                 
                 momentum_strength = 0
                 
-                # Enhanced RSI Analysis (15 points)
+                # RSI Analysis
                 if rsi < 30:
                     momentum_strength += 15
                     analysis['analysis_summary'].append(f"Strong oversold: RSI at {rsi:.2f}")
@@ -830,11 +941,10 @@ Provide a detailed analysis in the following format:
                     momentum_strength -= 10
                     analysis['analysis_summary'].append(f"Moderately overbought: RSI at {rsi:.2f}")
                 
-                # Enhanced MACD Analysis (10 points)
+                # MACD Analysis
                 macd_diff = macd - macd_signal
                 macd_diff_percent = (macd_diff / abs(macd_signal)) * 100 if macd_signal != 0 else 0
                 
-                # Check for MACD crossover
                 if previous_analysis:
                     prev_macd = previous_analysis.get('macd', 0)
                     prev_macd_signal = previous_analysis.get('macd_signal', 0)
@@ -846,24 +956,10 @@ Provide a detailed analysis in the following format:
                         momentum_strength -= 10
                         analysis['analysis_summary'].append("Bearish MACD crossover detected")
                 
-                if macd_diff_percent > 5:
-                    momentum_strength += 5
-                    analysis['analysis_summary'].append(f"Strong bullish MACD: {macd_diff_percent:.2f}% above signal")
-                elif macd_diff_percent > 2:
-                    momentum_strength += 2
-                    analysis['analysis_summary'].append(f"Moderate bullish MACD: {macd_diff_percent:.2f}% above signal")
-                elif macd_diff_percent < -5:
-                    momentum_strength -= 5
-                    analysis['analysis_summary'].append(f"Strong bearish MACD: {abs(macd_diff_percent):.2f}% below signal")
-                elif macd_diff_percent < -2:
-                    momentum_strength -= 2
-                    analysis['analysis_summary'].append(f"Moderate bearish MACD: {abs(macd_diff_percent):.2f}% below signal")
-                
-                # Enhanced Awesome Oscillator (AO) Analysis (10 points)
+                # Awesome Oscillator Analysis
                 ao_abs = abs(ao)
-                ao_threshold = 50  # Threshold for strong signals
+                ao_threshold = 50
                 
-                # Check for AO crossover
                 if previous_analysis:
                     prev_ao = previous_analysis.get('ao', 0)
                     if ao > 0 and prev_ao <= 0:
@@ -887,8 +983,13 @@ Provide a detailed analysis in the following format:
                     analysis['analysis_summary'].append(f"Moderate bearish AO: {ao:.2f}")
                 
                 analysis['momentum_score'] = momentum_strength
-            
-            # 3. Volume Analysis (20 points)
+                
+        except Exception as e:
+            logger.error(f"Error analyzing momentum: {e}")
+
+    def _analyze_volume(self, stock_data: Dict, analysis: Dict, previous_analysis: Dict = None):
+        """Analyze volume indicators"""
+        try:
             if all(x is not None for x in [stock_data['volume'], stock_data['change']]):
                 analysis['indicators_used'].append('Volume')
                 volume = stock_data['volume']
@@ -897,7 +998,7 @@ Provide a detailed analysis in the following format:
                 
                 volume_strength = 0
                 
-                # Enhanced volume analysis
+                # Volume analysis
                 if volume > 2000000:  # High volume threshold
                     if change_percent > 5:
                         volume_strength = 20
@@ -919,7 +1020,7 @@ Provide a detailed analysis in the following format:
                         volume_strength = -10
                         analysis['analysis_summary'].append(f"Moderate volume with price decrease: {abs(change_percent):.2f}%")
                 
-                # Check for volume trend
+                # Volume trend analysis
                 if previous_analysis:
                     prev_volume = previous_analysis.get('volume', 0)
                     if volume > prev_volume * 1.5:  # 50% volume increase
@@ -930,8 +1031,13 @@ Provide a detailed analysis in the following format:
                         analysis['analysis_summary'].append("Significant volume decrease detected")
                 
                 analysis['volume_score'] = volume_strength
-            
-            # 4. Volatility Analysis (20 points)
+                
+        except Exception as e:
+            logger.error(f"Error analyzing volume: {e}")
+
+    def _analyze_volatility(self, stock_data: Dict, analysis: Dict, previous_analysis: Dict = None):
+        """Analyze volatility indicators"""
+        try:
             if all(x is not None for x in [stock_data['bb_upper'], stock_data['bb_lower'], stock_data['close']]):
                 analysis['indicators_used'].append('Bollinger Bands')
                 bb_upper = stock_data['bb_upper']
@@ -944,7 +1050,7 @@ Provide a detailed analysis in the following format:
                 
                 volatility_strength = 0
                 
-                # Enhanced volatility analysis
+                # Volatility analysis
                 if volatility > 15:
                     volatility_strength = -20
                     analysis['analysis_summary'].append(f"Very high volatility: BB range {volatility:.2f}%")
@@ -962,17 +1068,23 @@ Provide a detailed analysis in the following format:
                 analysis['support_level'] = bb_lower
                 analysis['resistance_level'] = bb_upper
                 
-                # Add price position relative to BB
+                # Price position relative to BB
                 if price_position > 80:
                     analysis['analysis_summary'].append(f"Price near upper BB: {price_position:.2f}% of range")
-                    volatility_strength -= 5  # Additional bearish signal
+                    volatility_strength -= 5
                 elif price_position < 20:
                     analysis['analysis_summary'].append(f"Price near lower BB: {price_position:.2f}% of range")
-                    volatility_strength += 5  # Additional bullish signal
+                    volatility_strength += 5
                 
                 analysis['volatility_score'] = volatility_strength
-            
-            # Calculate final scores
+                
+        except Exception as e:
+            logger.error(f"Error analyzing volatility: {e}")
+
+    def _calculate_final_scores(self, analysis: Dict):
+        """Calculate final scores and determine signal"""
+        try:
+            # Calculate technical score
             analysis['technical_score'] = (
                 analysis['trend_score'] +
                 analysis['momentum_score'] +
@@ -980,7 +1092,7 @@ Provide a detailed analysis in the following format:
                 analysis['volatility_score']
             )
             
-            # Enhanced signal determination with more granular thresholds
+            # Determine signal type and strength
             if analysis['technical_score'] >= 70:
                 analysis['signal_type'] = 'STRONG_BUY'
                 analysis['signal_strength'] = min(analysis['technical_score'] / 70, 1.0)
@@ -997,117 +1109,98 @@ Provide a detailed analysis in the following format:
                 analysis['signal_type'] = 'NEUTRAL'
                 analysis['signal_strength'] = 0.5
             
-            # Calculate confidence score based on available indicators and their strength
-            total_possible_indicators = 4  # Trend, Momentum, Volume, Volatility
-            available_indicators = len(analysis['indicators_used'])
-            indicator_completeness = available_indicators / total_possible_indicators
+            # Debug logging for required values
+            logger.debug(f"Required values for {analysis.get('symbol', 'unknown')}:")
+            logger.debug(f"Close price: {analysis.get('close')}")
+            logger.debug(f"BB Upper: {analysis.get('bb_upper')}")
+            logger.debug(f"BB Lower: {analysis.get('bb_lower')}")
+            logger.debug(f"SMA20: {analysis.get('sma_20')}")
+            logger.debug(f"Signal Type: {analysis.get('signal_type')}")
+            logger.debug(f"Volatility Score: {analysis.get('volatility_score')}")
             
-            # Adjust confidence based on signal strength and indicator agreement
-            signal_strength_factor = abs(analysis['technical_score']) / 70  # Normalize to max score
-            
-            # Calculate indicator agreement
-            indicator_scores = [
-                analysis['trend_score'],
-                analysis['momentum_score'],
-                analysis['volume_score'],
-                analysis['volatility_score']
-            ]
-            positive_scores = sum(1 for score in indicator_scores if score > 0)
-            negative_scores = sum(1 for score in indicator_scores if score < 0)
-            indicator_agreement = max(positive_scores, negative_scores) / len(indicator_scores)
-            
-            analysis['confidence_score'] = (
-                indicator_completeness * 0.4 +  # Weight for data completeness
-                signal_strength_factor * 0.3 +  # Weight for signal strength
-                indicator_agreement * 0.3        # Weight for indicator agreement
-            )
-            
-            # Calculate stop loss and take profit levels with enhanced risk management
-            if analysis['support_level'] and analysis['resistance_level'] and stock_data['close']:
-                current_price = stock_data['close']
-                support = analysis['support_level']
-                resistance = analysis['resistance_level']
+            # Calculate stop loss and take profit levels
+            if analysis.get('close') is not None:
+                current_price = analysis['close']
+                logger.debug(f"Using current price: {current_price}")
                 
-                # Calculate price ranges
-                price_to_support = abs(current_price - support)
-                price_to_resistance = abs(resistance - current_price)
-                
-                # Calculate ATR-based volatility if available
-                atr = None
-                if 'atr' in stock_data and stock_data['atr'] is not None:
-                    atr = stock_data['atr']
-                    # Use ATR to adjust stop loss and take profit levels
-                    atr_multiplier = 2.0  # Standard multiplier for stop loss
-                    volatility_adjusted_support = support - (atr * atr_multiplier)
-                    volatility_adjusted_resistance = resistance + (atr * atr_multiplier)
+                # Calculate stop loss based on volatility and support levels
+                if analysis.get('bb_lower') is not None and analysis.get('bb_upper') is not None:
+                    # Use Bollinger Bands for stop loss
+                    stop_loss_long = analysis['bb_lower']
+                    stop_loss_short = analysis['bb_upper']
+                    logger.debug("Using Bollinger Bands for stop loss calculation")
+                elif analysis.get('sma_20') is not None:
+                    # Use SMA20 as fallback
+                    stop_loss_long = analysis['sma_20'] * 0.95  # 5% below SMA20
+                    stop_loss_short = analysis['sma_20'] * 1.05  # 5% above SMA20
+                    logger.debug("Using SMA20 as fallback for stop loss calculation")
                 else:
-                    # Fallback to percentage-based adjustment
-                    volatility_adjusted_support = support * 0.98  # 2% below support
-                    volatility_adjusted_resistance = resistance * 1.02  # 2% above resistance
+                    # Default to percentage-based stop loss
+                    stop_loss_long = current_price * 0.95  # 5% below current price
+                    stop_loss_short = current_price * 1.05  # 5% above current price
+                    logger.debug("Using percentage-based stop loss calculation")
                 
-                # Set stop loss and take profit based on signal type
-                if analysis['signal_type'] in ['BUY', 'STRONG_BUY']:
-                    analysis['stop_loss'] = volatility_adjusted_support
-                    analysis['take_profit'] = volatility_adjusted_resistance
-                    risk = abs(current_price - volatility_adjusted_support)
-                    reward = abs(volatility_adjusted_resistance - current_price)
+                # Calculate take profit based on risk-reward ratio and volatility
+                if analysis.get('volatility_score') is not None:
+                    # Adjust take profit based on volatility
+                    volatility_factor = 1 + (abs(analysis['volatility_score']) / 100)
+                    logger.debug(f"Using volatility factor: {volatility_factor}")
                 else:
-                    analysis['stop_loss'] = volatility_adjusted_resistance
-                    analysis['take_profit'] = volatility_adjusted_support
-                    risk = abs(volatility_adjusted_resistance - current_price)
-                    reward = abs(current_price - volatility_adjusted_support)
+                    volatility_factor = 1.0
+                    logger.debug("No volatility score available, using default factor")
+                
+                # Set take profit levels based on signal type
+                if analysis['signal_type'] in ['STRONG_BUY', 'BUY']:
+                    analysis['stop_loss'] = stop_loss_long
+                    # Take profit at 2:1 risk-reward ratio minimum
+                    analysis['take_profit'] = current_price + (2 * (current_price - stop_loss_long)) * volatility_factor
+                    logger.debug("Calculated levels for BUY signal")
+                elif analysis['signal_type'] in ['STRONG_SELL', 'SELL']:
+                    analysis['stop_loss'] = stop_loss_short
+                    # Take profit at 2:1 risk-reward ratio minimum
+                    analysis['take_profit'] = current_price - (2 * (stop_loss_short - current_price)) * volatility_factor
+                    logger.debug("Calculated levels for SELL signal")
+                else:
+                    # For neutral signals, set both levels but with wider ranges
+                    analysis['stop_loss'] = current_price * 0.90  # 10% below
+                    analysis['take_profit'] = current_price * 1.10  # 10% above
+                    logger.debug("Calculated levels for NEUTRAL signal")
                 
                 # Calculate risk-reward ratio
-                if risk > 0:
-                    analysis['risk_reward_ratio'] = reward / risk
-                    
-                    # Add risk management metrics
-                    analysis['risk_metrics'] = {
-                        'price_to_support': price_to_support,
-                        'price_to_resistance': price_to_resistance,
-                        'risk_percent': (risk / current_price) * 100,
-                        'reward_percent': (reward / current_price) * 100,
-                        'volatility_adjusted': atr is not None,
-                        'atr_value': atr
-                    }
-                    
-                    # Add risk assessment to analysis summary
-                    risk_assessment = f"Risk-Reward Analysis:\n"
-                    risk_assessment += f"Current Price: {current_price:.2f}\n"
-                    risk_assessment += f"Stop Loss: {analysis['stop_loss']:.2f} ({analysis['risk_metrics']['risk_percent']:.2f}% risk)\n"
-                    risk_assessment += f"Take Profit: {analysis['take_profit']:.2f} ({analysis['risk_metrics']['reward_percent']:.2f}% reward)\n"
-                    risk_assessment += f"Risk-Reward Ratio: {analysis['risk_reward_ratio']:.2f}\n"
-                    
-                    if atr:
-                        risk_assessment += f"ATR-based volatility adjustment applied (ATR: {atr:.2f})"
-                    else:
-                        risk_assessment += "Percentage-based volatility adjustment applied (2%)"
-                    
-                    analysis['analysis_summary'].append(risk_assessment)
-                    
-                    # Add risk warning if ratio is unfavorable
-                    if analysis['risk_reward_ratio'] < 1.5:
-                        analysis['analysis_summary'].append("Warning: Risk-Reward ratio is below recommended minimum of 1.5")
-                    elif analysis['risk_reward_ratio'] > 3:
-                        analysis['analysis_summary'].append("Strong Risk-Reward ratio above 3.0")
+                if analysis['signal_type'] in ['STRONG_BUY', 'BUY']:
+                    risk = current_price - analysis['stop_loss']
+                    reward = analysis['take_profit'] - current_price
+                elif analysis['signal_type'] in ['STRONG_SELL', 'SELL']:
+                    risk = analysis['stop_loss'] - current_price
+                    reward = current_price - analysis['take_profit']
                 else:
-                    analysis['risk_reward_ratio'] = None
-                    analysis['analysis_summary'].append("Warning: Could not calculate risk-reward ratio (risk is zero)")
-            
-            # After calculating technical analysis, get financial analysis
-            financial_analysis = self.analyze_financial_data(stock_data['symbol'])
-            
-            # Adjust signals using AI
-            final_analysis = self.adjust_signal_with_ai(analysis, financial_analysis)
-            
-            # Check for signal transitions and send notifications
-            self.check_signal_transitions(stock_data['symbol'], final_analysis, previous_analysis)
-            
-            return final_analysis
+                    risk = current_price - analysis['stop_loss']
+                    reward = analysis['take_profit'] - current_price
+                
+                if risk != 0:
+                    analysis['risk_reward_ratio'] = reward / risk
+                    logger.debug(f"Calculated risk-reward ratio: {analysis['risk_reward_ratio']}")
+                else:
+                    analysis['risk_reward_ratio'] = 0.0
+                    logger.debug("Risk is zero, setting risk-reward ratio to 0")
+                
+                logger.info(f"Calculated trading levels for {analysis.get('symbol', 'unknown')}:")
+                logger.info(f"Stop Loss: {analysis['stop_loss']:.2f}")
+                logger.info(f"Take Profit: {analysis['take_profit']:.2f}")
+                logger.info(f"Risk-Reward Ratio: {analysis['risk_reward_ratio']:.2f}")
+            else:
+                logger.warning(f"Missing close price for {analysis.get('symbol', 'unknown')}, cannot calculate trading levels")
+                analysis['stop_loss'] = None
+                analysis['take_profit'] = None
+                analysis['risk_reward_ratio'] = None
             
         except Exception as e:
-            logger.error(f"Error analyzing stock indicators: {str(e)}")
-            return None
+            logger.error(f"Error calculating final scores: {e}")
+            logger.error(f"Error details: {str(e)}")
+            # Set default values in case of error
+            analysis['stop_loss'] = None
+            analysis['take_profit'] = None
+            analysis['risk_reward_ratio'] = None
 
     def send_telegram_notification(self, message: str):
         """Send notification to Telegram channel"""
@@ -1213,12 +1306,18 @@ Provide a detailed analysis in the following format:
             logger.error(f"Error checking signal transitions for {symbol}: {e}")
 
     def save_analysis_to_db(self, symbol: str, analysis: Dict):
-        """Save stock analysis to the database"""
+        """Save stock analysis to the database with enhanced AI data"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
             current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Prepare AI-related fields
+            ai_data = analysis.get('ai_analysis', {})
+            ai_price_targets = json.dumps(ai_data.get('price_targets', {}))
+            ai_entry_points = json.dumps(ai_data.get('entry_points', []))
+            ai_exit_points = json.dumps(ai_data.get('exit_points', []))
             
             cursor.execute('''
             INSERT OR REPLACE INTO tradingview_signals
@@ -1226,8 +1325,10 @@ Provide a detailed analysis in the following format:
              technical_score, trend_score, momentum_score, volume_score,
              volatility_score, support_level, resistance_level, stop_loss,
              take_profit, risk_reward_ratio, analysis_summary, indicators_used,
-             last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             last_updated, ai_score, ai_confidence, ai_pattern_recognition,
+             ai_signal_strength, ai_risk_assessment, ai_recommendation,
+             ai_price_targets, ai_entry_points, ai_exit_points, ai_analysis_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 symbol,
                 datetime.now().strftime('%Y-%m-%d'),
@@ -1246,12 +1347,22 @@ Provide a detailed analysis in the following format:
                 analysis.get('risk_reward_ratio'),
                 '|'.join(analysis.get('analysis_summary', [])),
                 '|'.join(analysis.get('indicators_used', [])),
+                current_time,
+                ai_data.get('confidence_score', 0.0),
+                ai_data.get('confidence_score', 0.0),
+                ai_data.get('pattern_recognition', ''),
+                ai_data.get('signal_strength', ''),
+                ai_data.get('risk_assessment', ''),
+                ai_data.get('recommendation', ''),
+                ai_price_targets,
+                ai_entry_points,
+                ai_exit_points,
                 current_time
             ))
             
             conn.commit()
             conn.close()
-            logger.info(f"Successfully saved analysis for {symbol} to database")
+            logger.info(f"Successfully saved analysis for {symbol} to database with AI data")
             
         except Exception as e:
             logger.error(f"Error saving analysis to database: {e}")
@@ -1913,6 +2024,702 @@ Provide a detailed analysis in the following format:
                 conn.close()
             return None
 
+    def analyze_dividend_data(self, symbol: str) -> Dict:
+        """Analyze dividend data for a symbol"""
+        try:
+            conn = sqlite3.connect(self.dividend_db_path)
+            cursor = conn.cursor()
+            
+            # Get current dividend schedule
+            cursor.execute("""
+                SELECT * FROM dividend_schedule 
+                WHERE symbol = ? 
+                ORDER BY bc_from DESC 
+                LIMIT 1
+            """, (symbol,))
+            
+            current_dividend = cursor.fetchone()
+            
+            # Get dividend statistics
+            cursor.execute("""
+                SELECT * FROM dividend_statistics 
+                WHERE symbol = ?
+            """, (symbol,))
+            
+            dividend_stats = cursor.fetchone()
+            
+            # Get historical dividends
+            cursor.execute("""
+                SELECT * FROM dividend_history 
+                WHERE symbol = ? 
+                ORDER BY bc_from DESC 
+                LIMIT 5
+            """, (symbol,))
+            
+            historical_dividends = cursor.fetchall()
+            
+            # Get column names
+            schedule_columns = [description[0] for description in cursor.description]
+            
+            # Process the data
+            dividend_analysis = {
+                'current_dividend': None,
+                'dividend_stats': None,
+                'historical_dividends': [],
+                'dividend_yield': None,
+                'dividend_growth': None,
+                'payout_ratio': None,
+                'dividend_sustainability': None
+            }
+            
+            if current_dividend:
+                current_dividend_dict = dict(zip(schedule_columns, current_dividend))
+                dividend_analysis['current_dividend'] = current_dividend_dict
+                
+                # Calculate dividend yield if we have last close price
+                if current_dividend_dict.get('last_close') and current_dividend_dict.get('dividend_amount'):
+                    dividend_analysis['dividend_yield'] = (
+                        current_dividend_dict['dividend_amount'] / current_dividend_dict['last_close'] * 100
+                    )
+            
+            if dividend_stats:
+                stats_columns = [description[0] for description in cursor.description]
+                dividend_analysis['dividend_stats'] = dict(zip(stats_columns, dividend_stats))
+            
+            if historical_dividends:
+                for dividend in historical_dividends:
+                    dividend_analysis['historical_dividends'].append(
+                        dict(zip(schedule_columns, dividend))
+                    )
+                
+                # Calculate dividend growth if we have enough historical data
+                if len(historical_dividends) >= 2:
+                    current_div = historical_dividends[0][schedule_columns.index('dividend_amount')]
+                    previous_div = historical_dividends[1][schedule_columns.index('dividend_amount')]
+                    if previous_div and previous_div != 0:
+                        dividend_analysis['dividend_growth'] = (
+                            (current_div - previous_div) / previous_div * 100
+                        )
+            
+            # Calculate dividend sustainability
+            if dividend_analysis['dividend_yield'] is not None:
+                if dividend_analysis['dividend_yield'] < 2:
+                    dividend_analysis['dividend_sustainability'] = 'High'
+                elif dividend_analysis['dividend_yield'] < 4:
+                    dividend_analysis['dividend_sustainability'] = 'Moderate'
+                else:
+                    dividend_analysis['dividend_sustainability'] = 'Low'
+            
+            conn.close()
+            return dividend_analysis
+            
+        except Exception as e:
+            logger.error(f"Error analyzing dividend data for {symbol}: {e}")
+            if 'conn' in locals():
+                conn.close()
+            return None
+
+    def analyze_with_ai(self, symbol: str, technical_data: Dict, financial_data: Dict) -> Dict:
+        """Analyze stock data using AI to enhance signal generation with focus on investment perspective"""
+        try:
+            logger.info(f"Starting AI analysis for symbol: {symbol}")
+            
+            # Get financial announcements and reports
+            announcements = self.read_psx_announcements()
+            symbol_announcements = announcements.get(symbol, [])
+            
+            # Get dividend analysis
+            dividend_analysis = self.analyze_dividend_data(symbol)
+            
+            # Get latest financial reports
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get latest financial data
+            cursor.execute("""
+                SELECT * FROM financial_reports 
+                WHERE symbol = ? 
+                ORDER BY report_date DESC 
+                LIMIT 2
+            """, (symbol,))
+            
+            financial_reports = cursor.fetchall()
+            columns = [description[0] for description in cursor.description]
+            
+            # Convert to list of dictionaries
+            latest_reports = []
+            for report in financial_reports:
+                latest_reports.append(dict(zip(columns, report)))
+            
+            conn.close()
+            
+            # Prepare data for AI analysis
+            analysis_data = {
+                'symbol': symbol,
+                'technical': {
+                    'price': {
+                        'close': technical_data.get('close'),
+                        'open': technical_data.get('open'),
+                        'high': technical_data.get('high'),
+                        'low': technical_data.get('low'),
+                        'volume': technical_data.get('volume'),
+                        'change_percent': technical_data.get('change_percent')
+                    },
+                    'indicators': {
+                        'rsi': technical_data.get('rsi'),
+                        'macd': technical_data.get('macd'),
+                        'macd_signal': technical_data.get('macd_signal'),
+                        'sma_20': technical_data.get('sma_20'),
+                        'sma_50': technical_data.get('sma_50'),
+                        'sma_200': technical_data.get('sma_200'),
+                        'bb_upper': technical_data.get('bb_upper'),
+                        'bb_lower': technical_data.get('bb_lower')
+                    },
+                    'signals': {
+                        'trend_score': technical_data.get('trend_score'),
+                        'momentum_score': technical_data.get('momentum_score'),
+                        'volume_score': technical_data.get('volume_score'),
+                        'volatility_score': technical_data.get('volatility_score')
+                    }
+                },
+                'financial': {
+                    'current': {
+                        'eps_growth': financial_data.get('eps_growth'),
+                        'revenue_growth': financial_data.get('revenue_growth'),
+                        'profit_margin': financial_data.get('profit_margin'),
+                        'debt_to_equity': financial_data.get('debt_to_equity'),
+                        'current_ratio': financial_data.get('current_ratio'),
+                        'roe': financial_data.get('roe')
+                    },
+                    'reports': latest_reports,
+                    'announcements': symbol_announcements
+                },
+                'dividend': dividend_analysis
+            }
+            
+            logger.info(f"Prepared analysis data for {symbol} with technical indicators, financial data, and dividend information")
+            
+            # Get historical data for pattern recognition
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get last 30 days of data
+            cursor.execute("""
+                SELECT * FROM tradingview_ta 
+                WHERE symbol = ? 
+                ORDER BY date DESC 
+                LIMIT 30
+            """, (symbol,))
+            
+            historical_data = cursor.fetchall()
+            conn.close()
+            
+            if historical_data:
+                # Convert historical data to list of dictionaries
+                columns = [description[0] for description in cursor.description]
+                historical_analysis = []
+                for row in historical_data:
+                    historical_analysis.append(dict(zip(columns, row)))
+                
+                analysis_data['historical'] = historical_analysis
+                logger.info(f"Retrieved {len(historical_analysis)} days of historical data for {symbol}")
+            
+            # Prepare AI analysis prompt with enhanced investment focus
+            prompt = f"""Analyze this stock data and provide a professional investment analysis:
+
+Symbol: {symbol}
+
+TECHNICAL ANALYSIS
+-----------------
+Current Price: {analysis_data['technical']['price']['close']}
+Price Change: {analysis_data['technical']['price']['change_percent']}%
+Volume: {analysis_data['technical']['price']['volume']}
+
+Key Indicators:
+- RSI: {analysis_data['technical']['indicators']['rsi']}
+- MACD: {analysis_data['technical']['indicators']['macd']}
+- Signal Line: {analysis_data['technical']['indicators']['macd_signal']}
+- SMA20: {analysis_data['technical']['indicators']['sma_20']}
+- SMA50: {analysis_data['technical']['indicators']['sma_50']}
+- SMA200: {analysis_data['technical']['indicators']['sma_200']}
+
+Technical Scores:
+- Trend Score: {analysis_data['technical']['signals']['trend_score']}
+- Momentum Score: {analysis_data['technical']['signals']['momentum_score']}
+- Volume Score: {analysis_data['technical']['signals']['volume_score']}
+- Volatility Score: {analysis_data['technical']['signals']['volatility_score']}
+
+FINANCIAL ANALYSIS
+-----------------
+Current Metrics:
+- EPS Growth: {analysis_data['financial']['current']['eps_growth']}%
+- Revenue Growth: {analysis_data['financial']['current']['revenue_growth']}%
+- Profit Margin: {analysis_data['financial']['current']['profit_margin']}%
+- Debt-to-Equity: {analysis_data['financial']['current']['debt_to_equity']}
+- Current Ratio: {analysis_data['financial']['current']['current_ratio']}
+- ROE: {analysis_data['financial']['current']['roe']}%
+
+DIVIDEND ANALYSIS
+----------------
+Current Dividend:
+- Amount: {analysis_data['dividend']['current_dividend']['dividend_amount'] if analysis_data['dividend']['current_dividend'] else 'N/A'}
+- Yield: {f"{analysis_data['dividend']['dividend_yield']:.2f}%" if analysis_data['dividend']['dividend_yield'] else 'N/A'}
+- Growth: {f"{analysis_data['dividend']['dividend_growth']:.2f}%" if analysis_data['dividend']['dividend_growth'] else 'N/A'}
+- Sustainability: {analysis_data['dividend']['dividend_sustainability']}
+
+Dividend Statistics:
+- Total Dividends: {analysis_data['dividend']['dividend_stats']['total_dividends'] if analysis_data['dividend']['dividend_stats'] else 'N/A'}
+- Average Amount: {analysis_data['dividend']['dividend_stats']['avg_dividend_amount'] if analysis_data['dividend']['dividend_stats'] else 'N/A'}
+- Frequency: {analysis_data['dividend']['dividend_stats']['dividend_frequency'] if analysis_data['dividend']['dividend_stats'] else 'N/A'}
+
+Financial Reports:
+{json.dumps(analysis_data['financial']['reports'], indent=2)}
+
+Recent Announcements:
+{json.dumps(analysis_data['financial']['announcements'], indent=2)}
+
+HISTORICAL PATTERN ANALYSIS
+--------------------------
+{analysis_data.get('historical', [])}
+
+Please provide a professional investment analysis in the following format:
+
+1. COMPANY OVERVIEW
+------------------
+- Business model analysis
+- Market position
+- Competitive advantages
+- Growth potential
+- Recent developments and announcements
+
+2. FINANCIAL HEALTH
+------------------
+- Revenue and earnings analysis
+- Profitability trends
+- Balance sheet strength
+- Cash flow analysis
+- Dividend history and policy
+- Financial ratios analysis
+- Peer comparison
+
+3. INVESTMENT THESIS
+-------------------
+- Key investment drivers
+- Growth catalysts
+- Risk factors
+- Competitive position
+- Industry outlook
+- Management quality assessment
+- Corporate governance analysis
+
+4. VALUATION ANALYSIS
+--------------------
+- Current valuation metrics
+- Peer comparison
+- Historical valuation ranges
+- Fair value estimate
+- Margin of safety
+- DCF analysis (if possible)
+- Comparable company analysis
+
+5. INVESTMENT RECOMMENDATION
+---------------------------
+- Clear investment bias (Strong Buy/Buy/Hold/Sell/Strong Sell)
+- Investment horizon
+- Entry price range
+- Target price
+- Position sizing guidelines
+- Risk management approach
+- Portfolio fit analysis
+
+6. MONITORING POINTS
+-------------------
+- Key metrics to track
+- Important announcements to watch
+- Risk factors to monitor
+- Exit criteria
+- Quarterly earnings expectations
+- Industry developments to watch
+
+Please ensure the analysis is clear, professional, and focused on long-term investment value rather than short-term trading opportunities. Consider both quantitative metrics and qualitative factors in your analysis.
+"""
+            
+            logger.info(f"Prepared AI analysis prompt for {symbol}")
+            
+            # Call AI model (using DeepSeek or similar)
+            ai_analysis = self.call_ai_model(prompt)
+            
+            if ai_analysis:
+                # Process AI analysis with enhanced investment focus
+                processed_analysis = {
+                    'company_overview': ai_analysis.get('company_overview', ''),
+                    'financial_health': ai_analysis.get('financial_health', ''),
+                    'investment_thesis': ai_analysis.get('investment_thesis', ''),
+                    'valuation_analysis': ai_analysis.get('valuation_analysis', ''),
+                    'investment_recommendation': ai_analysis.get('investment_recommendation', ''),
+                    'monitoring_points': ai_analysis.get('monitoring_points', ''),
+                    'confidence_score': ai_analysis.get('confidence_score', 0.0),
+                    'fair_value': ai_analysis.get('fair_value', None),
+                    'target_price': ai_analysis.get('target_price', None),
+                    'entry_range': ai_analysis.get('entry_range', []),
+                    'investment_horizon': ai_analysis.get('investment_horizon', ''),
+                    'position_size': ai_analysis.get('position_size', ''),
+                    'dcf_value': ai_analysis.get('dcf_value', None),
+                    'peer_comparison': ai_analysis.get('peer_comparison', {}),
+                    'risk_assessment': ai_analysis.get('risk_assessment', {}),
+                    'growth_catalysts': ai_analysis.get('growth_catalysts', []),
+                    'management_quality': ai_analysis.get('management_quality', ''),
+                    'corporate_governance': ai_analysis.get('corporate_governance', ''),
+                    'dividend_analysis': dividend_analysis
+                }
+                
+                # Format the analysis for logging
+                formatted_analysis = f"""
+AI Investment Analysis for {symbol}
+=================================
+
+Company Overview
+---------------
+{processed_analysis['company_overview']}
+
+Financial Health
+---------------
+{processed_analysis['financial_health']}
+
+Investment Thesis
+----------------
+{processed_analysis['investment_thesis']}
+
+Valuation Analysis
+-----------------
+{processed_analysis['valuation_analysis']}
+
+Investment Recommendation
+------------------------
+{processed_analysis['investment_recommendation']}
+
+Monitoring Points
+----------------
+{processed_analysis['monitoring_points']}
+
+Key Metrics
+-----------
+Confidence Score: {processed_analysis['confidence_score']}
+Fair Value: {processed_analysis['fair_value']}
+DCF Value: {processed_analysis['dcf_value']}
+Target Price: {processed_analysis['target_price']}
+Entry Range: {processed_analysis['entry_range']}
+Investment Horizon: {processed_analysis['investment_horizon']}
+Position Size: {processed_analysis['position_size']}
+
+Dividend Analysis
+----------------
+Current Dividend: {json.dumps(processed_analysis['dividend_analysis']['current_dividend'], indent=2) if processed_analysis['dividend_analysis']['current_dividend'] else 'N/A'}
+Dividend Yield: {f"{processed_analysis['dividend_analysis']['dividend_yield']:.2f}%" if processed_analysis['dividend_analysis']['dividend_yield'] else 'N/A'}
+Dividend Growth: {f"{processed_analysis['dividend_analysis']['dividend_growth']:.2f}%" if processed_analysis['dividend_analysis']['dividend_growth'] else 'N/A'}
+Dividend Sustainability: {processed_analysis['dividend_analysis']['dividend_sustainability']}
+
+Additional Analysis
+------------------
+Peer Comparison: {json.dumps(processed_analysis['peer_comparison'], indent=2)}
+Risk Assessment: {json.dumps(processed_analysis['risk_assessment'], indent=2)}
+Growth Catalysts: {json.dumps(processed_analysis['growth_catalysts'], indent=2)}
+Management Quality: {processed_analysis['management_quality']}
+Corporate Governance: {processed_analysis['corporate_governance']}
+"""
+                
+                logger.info(f"Successfully processed AI investment analysis for {symbol}")
+                logger.info(formatted_analysis)
+                
+                return processed_analysis
+            else:
+                logger.warning(f"No AI analysis returned for {symbol}")
+                return None
+            
+        except Exception as e:
+            logger.error(f"Error in AI analysis for {symbol}: {e}")
+            return None
+
+    def call_ai_model(self, prompt: str) -> Dict:
+        """Call AI model for analysis"""
+        try:
+            # Get API key from environment
+            api_key = os.getenv('DEEPSEEK_API_KEY')
+            if not api_key:
+                logger.warning("DeepSeek API key not found in environment variables")
+                return None
+            
+            logger.info("DeepSeek API key found, proceeding with API call")
+            
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "You are a professional financial analyst. Always provide specific price targets and levels in your analysis. Format your response with clear section headers and bullet points."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 2000,
+                "temperature": 0.7
+            }
+            
+            logger.info("Making API call to DeepSeek...")
+            response = requests.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            logger.info(f"API Response Status: {response.status_code}")
+            
+            if response.status_code == 200:
+                try:
+                    analysis = response.json()['choices'][0]['message']['content']
+                    logger.info("Successfully received AI analysis")
+                    
+                    # Initialize analysis dictionary with all required sections
+                    ai_analysis = {
+                        'company_overview': '',
+                        'financial_health': '',
+                        'investment_thesis': '',
+                        'valuation_analysis': '',
+                        'investment_recommendation': '',
+                        'monitoring_points': '',
+                        'confidence_score': 0.0,
+                        'fair_value': None,
+                        'target_price': None,
+                        'entry_range': [],
+                        'investment_horizon': '',
+                        'position_size': '',
+                        'dcf_value': None,
+                        'peer_comparison': {},
+                        'risk_assessment': {},
+                        'growth_catalysts': [],
+                        'management_quality': '',
+                        'corporate_governance': ''
+                    }
+                    
+                    # Split the analysis into sections
+                    sections = analysis.split('\n\n')
+                    current_section = None
+                    section_content = []
+                    
+                    for section in sections:
+                        section = section.strip()
+                        if not section:
+                            continue
+                            
+                        # Check for section headers
+                        if 'COMPANY OVERVIEW' in section:
+                            current_section = 'company_overview'
+                            section_content = []
+                        elif 'FINANCIAL HEALTH' in section:
+                            if current_section:
+                                ai_analysis[current_section] = '\n'.join(section_content)
+                            current_section = 'financial_health'
+                            section_content = []
+                        elif 'INVESTMENT THESIS' in section:
+                            if current_section:
+                                ai_analysis[current_section] = '\n'.join(section_content)
+                            current_section = 'investment_thesis'
+                            section_content = []
+                        elif 'VALUATION ANALYSIS' in section:
+                            if current_section:
+                                ai_analysis[current_section] = '\n'.join(section_content)
+                            current_section = 'valuation_analysis'
+                            section_content = []
+                        elif 'INVESTMENT RECOMMENDATION' in section:
+                            if current_section:
+                                ai_analysis[current_section] = '\n'.join(section_content)
+                            current_section = 'investment_recommendation'
+                            section_content = []
+                        elif 'MONITORING POINTS' in section:
+                            if current_section:
+                                ai_analysis[current_section] = '\n'.join(section_content)
+                            current_section = 'monitoring_points'
+                            section_content = []
+                        else:
+                            if current_section:
+                                section_content.append(section)
+                    
+                    # Add the last section
+                    if current_section and section_content:
+                        ai_analysis[current_section] = '\n'.join(section_content)
+                    
+                    # Extract specific values using regex patterns
+                    # Extract confidence score
+                    confidence_pattern = r'confidence score.*?(\d+\.?\d*)'
+                    confidence_match = re.search(confidence_pattern, analysis.lower())
+                    if confidence_match:
+                        ai_analysis['confidence_score'] = float(confidence_match.group(1))
+                    
+                    # Extract fair value
+                    fair_value_pattern = r'fair value.*?(\d+\.?\d*)'
+                    fair_value_match = re.search(fair_value_pattern, analysis.lower())
+                    if fair_value_match:
+                        ai_analysis['fair_value'] = float(fair_value_match.group(1))
+                    
+                    # Extract target price
+                    target_pattern = r'target price.*?(\d+\.?\d*)'
+                    target_match = re.search(target_pattern, analysis.lower())
+                    if target_match:
+                        ai_analysis['target_price'] = float(target_match.group(1))
+                    
+                    # Extract entry range
+                    entry_pattern = r'entry range.*?(\d+\.?\d*)\s*-\s*(\d+\.?\d*)'
+                    entry_match = re.search(entry_pattern, analysis.lower())
+                    if entry_match:
+                        ai_analysis['entry_range'] = [
+                            float(entry_match.group(1)),
+                            float(entry_match.group(2))
+                        ]
+                    
+                    # Extract investment horizon
+                    horizon_pattern = r'investment horizon.*?(\d+\s*(?:months|years))'
+                    horizon_match = re.search(horizon_pattern, analysis.lower())
+                    if horizon_match:
+                        ai_analysis['investment_horizon'] = horizon_match.group(1)
+                    
+                    # Extract position size
+                    position_pattern = r'position size.*?(\d+\.?\d*%)'
+                    position_match = re.search(position_pattern, analysis.lower())
+                    if position_match:
+                        ai_analysis['position_size'] = position_match.group(1)
+                    
+                    # Extract DCF value
+                    dcf_pattern = r'DCF value.*?(\d+\.?\d*)'
+                    dcf_match = re.search(dcf_pattern, analysis.lower())
+                    if dcf_match:
+                        ai_analysis['dcf_value'] = float(dcf_match.group(1))
+                    
+                    # Extract peer comparison
+                    peer_pattern = r'peer comparison.*?({.*?})'
+                    peer_match = re.search(peer_pattern, analysis.lower())
+                    if peer_match:
+                        try:
+                            ai_analysis['peer_comparison'] = json.loads(peer_match.group(1))
+                        except:
+                            pass
+                    
+                    # Extract risk assessment
+                    risk_pattern = r'risk assessment.*?({.*?})'
+                    risk_match = re.search(risk_pattern, analysis.lower())
+                    if risk_match:
+                        try:
+                            ai_analysis['risk_assessment'] = json.loads(risk_match.group(1))
+                        except:
+                            pass
+                    
+                    # Extract growth catalysts
+                    catalyst_pattern = r'growth catalysts.*?\[(.*?)\]'
+                    catalyst_match = re.search(catalyst_pattern, analysis.lower())
+                    if catalyst_match:
+                        catalysts = catalyst_match.group(1).split(',')
+                        ai_analysis['growth_catalysts'] = [c.strip() for c in catalysts]
+                    
+                    # Extract management quality
+                    management_pattern = r'management quality.*?([A-Za-z\s]+)'
+                    management_match = re.search(management_pattern, analysis.lower())
+                    if management_match:
+                        ai_analysis['management_quality'] = management_match.group(1).strip()
+                    
+                    # Extract corporate governance
+                    governance_pattern = r'corporate governance.*?([A-Za-z\s]+)'
+                    governance_match = re.search(governance_pattern, analysis.lower())
+                    if governance_match:
+                        ai_analysis['corporate_governance'] = governance_match.group(1).strip()
+                    
+                    logger.info("Successfully parsed AI analysis")
+                    return ai_analysis
+                    
+                except Exception as e:
+                    logger.error(f"Error parsing AI response: {e}")
+                    return None
+            else:
+                logger.error(f"AI API request failed with status code {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error calling AI model: {e}")
+            return None
+
+    def get_symbols_with_missing_data(self) -> List[str]:
+        """Get list of symbols that have missing data"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Query for symbols with missing critical data
+            cursor.execute("""
+                SELECT symbol, COUNT(*) as total_records,
+                       SUM(CASE WHEN rsi IS NULL THEN 1 ELSE 0 END) as missing_rsi,
+                       SUM(CASE WHEN macd IS NULL THEN 1 ELSE 0 END) as missing_macd,
+                       SUM(CASE WHEN sma_20 IS NULL THEN 1 ELSE 0 END) as missing_sma20
+                FROM tradingview_ta
+                GROUP BY symbol
+                HAVING missing_rsi > 0 OR missing_macd > 0 OR missing_sma20 > 0
+            """)
+            
+            incomplete_symbols = cursor.fetchall()
+            conn.close()
+            
+            if incomplete_symbols:
+                symbols_with_missing_data = [symbol_data[0] for symbol_data in incomplete_symbols]
+                logger.info(f"Found {len(symbols_with_missing_data)} symbols with missing data")
+                return symbols_with_missing_data
+            
+            return []
+            
+        except Exception as e:
+            logger.error(f"Error getting symbols with missing data: {e}")
+            if 'conn' in locals():
+                conn.close()
+            return []
+
+    def requery_missing_data(self, symbols: List[str], max_retries: int = 3) -> Dict[str, bool]:
+        """Requery data for symbols with missing data"""
+        try:
+            results = {}
+            for symbol in symbols:
+                logger.info(f"Requerying data for {symbol}")
+                success = False
+                
+                for attempt in range(max_retries):
+                    try:
+                        # Force update by temporarily modifying should_update_data
+                        original_should_update = self.should_update_data
+                        self.should_update_data = lambda x: True
+                        
+                        # Fetch new data
+                        data = self.fetch_tradingview_ta_data(symbol)
+                        
+                        # Restore original should_update_data
+                        self.should_update_data = original_should_update
+                        
+                        if data and all(data.get(field) is not None for field in ['rsi', 'macd', 'sma_20']):
+                            success = True
+                            logger.info(f"Successfully requeried data for {symbol} on attempt {attempt + 1}")
+                            break
+                        else:
+                            logger.warning(f"Attempt {attempt + 1} failed for {symbol} - data still incomplete")
+                            time.sleep(2)  # Add delay between retries
+                            
+                    except Exception as e:
+                        logger.error(f"Error requerying data for {symbol} on attempt {attempt + 1}: {e}")
+                        time.sleep(2)  # Add delay between retries
+                
+                results[symbol] = success
+                
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in requery_missing_data: {e}")
+            return {symbol: False for symbol in symbols}
+
 def main():
     """Main function to create and initialize the database"""
     try:
@@ -1961,17 +2768,49 @@ def main():
             
             # Check if we need to update
             if not calculator.should_update_data(symbol):
-                print(f"Skipping {symbol} - current data available")
+                print(f"Skipping data update for {symbol} - current data available")
                 skipped += 1
-                continue
-            
-            data = calculator.fetch_tradingview_ta_data(symbol)
-            if data:
-                print(f"Successfully fetched data for {symbol}")
-                successful += 1
             else:
-                print(f"Failed to fetch data for {symbol}")
-                failed += 1
+                data = calculator.fetch_tradingview_ta_data(symbol)
+                if data:
+                    print(f"Successfully fetched data for {symbol}")
+                    successful += 1
+                else:
+                    print(f"Failed to fetch data for {symbol}")
+                    failed += 1
+            
+            # Always perform analysis regardless of data update
+            print(f"Performing analysis for {symbol}...")
+            try:
+                # Get the latest data for analysis
+                latest_data = calculator.get_latest_data(symbol)
+                if latest_data:
+                    # Get financial analysis
+                    financial_analysis = calculator.analyze_financial_data(symbol)
+                    
+                    # Perform technical analysis
+                    technical_analysis = calculator._perform_technical_analysis(latest_data)
+                    
+                    # Get AI analysis
+                    ai_analysis = calculator.analyze_with_ai(symbol, technical_analysis, financial_analysis)
+                    
+                    if ai_analysis:
+                        # Integrate AI analysis
+                        technical_analysis['ai_analysis'] = ai_analysis
+                        
+                        # Adjust signal based on AI insights
+                        final_analysis = calculator.adjust_signal_with_ai(technical_analysis, financial_analysis)
+                        
+                        # Save the analysis
+                        calculator.save_analysis_to_db(symbol, final_analysis)
+                        print(f"Successfully completed analysis for {symbol}")
+                    else:
+                        print(f"Warning: No AI analysis available for {symbol}")
+                else:
+                    print(f"Warning: No data available for analysis of {symbol}")
+            except Exception as e:
+                print(f"Error performing analysis for {symbol}: {e}")
+                logger.error(f"Error performing analysis for {symbol}: {e}")
             
             # Add delay to avoid rate limiting
             time.sleep(2)
@@ -1981,7 +2820,28 @@ def main():
         print(f"Failed to fetch: {failed} symbols")
         print(f"Skipped (current data): {skipped} symbols")
         
-        # Verify data after fetching
+        # Get symbols with missing data and requery them
+        print("\nChecking for symbols with missing data...")
+        symbols_with_missing_data = calculator.get_symbols_with_missing_data()
+        
+        if symbols_with_missing_data:
+            print(f"\nFound {len(symbols_with_missing_data)} symbols with missing data. Attempting to requery...")
+            requery_results = calculator.requery_missing_data(symbols_with_missing_data)
+            
+            # Print requery results
+            successful_requeries = sum(1 for success in requery_results.values() if success)
+            print(f"\nRequery Results:")
+            print(f"Successfully requeried: {successful_requeries} symbols")
+            print(f"Failed to requery: {len(requery_results) - successful_requeries} symbols")
+            
+            # Print details for failed requeries
+            failed_symbols = [symbol for symbol, success in requery_results.items() if not success]
+            if failed_symbols:
+                print("\nFailed to requery data for the following symbols:")
+                for symbol in failed_symbols:
+                    print(f"- {symbol}")
+        
+        # Verify data after fetching and requerying
         print("\nVerifying updated data...")
         verification = calculator.verify_database_data()
         if verification:
@@ -1992,11 +2852,6 @@ def main():
             print(f"Unique symbols: {verification['unique_symbols']}")
             if verification['incomplete_symbols'] > 0:
                 print(f"Warning: Found {verification['incomplete_symbols']} symbols with incomplete data")
-        
-        # Generate and save signals
-        print("\nGenerating stock signals...")
-        signals = calculator.analyze_stock_signals()
-        print(f"Generated signals for {len(signals)} stocks")
         
         # Check for signal transitions
         print("\nChecking for signal transitions...")
