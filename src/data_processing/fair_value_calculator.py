@@ -1037,49 +1037,58 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             logger.error(f"Error analyzing stock indicators for {symbol}: {str(e)}")
             return None
 
-import multiprocessing
-
-def _perform_technical_analysis(self, stock_data: Dict, previous_analysis: Dict = None) -> Dict:
-    """Perform technical analysis on stock data using parallel processing"""
-    try:
-        analysis = {
-            'signal_type': 'NEUTRAL',
-            'signal_strength': 0.0,
-            'confidence_score': 0.0,
-            'technical_score': 0.0,
-            'trend_score': 0.0,
-            'momentum_score': 0.0,
-            'volume_score': 0.0,
-            'volatility_score': 0.0,
-            'support_level': None,
-            'resistance_level': None,
-            'stop_loss': None,
-            'take_profit': None,
-            'risk_reward_ratio': None,
-            'analysis_summary': [],
-            'indicators_used': []
-        }
+    def _perform_technical_analysis(self, stock_data: Dict, previous_analysis: Dict = None) -> Dict:
+        """Perform technical analysis on stock data using parallel processing.
         
-        # Add symbol to analysis
-        analysis['symbol'] = stock_data['symbol']
+        This method analyzes stock data using multiple technical indicators and generates
+        trading signals based on trend, momentum, volume, and volatility analysis.
         
-        # Copy price and indicator data from stock_data to analysis
+        Args:
+            stock_data (Dict): Dictionary containing stock price and indicator data
+            previous_analysis (Dict, optional): Previous analysis results for comparison
+            
+        Returns:
+            Dict: Analysis results including signal type, strength, and various scores
+        """
+        try:
+            analysis = {
+                'signal_type': 'NEUTRAL',
+                'signal_strength': 0.0,
+                'confidence_score': 0.0,
+                'technical_score': 0.0,
+                'trend_score': 0.0,
+                'momentum_score': 0.0,
+                'volume_score': 0.0,
+                'volatility_score': 0.0,
+                'support_level': None,
+                'resistance_level': None,
+                'stop_loss': None,
+                'take_profit': None,
+                'risk_reward_ratio': None,
+                'analysis_summary': '',
+                'indicators_used': []
+            }
+            
+            # Copy price and indicator data from stock_data to analysis
+            price_fields = ['close', 'open', 'high', 'low', 'volume', 'change', 'change_percent']
+            indicator_fields = ['rsi', 'macd', 'macd_signal', 'sma_20', 'sma_50', 'sma_200', 'bb_upper', 'bb_lower']
             
             for field in price_fields + indicator_fields:
                 if field in stock_data:
                     analysis[field] = stock_data[field]
             
-            # Perform trend analysis
-            self._analyze_trend(stock_data, analysis, previous_analysis)
-            
-            # Perform momentum analysis
-            self._analyze_momentum(stock_data, analysis, previous_analysis)
-            
-            # Perform volume analysis
-            self._analyze_volume(stock_data, analysis, previous_analysis)
-            
-            # Perform volatility analysis
-            self._analyze_volatility(stock_data, analysis, previous_analysis)
+            # Perform parallel analysis using multiprocessing
+            with multiprocessing.Pool() as pool:
+                analysis_tasks = [
+                    pool.apply_async(self._analyze_trend, (stock_data, analysis, previous_analysis)),
+                    pool.apply_async(self._analyze_momentum, (stock_data, analysis, previous_analysis)),
+                    pool.apply_async(self._analyze_volume, (stock_data, analysis, previous_analysis)),
+                    pool.apply_async(self._analyze_volatility, (stock_data, analysis, previous_analysis))
+                ]
+                
+                # Collect results
+                for task in analysis_tasks:
+                    task.get()  # Wait for each analysis to complete
             
             # Calculate final scores and determine signal
             self._calculate_final_scores(analysis)
@@ -1088,128 +1097,165 @@ def _perform_technical_analysis(self, stock_data: Dict, previous_analysis: Dict 
             
         except Exception as e:
             logger.error(f"Error performing technical analysis: {e}")
-            return None
+            return {
+                'signal_type': 'ERROR',
+                'signal_strength': 0.0,
+                'confidence_score': 0.0,
+                'error': str(e)
+            }
 
     def _analyze_trend(self, stock_data: Dict, analysis: Dict, previous_analysis: Dict = None):
-        """Analyze trend indicators"""
+        """Analyze price trends using multiple moving averages and price action.
+        
+        This method evaluates the trend strength and direction using:
+        - Simple Moving Averages (SMA) crossovers
+        - Price position relative to moving averages
+        - Trend strength indicators
+        
+        Args:
+            stock_data (Dict): Current stock data with price and indicator values
+            analysis (Dict): Analysis dictionary to update with trend findings
+            previous_analysis (Dict, optional): Previous analysis for comparison
+        """
         try:
-            if all(x is not None for x in [stock_data['close'], stock_data['sma_20'], stock_data['sma_50'], stock_data['sma_200']]):
-                analysis['indicators_used'].append('SMA')
+            trend_score = 0
+            trend_reasons = []
+            
+            # Check SMA crossovers and price position
+            if all(x in stock_data for x in ['close', 'sma_20', 'sma_50', 'sma_200']):
                 close = stock_data['close']
                 sma20 = stock_data['sma_20']
                 sma50 = stock_data['sma_50']
                 sma200 = stock_data['sma_200']
                 
-                # Calculate price position relative to SMAs
-                price_above_sma20 = (close - sma20) / sma20 * 100
-                price_above_sma50 = (close - sma50) / sma50 * 100
-                price_above_sma200 = (close - sma200) / sma200 * 100
-                
-                trend_strength = 0
-                
-                # Golden Cross (SMA20 crosses above SMA50)
-                if sma20 > sma50 and previous_analysis and previous_analysis.get('sma_20', 0) <= previous_analysis.get('sma_50', 0):
-                    trend_strength += 15
-                    analysis['analysis_summary'].append("Golden Cross detected: SMA20 crossed above SMA50")
-                
-                # Death Cross (SMA20 crosses below SMA50)
-                elif sma20 < sma50 and previous_analysis and previous_analysis.get('sma_20', 0) >= previous_analysis.get('sma_50', 0):
-                    trend_strength -= 15
-                    analysis['analysis_summary'].append("Death Cross detected: SMA20 crossed below SMA50")
-                
-                # Strong uptrend conditions
+                # Strong uptrend: Price above all SMAs
                 if close > sma20 > sma50 > sma200:
-                    if price_above_sma20 > 5:
-                        trend_strength += 25
-                        analysis['analysis_summary'].append(f"Strong uptrend: Price {price_above_sma20:.2f}% above SMA20")
-                    else:
-                        trend_strength += 15
-                        analysis['analysis_summary'].append(f"Moderate uptrend: Price {price_above_sma20:.2f}% above SMA20")
-                # Strong downtrend conditions
+                    trend_score += 30
+                    trend_reasons.append("Strong uptrend: Price above all SMAs")
+                # Moderate uptrend: Price above SMA20 and SMA50
+                elif close > sma20 > sma50:
+                    trend_score += 20
+                    trend_reasons.append("Moderate uptrend: Price above SMA20 and SMA50")
+                # Weak uptrend: Price above SMA20
+                elif close > sma20:
+                    trend_score += 10
+                    trend_reasons.append("Weak uptrend: Price above SMA20")
+                # Strong downtrend: Price below all SMAs
                 elif close < sma20 < sma50 < sma200:
-                    if price_above_sma20 < -5:
-                        trend_strength -= 25
-                        analysis['analysis_summary'].append(f"Strong downtrend: Price {abs(price_above_sma20):.2f}% below SMA20")
-                    else:
-                        trend_strength -= 15
-                        analysis['analysis_summary'].append(f"Moderate downtrend: Price {abs(price_above_sma20):.2f}% below SMA20")
+                    trend_score -= 30
+                    trend_reasons.append("Strong downtrend: Price below all SMAs")
+                # Moderate downtrend: Price below SMA20 and SMA50
+                elif close < sma20 < sma50:
+                    trend_score -= 20
+                    trend_reasons.append("Moderate downtrend: Price below SMA20 and SMA50")
+                # Weak downtrend: Price below SMA20
+                elif close < sma20:
+                    trend_score -= 10
+                    trend_reasons.append("Weak downtrend: Price below SMA20")
                 
-                analysis['trend_score'] = trend_strength
-                
+                # Calculate trend strength based on price distance from SMAs
+                if close > 0 and sma20 > 0:
+                    distance_from_sma20 = abs(close - sma20) / sma20 * 100
+                    if distance_from_sma20 > 5:
+                        trend_score += 5 if close > sma20 else -5
+                        trend_reasons.append(f"Strong price movement: {distance_from_sma20:.1f}% from SMA20")
+            
+            # Compare with previous analysis if available
+            if previous_analysis and 'trend_score' in previous_analysis:
+                trend_change = trend_score - previous_analysis['trend_score']
+                if abs(trend_change) >= 10:
+                    trend_reasons.append(f"Significant trend change: {trend_change:+d} points")
+            
+            # Update analysis dictionary
+            analysis['trend_score'] = trend_score
+            analysis['trend_reasons'] = trend_reasons
+            analysis['indicators_used'].extend(['SMA20', 'SMA50', 'SMA200'])
+            
         except Exception as e:
-            logger.error(f"Error analyzing trend: {e}")
+            logger.error(f"Error in trend analysis: {e}")
+            analysis['trend_score'] = 0
+            analysis['trend_reasons'] = [f"Error in trend analysis: {str(e)}"]
 
     def _analyze_momentum(self, stock_data: Dict, analysis: Dict, previous_analysis: Dict = None):
-        """Analyze momentum indicators"""
+        """Analyze momentum indicators to assess price movement strength and direction.
+        
+        This method evaluates momentum using:
+        - Relative Strength Index (RSI)
+        - Moving Average Convergence Divergence (MACD)
+        - Stochastic Oscillator
+        - Rate of Change (ROC)
+        
+        Args:
+            stock_data (Dict): Current stock data with price and indicator values
+            analysis (Dict): Analysis dictionary to update with momentum findings
+            previous_analysis (Dict, optional): Previous analysis for comparison
+        """
         try:
-            if all(x is not None for x in [stock_data['rsi'], stock_data['macd'], stock_data['macd_signal'], stock_data['ao']]):
-                analysis['indicators_used'].extend(['RSI', 'MACD', 'AO'])
+            momentum_score = 0
+            momentum_reasons = []
+            
+            # RSI Analysis
+            if 'rsi' in stock_data and stock_data['rsi'] is not None:
                 rsi = stock_data['rsi']
+                if rsi > 70:
+                    momentum_score -= 15
+                    momentum_reasons.append(f"Overbought: RSI at {rsi:.1f}")
+                elif rsi < 30:
+                    momentum_score += 15
+                    momentum_reasons.append(f"Oversold: RSI at {rsi:.1f}")
+                elif rsi > 60:
+                    momentum_score -= 10
+                    momentum_reasons.append(f"Approaching overbought: RSI at {rsi:.1f}")
+                elif rsi < 40:
+                    momentum_score += 10
+                    momentum_reasons.append(f"Approaching oversold: RSI at {rsi:.1f}")
+                
+                # RSI trend analysis
+                if previous_analysis and 'rsi' in previous_analysis:
+                    rsi_change = rsi - previous_analysis['rsi']
+                    if abs(rsi_change) >= 5:
+                        momentum_reasons.append(f"Significant RSI change: {rsi_change:+.1f}")
+            
+            # MACD Analysis
+            if all(x in stock_data for x in ['macd', 'macd_signal']):
                 macd = stock_data['macd']
                 macd_signal = stock_data['macd_signal']
-                ao = stock_data['ao']
                 
-                momentum_strength = 0
+                if macd > macd_signal:
+                    momentum_score += 10
+                    momentum_reasons.append("Positive MACD: Above signal line")
+                else:
+                    momentum_score -= 10
+                    momentum_reasons.append("Negative MACD: Below signal line")
                 
-                # RSI Analysis
-                if rsi < 30:
-                    momentum_strength += 15
-                    analysis['analysis_summary'].append(f"Strong oversold: RSI at {rsi:.2f}")
-                elif rsi < 40:
-                    momentum_strength += 10
-                    analysis['analysis_summary'].append(f"Moderately oversold: RSI at {rsi:.2f}")
-                elif rsi > 70:
-                    momentum_strength -= 15
-                    analysis['analysis_summary'].append(f"Strong overbought: RSI at {rsi:.2f}")
-                elif rsi > 60:
-                    momentum_strength -= 10
-                    analysis['analysis_summary'].append(f"Moderately overbought: RSI at {rsi:.2f}")
-                
-                # MACD Analysis
-                macd_diff = macd - macd_signal
-                macd_diff_percent = (macd_diff / abs(macd_signal)) * 100 if macd_signal != 0 else 0
-                
-                if previous_analysis:
-                    prev_macd = previous_analysis.get('macd', 0)
-                    prev_macd_signal = previous_analysis.get('macd_signal', 0)
+                # MACD crossover analysis
+                if previous_analysis and all(x in previous_analysis for x in ['macd', 'macd_signal']):
+                    prev_macd = previous_analysis['macd']
+                    prev_signal = previous_analysis['macd_signal']
                     
-                    if macd > macd_signal and prev_macd <= prev_macd_signal:
-                        momentum_strength += 10
-                        analysis['analysis_summary'].append("Bullish MACD crossover detected")
-                    elif macd < macd_signal and prev_macd >= prev_macd_signal:
-                        momentum_strength -= 10
-                        analysis['analysis_summary'].append("Bearish MACD crossover detected")
-                
-                # Awesome Oscillator Analysis
-                ao_abs = abs(ao)
-                ao_threshold = 50
-                
-                if previous_analysis:
-                    prev_ao = previous_analysis.get('ao', 0)
-                    if ao > 0 and prev_ao <= 0:
-                        momentum_strength += 5
-                        analysis['analysis_summary'].append("Bullish AO crossover detected")
-                    elif ao < 0 and prev_ao >= 0:
-                        momentum_strength -= 5
-                        analysis['analysis_summary'].append("Bearish AO crossover detected")
-                
-                if ao > ao_threshold:
-                    momentum_strength += 5
-                    analysis['analysis_summary'].append(f"Strong bullish AO: {ao:.2f}")
-                elif ao > 0:
-                    momentum_strength += 2
-                    analysis['analysis_summary'].append(f"Moderate bullish AO: {ao:.2f}")
-                elif ao < -ao_threshold:
-                    momentum_strength -= 5
-                    analysis['analysis_summary'].append(f"Strong bearish AO: {ao:.2f}")
-                elif ao < 0:
-                    momentum_strength -= 2
-                    analysis['analysis_summary'].append(f"Moderate bearish AO: {ao:.2f}")
-                
-                analysis['momentum_score'] = momentum_strength
-                
+                    if macd > macd_signal and prev_macd <= prev_signal:
+                        momentum_score += 15
+                        momentum_reasons.append("Bullish MACD crossover")
+                    elif macd < macd_signal and prev_macd >= prev_signal:
+                        momentum_score -= 15
+                        momentum_reasons.append("Bearish MACD crossover")
+            
+            # Rate of Change Analysis
+            if 'change_percent' in stock_data and stock_data['change_percent'] is not None:
+                roc = stock_data['change_percent']
+                if abs(roc) >= 5:
+                    momentum_score += 10 if roc > 0 else -10
+                    momentum_reasons.append(f"Strong price movement: {roc:+.1f}%")
+            
+            # Update analysis dictionary
+            analysis['momentum_score'] = momentum_score
+            analysis['momentum_reasons'] = momentum_reasons
+            analysis['indicators_used'].extend(['RSI', 'MACD', 'ROC'])
+            
         except Exception as e:
-            logger.error(f"Error analyzing momentum: {e}")
+            logger.error(f"Error in momentum analysis: {e}")
+            analysis['momentum_score'] = 0
+            analysis['momentum_reasons'] = [f"Error in momentum analysis: {str(e)}"]
 
     def _analyze_volume(self, stock_data: Dict, analysis: Dict, previous_analysis: Dict = None):
         """Analyze volume indicators"""
