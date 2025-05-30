@@ -1,24 +1,16 @@
-from __future__ import annotations
-import json
-import logging
-import os
-import re
-import sqlite3
-import time
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Union, Any
-
-import pandas as pd
+from typing import Dict, List
 import requests
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
+import re
+import logging
+import sqlite3
+from datetime import datetime
+import os
 from tradingview_ta import TA_Handler, Interval
-
-from database_manager import DatabaseManager
-from technical_analyzer import TechnicalAnalyzer
-from financial_analyzer import FinancialAnalyzer
-from ai_analyzer import AIAnalyzer
-from notification_manager import NotificationManager
+import time
+import pandas as pd
+import json
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
@@ -26,157 +18,139 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 class FairValueCalculator:
-    """A comprehensive stock analysis tool that calculates fair value using multiple indicators.
-    
-    This class integrates technical analysis, fundamental analysis, and AI-based insights
-    to generate trading signals and fair value estimates for stocks. It maintains a database
-    of historical analysis results and provides notification capabilities.
-    
-    Key Features:
-    - Technical analysis using indicators like RSI, MACD, Bollinger Bands
-    - Fundamental analysis of financial reports and announcements
-    - AI-enhanced signal generation and analysis
-    - Database storage of analysis results
-    - Telegram notification system
-    - Discounted Cash Flow (DCF) valuation
-    
-    Attributes:
-        db_path (str): Path to the main analysis database
-        dividend_db_path (str): Path to the dividend database
-        headers (dict): HTTP headers for web requests
-        db_manager (DatabaseManager): Manager for database operations
-        tech_analyzer (TechnicalAnalyzer): Analyzer for technical indicators
-        fin_analyzer (FinancialAnalyzer): Analyzer for financial data
-        ai_analyzer (AIAnalyzer): Analyzer for AI-based insights
-        notification_manager (NotificationManager): Manager for sending notifications
-    """
-    
-    def __init__(self) -> None:
-        """Initialize the FairValueCalculator with database paths and headers.
-        
-        Sets up:
-        - Paths to SQLite databases
-        - HTTP headers for web requests
-        - Initializes modular components for analysis and notifications
-        """
+    def __init__(self):
+        """Initialize the FairValueCalculator with database path and headers"""
         self.db_path = 'data/databases/production/fairvalue.db'
         self.dividend_db_path = 'data/databases/production/PSX_Dividend_Schedule.db'
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        self.db_manager = DatabaseManager(self.db_path, self.dividend_db_path)
-        self.tech_analyzer = TechnicalAnalyzer()
-        self.fin_analyzer = FinancialAnalyzer(self.db_path, self.dividend_db_path)
-        self.ai_analyzer = AIAnalyzer()
-        self.notification_manager = NotificationManager()
+        # Initialize database
+        self._init_database()
 
-    def _handle_error(self, error: Exception, context: str, default_return=None):
-        """Utility method to handle exceptions with consistent logging.
-        
-        Args:
-            error: The exception object caught.
-            context: A string describing the context of the error.
-            default_return: The value to return in case of error, if applicable.
-        
-        Returns:
-            The default_return value if provided, otherwise None.
-        """
-        logger.error(f"Error in {context}: {str(error)}")
-        return default_return
-
-    def calculate_dcf_value(self, symbol: str, years: int = 5, discount_rate: float = 0.1, terminal_growth_rate: float = 0.03) -> float:
-        """Calculate the Discounted Cash Flow (DCF) value for a given stock symbol.
-        
-        This method uses the DCF model to estimate the intrinsic value of a stock based on projected
-        free cash flows, a discount rate, and a terminal growth rate. It includes estimates for capital
-        expenditures and changes in working capital based on historical data or industry averages if
-        specific data is unavailable.
-        
-        Args:
-            symbol (str): The stock symbol to calculate the DCF value for.
-            years (int): Number of years for cash flow projections. Default is 5.
-            discount_rate (float): The discount rate used in the DCF calculation. Default is 0.1 (10%).
-            terminal_growth_rate (float): The terminal growth rate for perpetuity. Default is 0.03 (3%).
-        
-        Returns:
-            float: The calculated DCF value of the stock.
-        
-        Raises:
-            ValueError: If the required financial data is not available or invalid.
-        """
+    def _init_database(self):
+        """Initialize the SQLite database and create necessary tables"""
         try:
-            # Get the latest financial data
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+            
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            cursor.execute("""
-                SELECT * FROM financial_reports 
-                WHERE symbol = ? 
-                ORDER BY report_date DESC 
-                LIMIT 1
-            """, (symbol,))
+            # Create tradingview_ta table with updated schema
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tradingview_ta (
+                symbol TEXT,
+                date TEXT,
+                recommendation TEXT,
+                buy_signals INTEGER,
+                sell_signals INTEGER,
+                neutral_signals INTEGER,
+                rsi REAL,
+                stoch_k REAL,
+                stoch_d REAL,
+                macd REAL,
+                macd_signal REAL,
+                macd_hist REAL,
+                sma_20 REAL,
+                sma_50 REAL,
+                sma_200 REAL,
+                ema_20 REAL,
+                ema_50 REAL,
+                ema_200 REAL,
+                close REAL,
+                open REAL,
+                high REAL,
+                low REAL,
+                volume REAL,
+                change REAL,
+                change_percent REAL,
+                bb_upper REAL,
+                bb_lower REAL,
+                ao REAL,
+                psar REAL,
+                vwma REAL,
+                hull_ma9 REAL,
+                source TEXT,
+                last_updated TEXT,
+                PRIMARY KEY (symbol, date)
+            )
+            ''')
             
-            financial_data = cursor.fetchone()
+            # Create tradingview_signals table with enhanced schema
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tradingview_signals (
+                symbol TEXT,
+                date TEXT,
+                signal_type TEXT,
+                signal_strength REAL,
+                confidence_score REAL,
+                technical_score REAL,
+                trend_score REAL,
+                momentum_score REAL,
+                volume_score REAL,
+                volatility_score REAL,
+                support_level REAL,
+                resistance_level REAL,
+                stop_loss REAL,
+                take_profit REAL,
+                risk_reward_ratio REAL,
+                analysis_summary TEXT,
+                indicators_used TEXT,
+                last_updated TEXT,
+                ai_score REAL,
+                ai_confidence REAL,
+                ai_pattern_recognition TEXT,
+                ai_signal_strength TEXT,
+                ai_risk_assessment TEXT,
+                ai_recommendation TEXT,
+                ai_price_targets TEXT,
+                ai_entry_points TEXT,
+                ai_exit_points TEXT,
+                ai_analysis_date TEXT,
+                PRIMARY KEY (symbol, date)
+            )
+            ''')
+            
+            # Create financial_reports table
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS financial_reports (
+                symbol TEXT,
+                report_date TEXT,
+                eps_growth REAL,
+                revenue_growth REAL,
+                profit_margin REAL,
+                debt_to_equity REAL,
+                current_ratio REAL,
+                roe REAL,
+                last_updated TEXT,
+                PRIMARY KEY (symbol, report_date)
+            )
+            ''')
+            
+            conn.commit()
+            
+            # Verify tables exist and have correct structure
+            cursor.execute("SELECT COUNT(*) FROM tradingview_ta")
+            logger.info(f"tradingview_ta table initialized with {cursor.fetchone()[0]} records")
+            
+            cursor.execute("SELECT COUNT(*) FROM tradingview_signals")
+            logger.info(f"tradingview_signals table initialized with {cursor.fetchone()[0]} records")
+            
+            cursor.execute("SELECT COUNT(*) FROM financial_reports")
+            logger.info(f"financial_reports table initialized with {cursor.fetchone()[0]} records")
+            
             conn.close()
-            
-            if not financial_data:
-                raise ValueError(f"No financial data available for symbol: {symbol}")
-            
-            # Extract necessary financial metrics
-            revenue = financial_data['revenue_growth']
-            ebitda = financial_data['profit_margin'] * revenue / 100  # Assuming profit margin is EBITDA margin
-            
-            # Estimate capital expenditures (capex) and change in working capital (change_in_wc)
-            # Using industry average assumptions if specific data is not available
-            # Assuming capex is 10% of revenue as a rough estimate
-            capex = revenue * 0.1
-            # Assuming change in working capital is 5% of revenue growth
-            change_in_wc = revenue * 0.05
-            
-            # Calculate free cash flow
-            fcf = ebitda - capex - change_in_wc
-            
-            # Project future cash flows with a more conservative growth adjustment
-            projected_cash_flows = []
-            for year in range(1, years + 1):
-                growth_factor = min(revenue / 100, 0.2)  # Cap growth rate at 20% to avoid unrealistic projections
-                projected_cash_flow = fcf * (1 + growth_factor) ** year
-                projected_cash_flows.append(projected_cash_flow / (1 + discount_rate) ** year)
-            
-            # Calculate terminal value with a sanity check
-            if discount_rate <= terminal_growth_rate:
-                raise ValueError(f"Discount rate ({discount_rate}) must be greater than terminal growth rate ({terminal_growth_rate})")
-            terminal_value = projected_cash_flows[-1] * (1 + terminal_growth_rate) / (discount_rate - terminal_growth_rate)
-            terminal_value_discounted = terminal_value / (1 + discount_rate) ** years
-            
-            # Sum up the present value of projected cash flows and terminal value
-            dcf_value = sum(projected_cash_flows) + terminal_value_discounted
-            
-            # Ensure DCF value is not negative
-            return max(dcf_value, 0.0)
+            logger.info(f"Database initialized successfully at {self.db_path}")
             
         except Exception as e:
-            self._handle_error(e, f"calculating DCF value for {symbol}")
+            logger.error(f"Error initializing database: {str(e)}")
+            if 'conn' in locals():
+                conn.close()
             raise
 
-    # Database management methods are now handled by DatabaseManager class
-
     def fetch_psx_symbols(self) -> List[str]:
-        """Fetch list of PSX symbols from Excel file.
-        
-        Reads symbols from an Excel file and returns them as a cleaned list.
-        Handles duplicate symbols and invalid entries.
-        
-        Returns:
-            List[str]: List of cleaned and validated stock symbols in uppercase
-            
-        Example:
-            >>> calculator.fetch_psx_symbols()
-            ['OGDC', 'PPL', 'LUCK', 'ENGRO']
-            
-        Raises:
-            Exception: If the Excel file cannot be read or processed
-        """
+        """Fetch list of PSX symbols from Excel file"""
         try:
             # Read symbols from Excel file
             excel_path = 'src/data_processing/psxsymbols.xlsx'
@@ -203,28 +177,7 @@ class FairValueCalculator:
             return []
 
     def should_update_data(self, symbol: str) -> bool:
-        """Determine if new data should be fetched for a given symbol based on update frequency rules.
-        
-        This method implements a weekly update cadence for stock data, with additional checks to:
-        - Avoid redundant updates within 24 hours
-        - Handle cases where no existing data exists
-        
-        Args:
-            symbol (str): The stock symbol to check update status for
-            
-        Returns:
-            bool: True if data should be updated, False otherwise
-            
-        Example:
-            >>> calculator = FairValueCalculator()
-            >>> calculator.should_update_data('OGDC')
-            True  # If no existing data or weekly update needed
-            
-        Notes:
-            - Weekly updates are determined by comparing ISO week numbers
-            - A 24-hour cooldown period is enforced between updates
-            - Returns True if no existing data is found for the symbol
-        """
+        """Check if data needs to be updated for a symbol with weekly timeframe logic"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -267,28 +220,7 @@ class FairValueCalculator:
             return True
 
     def get_market_status(self) -> bool:
-        """Determine if the Pakistan Stock Exchange (PSX) is currently open for trading.
-        
-        Checks multiple factors to determine market status:
-        - Current day of week (closed weekends)
-        - Trading hours in Pakistan Time (PKT)
-        - Official market holidays
-        
-        Returns:
-            bool: True if market is open, False otherwise
-            
-        Example:
-            >>> calculator = FairValueCalculator()
-            >>> calculator.get_market_status()
-            False  # If called outside trading hours
-            
-        Notes:
-            - Uses Pakistan Standard Time (UTC+5) for time calculations
-            - Market hours: 9:30 AM - 3:30 PM PKT (regular session)
-            - Pre-market: 9:00 AM - 9:30 AM PKT
-            - Post-market: 3:30 PM - 4:00 PM PKT
-            - Automatically checks for holidays (list can be expanded)
-        """
+        """Check if the market is currently open with enhanced timezone handling"""
         try:
             current_time = datetime.now()
             
@@ -577,277 +509,140 @@ class FairValueCalculator:
                 'recent_announcements': []
             }
 
-    def analyze_with_ai(self, symbol: str, technical_data: Dict, financial_data: Dict) -> Dict:
-        """Analyze stock data using AI to enhance signal generation with focus on investment perspective"""
+    def analyze_with_ai(self, symbol: str, technical_analysis: Dict, financial_analysis: Dict) -> Dict:
+        """Analyze stock data using DeepSeek AI"""
         try:
-            logger.info(f"Starting AI analysis for symbol: {symbol}")
+            # Get API key from environment
+            api_key = os.getenv('DEEPSEEK_API_KEY')
+            if not api_key:
+                logger.warning("DeepSeek API key not found in environment variables")
+                return None
             
-            # Get financial announcements and reports
-            announcements = self.read_psx_announcements()
-            symbol_announcements = announcements.get(symbol, [])
+            # Prepare financial data summary
+            financial_summary = f"""
+Financial Metrics:
+- EPS Growth: {financial_analysis.get('eps_growth', 'N/A')}%
+- Revenue Growth: {financial_analysis.get('revenue_growth', 'N/A')}%
+- Profit Margin: {financial_analysis.get('profit_margin', 'N/A')}%
+- Debt-to-Equity: {financial_analysis.get('debt_to_equity', 'N/A')}
+- Current Ratio: {financial_analysis.get('current_ratio', 'N/A')}
+- ROE: {financial_analysis.get('roe', 'N/A')}%
+"""
             
-            # Get dividend analysis
-            dividend_analysis = self.analyze_dividend_data(symbol)
+            # Prepare announcements summary
+            announcements_summary = "Recent Announcements:\n"
+            for announcement in financial_analysis.get('recent_announcements', []):
+                announcements_summary += f"- {announcement['date']}: {announcement['title']}\n"
             
-            # Get latest financial reports
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Get latest financial data
-            cursor.execute("""
-                SELECT * FROM financial_reports 
-                WHERE symbol = ? 
-                ORDER BY report_date DESC 
-                LIMIT 2
-            """, (symbol,))
-            
-            financial_reports = cursor.fetchall()
-            columns = [description[0] for description in cursor.description]
-            
-            # Convert to list of dictionaries
-            latest_reports = []
-            for report in financial_reports:
-                latest_reports.append(dict(zip(columns, report)))
-            
-            conn.close()
-            
-            # Prepare data for AI analysis
-            analysis_data = {
-                'symbol': symbol,
-                'technical': {
-                    'price': {
-                        'close': technical_data.get('close'),
-                        'open': technical_data.get('open'),
-                        'high': technical_data.get('high'),
-                        'low': technical_data.get('low'),
-                        'volume': technical_data.get('volume'),
-                        'change_percent': technical_data.get('change_percent')
-                    },
-                    'indicators': {
-                        'rsi': technical_data.get('rsi'),
-                        'macd': technical_data.get('macd'),
-                        'macd_signal': technical_data.get('macd_signal'),
-                        'sma_20': technical_data.get('sma_20'),
-                        'sma_50': technical_data.get('sma_50'),
-                        'sma_200': technical_data.get('sma_200'),
-                        'bb_upper': technical_data.get('bb_upper'),
-                        'bb_lower': technical_data.get('bb_lower')
-                    },
-                    'signals': {
-                        'trend_score': technical_data.get('trend_score'),
-                        'momentum_score': technical_data.get('momentum_score'),
-                        'volume_score': technical_data.get('volume_score'),
-                        'volatility_score': technical_data.get('volatility_score')
-                    }
-                },
-                'financial': {
-                    'current': {
-                        'eps_growth': financial_data.get('eps_growth', 'N/A'),
-                        'revenue_growth': financial_data.get('revenue_growth', 'N/A'),
-                        'profit_margin': financial_data.get('profit_margin', 'N/A'),
-                        'debt_to_equity': financial_data.get('debt_to_equity', 'N/A'),
-                        'current_ratio': financial_data.get('current_ratio', 'N/A'),
-                        'roe': financial_data.get('roe', 'N/A')
-                    },
-                    'reports': latest_reports,
-                    'announcements': symbol_announcements
-                },
-                'dividend': {
-                    'current_dividend': dividend_analysis.get('current_dividend') if dividend_analysis else None,
-                    'dividend_yield': dividend_analysis.get('dividend_yield') if dividend_analysis else None,
-                    'dividend_growth': dividend_analysis.get('dividend_growth') if dividend_analysis else None,
-                    'dividend_sustainability': dividend_analysis.get('dividend_sustainability') if dividend_analysis else None
-                }
-            }
-            
-            # Prepare AI analysis prompt with enhanced investment focus
-            prompt = f"""Analyze this stock data and provide a professional investment analysis:
+            # Prepare the prompt
+            prompt = f"""You are a professional financial analyst. Analyze this stock:
 
 Symbol: {symbol}
 
-TECHNICAL ANALYSIS
------------------
-Current Price: {analysis_data['technical']['price']['close']}
-Price Change: {analysis_data['technical']['price']['change_percent']}%
-Volume: {analysis_data['technical']['price']['volume']}
+{financial_summary}
 
-Key Indicators:
-- RSI: {analysis_data['technical']['indicators']['rsi']}
-- MACD: {analysis_data['technical']['indicators']['macd']}
-- Signal Line: {analysis_data['technical']['indicators']['macd_signal']}
-- SMA20: {analysis_data['technical']['indicators']['sma_20']}
-- SMA50: {analysis_data['technical']['indicators']['sma_50']}
-- SMA200: {analysis_data['technical']['indicators']['sma_200']}
-
-Technical Scores:
-- Trend Score: {analysis_data['technical']['signals']['trend_score']}
-- Momentum Score: {analysis_data['technical']['signals']['momentum_score']}
-- Volume Score: {analysis_data['technical']['signals']['volume_score']}
-- Volatility Score: {analysis_data['technical']['signals']['volatility_score']}
-
-FINANCIAL ANALYSIS
------------------
-Current Metrics:
-- EPS Growth: {analysis_data['financial']['current']['eps_growth']}%
-- Revenue Growth: {analysis_data['financial']['current']['revenue_growth']}%
-- Profit Margin: {analysis_data['financial']['current']['profit_margin']}%
-- Debt-to-Equity: {analysis_data['financial']['current']['debt_to_equity']}
-- Current Ratio: {analysis_data['financial']['current']['current_ratio']}
-- ROE: {analysis_data['financial']['current']['roe']}%
-
-DIVIDEND ANALYSIS
-----------------
-Current Dividend:
-- Amount: {analysis_data['dividend']['current_dividend']['dividend_amount'] if analysis_data['dividend']['current_dividend'] else 'N/A'}
-- Yield: {f"{analysis_data['dividend']['dividend_yield']:.2f}%" if analysis_data['dividend']['dividend_yield'] else 'N/A'}
-- Growth: {f"{analysis_data['dividend']['dividend_growth']:.2f}%" if analysis_data['dividend']['dividend_growth'] else 'N/A'}
-- Sustainability: {analysis_data['dividend']['dividend_sustainability']}
-
-RECENT ANNOUNCEMENTS
--------------------
-{chr(10).join([f"- {announcement['date']}: {announcement['title']}" for announcement in analysis_data['financial']['announcements']]) if analysis_data['financial']['announcements'] else 'No recent announcements'}
+{announcements_summary}
 
 Provide a detailed analysis in the following format:
-
-1. COMPANY OVERVIEW
-- Market position and competitive advantages
-- Growth potential
-- Recent developments
-
-2. FINANCIAL HEALTH
+1. FINANCIAL HEALTH
 - Overall financial health assessment
 - Key strengths and weaknesses
 - Growth potential and risks
 
-3. INVESTMENT THESIS
-- Growth catalysts
-- Risk factors
+2. RECENT DEVELOPMENTS
+- Impact of recent announcements
+- Market sentiment analysis
 - Competitive position
-- Management quality
 
-4. VALUATION ANALYSIS
-- Peer comparison
-- Historical valuation ranges
-- Fair value estimate
-- Margin of safety
+3. TECHNICAL ANALYSIS
+- Current market position
+- Support and resistance levels
+- Trend analysis
 
-5. INVESTMENT RECOMMENDATION
+4. INVESTMENT RECOMMENDATION
 - Clear recommendation (Strong Buy/Buy/Hold/Sell/Strong Sell)
 - Detailed rationale
 - Risk factors
-- Price targets
-
-6. MONITORING POINTS
-- Important announcements to watch
-- Risk factors to monitor
-- Exit criteria
-
-7. TECHNICAL ANALYSIS
-- Key technical indicators and their implications
-- Trend analysis
-- Support and resistance levels
-
-8. RISK MANAGEMENT
-- Position sizing
-- Stop loss and take profit strategies
-- Risk-reward ratio analysis
-
-Include specific metrics where possible:
-- Confidence Score (0-1)
-- Fair Value
-- DCF Value
-- Target Price
-- Entry Range
-- Investment Horizon
-- Position Size
-- Risk-Reward Ratio
+- Price targets (if applicable)
 """
             
-            logger.info(f"Prepared AI analysis prompt for {symbol}")
+            # Call DeepSeek API
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
             
-            # Call AI model
-            ai_analysis = self.call_ai_model(prompt)
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "You are a professional financial analyst."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 2000,
+                "temperature": 0.7
+            }
             
-            if ai_analysis:
-                # Process AI analysis with enhanced investment focus
-                processed_analysis = {
-                    'company_overview': ai_analysis.get('company_overview', ''),
-                    'financial_health': ai_analysis.get('financial_health', ''),
-                    'investment_thesis': ai_analysis.get('investment_thesis', ''),
-                    'valuation_analysis': ai_analysis.get('valuation_analysis', ''),
-                    'investment_recommendation': ai_analysis.get('investment_recommendation', ''),
-                    'monitoring_points': ai_analysis.get('monitoring_points', ''),
-                    'confidence_score': ai_analysis.get('confidence_score', 0.0),
-                    'fair_value': ai_analysis.get('fair_value', None),
-                    'target_price': ai_analysis.get('target_price', None),
-                    'entry_range': ai_analysis.get('entry_range', []),
-                    'investment_horizon': ai_analysis.get('investment_horizon', ''),
-                    'position_size': ai_analysis.get('position_size', ''),
-                    'dcf_value': ai_analysis.get('dcf_value', None),
-                    'peer_comparison': ai_analysis.get('peer_comparison', {}),
-                    'risk_assessment': ai_analysis.get('risk_assessment', {}),
-                    'growth_catalysts': ai_analysis.get('growth_catalysts', []),
-                    'management_quality': ai_analysis.get('management_quality', ''),
-                    'corporate_governance': ai_analysis.get('corporate_governance', ''),
-                    'dividend_analysis': dividend_analysis
-                }
-                
-                # Format the analysis for logging, handling empty sections
-                def format_section(title, content):
-                    return f"{title}\n{'-' * len(title)}\n{content if content else 'No data available for this section.'}"
-
-                formatted_analysis = f"""
-AI Investment Analysis for {symbol}
-=================================
-
-{format_section('Company Overview', processed_analysis['company_overview'])}
-
-{format_section('Financial Health', processed_analysis['financial_health'])}
-
-{format_section('Investment Thesis', processed_analysis['investment_thesis'])}
-
-{format_section('Valuation Analysis', processed_analysis['valuation_analysis'])}
-
-{format_section('Investment Recommendation', processed_analysis['investment_recommendation'])}
-
-{format_section('Monitoring Points', processed_analysis['monitoring_points'])}
-
-Key Metrics
------------
-Confidence Score: {processed_analysis['confidence_score'] if processed_analysis['confidence_score'] != 0.0 else 'Not available (AI analysis may lack confidence data)'}
-Fair Value: {processed_analysis['fair_value'] if processed_analysis['fair_value'] is not None else 'Not available (AI analysis may lack fair value estimation)'}
-DCF Value: {processed_analysis['dcf_value'] if processed_analysis['dcf_value'] is not None else 'Not available (AI analysis may lack DCF calculation)'}
-Target Price: {processed_analysis['target_price'] if processed_analysis['target_price'] is not None else 'Not available (AI analysis may lack target price)'}
-Entry Range: {processed_analysis['entry_range'] if processed_analysis['entry_range'] else 'Not available (AI analysis may lack entry range)'}
-Investment Horizon: {processed_analysis['investment_horizon'] if processed_analysis['investment_horizon'] else 'Not available (AI analysis may lack horizon data)'}
-Position Size: {processed_analysis['position_size'] if processed_analysis['position_size'] else 'Not available (AI analysis may lack position sizing recommendation)'}
-
-Dividend Analysis
-----------------
-Current Dividend: {json.dumps(processed_analysis['dividend_analysis']['current_dividend'], indent=2) if processed_analysis['dividend_analysis'].get('current_dividend') else 'Not available (No current dividend data)'}
-Dividend Yield: {f"{processed_analysis['dividend_analysis']['dividend_yield']:.2f}%" if processed_analysis['dividend_analysis'].get('dividend_yield') else 'Not available (No yield data)'}
-Dividend Growth: {f"{processed_analysis['dividend_analysis']['dividend_growth']:.2f}%" if processed_analysis['dividend_analysis'].get('dividend_growth') else 'Not available (No growth data)'}
-Dividend Sustainability: {processed_analysis['dividend_analysis'].get('dividend_sustainability', 'Not available (No sustainability assessment)')}
-
-Additional Analysis
-------------------
-Peer Comparison: {json.dumps(processed_analysis['peer_comparison'], indent=2) if processed_analysis['peer_comparison'] else 'Not available (No peer comparison data)'}
-Risk Assessment: {json.dumps(processed_analysis['risk_assessment'], indent=2) if processed_analysis['risk_assessment'] else 'Not available (No risk assessment data)'}
-Growth Catalysts: {json.dumps(processed_analysis['growth_catalysts'], indent=2) if processed_analysis['growth_catalysts'] else 'Not available (No growth catalysts identified)'}
-Management Quality: {processed_analysis['management_quality'] if processed_analysis['management_quality'] else 'Not available (No management quality assessment)'}
-Corporate Governance: {processed_analysis['corporate_governance'] if processed_analysis['corporate_governance'] else 'Not available (No corporate governance assessment)'}
-"""
-                
-                logger.info(f"Successfully processed AI investment analysis for {symbol}")
-                logger.info(formatted_analysis)
-                
-                return processed_analysis
+            response = requests.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                try:
+                    analysis = response.json()['choices'][0]['message']['content']
+                    
+                    # Parse the analysis to extract key components
+                    ai_analysis = {
+                        'financial_health': '',
+                        'recent_developments': '',
+                        'technical_analysis': '',
+                        'recommendation': '',
+                        'confidence_score': 0.0,
+                        'price_target': None
+                    }
+                    
+                    # Extract sections from the analysis
+                    sections = analysis.split('\n\n')
+                    for section in sections:
+                        if 'FINANCIAL HEALTH' in section:
+                            ai_analysis['financial_health'] = section
+                        elif 'RECENT DEVELOPMENTS' in section:
+                            ai_analysis['recent_developments'] = section
+                        elif 'TECHNICAL ANALYSIS' in section:
+                            ai_analysis['technical_analysis'] = section
+                        elif 'INVESTMENT RECOMMENDATION' in section:
+                            ai_analysis['recommendation'] = section
+                            
+                            # Extract confidence score and price target
+                            if 'Strong Buy' in section:
+                                ai_analysis['confidence_score'] = 0.9
+                            elif 'Buy' in section:
+                                ai_analysis['confidence_score'] = 0.7
+                            elif 'Hold' in section:
+                                ai_analysis['confidence_score'] = 0.5
+                            elif 'Sell' in section:
+                                ai_analysis['confidence_score'] = 0.3
+                            elif 'Strong Sell' in section:
+                                ai_analysis['confidence_score'] = 0.1
+                            
+                            # Try to extract price target
+                            price_target_match = re.search(r'price target.*?(\d+\.?\d*)', section.lower())
+                            if price_target_match:
+                                ai_analysis['price_target'] = float(price_target_match.group(1))
+                    
+                    return ai_analysis
+                    
+                except Exception as e:
+                    logger.error(f"Error parsing DeepSeek response: {e}")
+                    return None
             else:
-                logger.warning(f"No AI analysis returned for {symbol}")
+                logger.error(f"DeepSeek API request failed with status code {response.status_code}")
                 return None
-            
+                
         except Exception as e:
-            logger.error(f"Error in AI analysis for {symbol}: {e}")
+            logger.error(f"Error in DeepSeek analysis: {e}")
             return None
 
     def adjust_signal_with_ai(self, technical_analysis: Dict, financial_analysis: Dict) -> Dict:
@@ -1038,18 +833,7 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             return None
 
     def _perform_technical_analysis(self, stock_data: Dict, previous_analysis: Dict = None) -> Dict:
-        """Perform technical analysis on stock data using parallel processing.
-        
-        This method analyzes stock data using multiple technical indicators and generates
-        trading signals based on trend, momentum, volume, and volatility analysis.
-        
-        Args:
-            stock_data (Dict): Dictionary containing stock price and indicator data
-            previous_analysis (Dict, optional): Previous analysis results for comparison
-            
-        Returns:
-            Dict: Analysis results including signal type, strength, and various scores
-        """
+        """Perform technical analysis on stock data"""
         try:
             analysis = {
                 'signal_type': 'NEUTRAL',
@@ -1065,9 +849,12 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                 'stop_loss': None,
                 'take_profit': None,
                 'risk_reward_ratio': None,
-                'analysis_summary': '',
+                'analysis_summary': [],
                 'indicators_used': []
             }
+            
+            # Add symbol to analysis
+            analysis['symbol'] = stock_data['symbol']
             
             # Copy price and indicator data from stock_data to analysis
             price_fields = ['close', 'open', 'high', 'low', 'volume', 'change', 'change_percent']
@@ -1077,18 +864,17 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                 if field in stock_data:
                     analysis[field] = stock_data[field]
             
-            # Perform parallel analysis using multiprocessing
-            with multiprocessing.Pool() as pool:
-                analysis_tasks = [
-                    pool.apply_async(self._analyze_trend, (stock_data, analysis, previous_analysis)),
-                    pool.apply_async(self._analyze_momentum, (stock_data, analysis, previous_analysis)),
-                    pool.apply_async(self._analyze_volume, (stock_data, analysis, previous_analysis)),
-                    pool.apply_async(self._analyze_volatility, (stock_data, analysis, previous_analysis))
-                ]
-                
-                # Collect results
-                for task in analysis_tasks:
-                    task.get()  # Wait for each analysis to complete
+            # Perform trend analysis
+            self._analyze_trend(stock_data, analysis, previous_analysis)
+            
+            # Perform momentum analysis
+            self._analyze_momentum(stock_data, analysis, previous_analysis)
+            
+            # Perform volume analysis
+            self._analyze_volume(stock_data, analysis, previous_analysis)
+            
+            # Perform volatility analysis
+            self._analyze_volatility(stock_data, analysis, previous_analysis)
             
             # Calculate final scores and determine signal
             self._calculate_final_scores(analysis)
@@ -1097,165 +883,128 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             
         except Exception as e:
             logger.error(f"Error performing technical analysis: {e}")
-            return {
-                'signal_type': 'ERROR',
-                'signal_strength': 0.0,
-                'confidence_score': 0.0,
-                'error': str(e)
-            }
+            return None
 
     def _analyze_trend(self, stock_data: Dict, analysis: Dict, previous_analysis: Dict = None):
-        """Analyze price trends using multiple moving averages and price action.
-        
-        This method evaluates the trend strength and direction using:
-        - Simple Moving Averages (SMA) crossovers
-        - Price position relative to moving averages
-        - Trend strength indicators
-        
-        Args:
-            stock_data (Dict): Current stock data with price and indicator values
-            analysis (Dict): Analysis dictionary to update with trend findings
-            previous_analysis (Dict, optional): Previous analysis for comparison
-        """
+        """Analyze trend indicators"""
         try:
-            trend_score = 0
-            trend_reasons = []
-            
-            # Check SMA crossovers and price position
-            if all(x in stock_data for x in ['close', 'sma_20', 'sma_50', 'sma_200']):
+            if all(x is not None for x in [stock_data['close'], stock_data['sma_20'], stock_data['sma_50'], stock_data['sma_200']]):
+                analysis['indicators_used'].append('SMA')
                 close = stock_data['close']
                 sma20 = stock_data['sma_20']
                 sma50 = stock_data['sma_50']
                 sma200 = stock_data['sma_200']
                 
-                # Strong uptrend: Price above all SMAs
-                if close > sma20 > sma50 > sma200:
-                    trend_score += 30
-                    trend_reasons.append("Strong uptrend: Price above all SMAs")
-                # Moderate uptrend: Price above SMA20 and SMA50
-                elif close > sma20 > sma50:
-                    trend_score += 20
-                    trend_reasons.append("Moderate uptrend: Price above SMA20 and SMA50")
-                # Weak uptrend: Price above SMA20
-                elif close > sma20:
-                    trend_score += 10
-                    trend_reasons.append("Weak uptrend: Price above SMA20")
-                # Strong downtrend: Price below all SMAs
-                elif close < sma20 < sma50 < sma200:
-                    trend_score -= 30
-                    trend_reasons.append("Strong downtrend: Price below all SMAs")
-                # Moderate downtrend: Price below SMA20 and SMA50
-                elif close < sma20 < sma50:
-                    trend_score -= 20
-                    trend_reasons.append("Moderate downtrend: Price below SMA20 and SMA50")
-                # Weak downtrend: Price below SMA20
-                elif close < sma20:
-                    trend_score -= 10
-                    trend_reasons.append("Weak downtrend: Price below SMA20")
+                # Calculate price position relative to SMAs
+                price_above_sma20 = (close - sma20) / sma20 * 100
+                price_above_sma50 = (close - sma50) / sma50 * 100
+                price_above_sma200 = (close - sma200) / sma200 * 100
                 
-                # Calculate trend strength based on price distance from SMAs
-                if close > 0 and sma20 > 0:
-                    distance_from_sma20 = abs(close - sma20) / sma20 * 100
-                    if distance_from_sma20 > 5:
-                        trend_score += 5 if close > sma20 else -5
-                        trend_reasons.append(f"Strong price movement: {distance_from_sma20:.1f}% from SMA20")
-            
-            # Compare with previous analysis if available
-            if previous_analysis and 'trend_score' in previous_analysis:
-                trend_change = trend_score - previous_analysis['trend_score']
-                if abs(trend_change) >= 10:
-                    trend_reasons.append(f"Significant trend change: {trend_change:+d} points")
-            
-            # Update analysis dictionary
-            analysis['trend_score'] = trend_score
-            analysis['trend_reasons'] = trend_reasons
-            analysis['indicators_used'].extend(['SMA20', 'SMA50', 'SMA200'])
-            
+                trend_strength = 0
+                
+                # Golden Cross (SMA20 crosses above SMA50)
+                if sma20 > sma50 and previous_analysis and previous_analysis.get('sma_20', 0) <= previous_analysis.get('sma_50', 0):
+                    trend_strength += 15
+                    analysis['analysis_summary'].append("Golden Cross detected: SMA20 crossed above SMA50")
+                
+                # Death Cross (SMA20 crosses below SMA50)
+                elif sma20 < sma50 and previous_analysis and previous_analysis.get('sma_20', 0) >= previous_analysis.get('sma_50', 0):
+                    trend_strength -= 15
+                    analysis['analysis_summary'].append("Death Cross detected: SMA20 crossed below SMA50")
+                
+                # Strong uptrend conditions
+                if close > sma20 > sma50 > sma200:
+                    if price_above_sma20 > 5:
+                        trend_strength += 25
+                        analysis['analysis_summary'].append(f"Strong uptrend: Price {price_above_sma20:.2f}% above SMA20")
+                    else:
+                        trend_strength += 15
+                        analysis['analysis_summary'].append(f"Moderate uptrend: Price {price_above_sma20:.2f}% above SMA20")
+                # Strong downtrend conditions
+                elif close < sma20 < sma50 < sma200:
+                    if price_above_sma20 < -5:
+                        trend_strength -= 25
+                        analysis['analysis_summary'].append(f"Strong downtrend: Price {abs(price_above_sma20):.2f}% below SMA20")
+                    else:
+                        trend_strength -= 15
+                        analysis['analysis_summary'].append(f"Moderate downtrend: Price {abs(price_above_sma20):.2f}% below SMA20")
+                
+                analysis['trend_score'] = trend_strength
+                
         except Exception as e:
-            logger.error(f"Error in trend analysis: {e}")
-            analysis['trend_score'] = 0
-            analysis['trend_reasons'] = [f"Error in trend analysis: {str(e)}"]
+            logger.error(f"Error analyzing trend: {e}")
 
     def _analyze_momentum(self, stock_data: Dict, analysis: Dict, previous_analysis: Dict = None):
-        """Analyze momentum indicators to assess price movement strength and direction.
-        
-        This method evaluates momentum using:
-        - Relative Strength Index (RSI)
-        - Moving Average Convergence Divergence (MACD)
-        - Stochastic Oscillator
-        - Rate of Change (ROC)
-        
-        Args:
-            stock_data (Dict): Current stock data with price and indicator values
-            analysis (Dict): Analysis dictionary to update with momentum findings
-            previous_analysis (Dict, optional): Previous analysis for comparison
-        """
+        """Analyze momentum indicators"""
         try:
-            momentum_score = 0
-            momentum_reasons = []
-            
-            # RSI Analysis
-            if 'rsi' in stock_data and stock_data['rsi'] is not None:
+            if all(x is not None for x in [stock_data['rsi'], stock_data['macd'], stock_data['macd_signal'], stock_data['ao']]):
+                analysis['indicators_used'].extend(['RSI', 'MACD', 'AO'])
                 rsi = stock_data['rsi']
-                if rsi > 70:
-                    momentum_score -= 15
-                    momentum_reasons.append(f"Overbought: RSI at {rsi:.1f}")
-                elif rsi < 30:
-                    momentum_score += 15
-                    momentum_reasons.append(f"Oversold: RSI at {rsi:.1f}")
-                elif rsi > 60:
-                    momentum_score -= 10
-                    momentum_reasons.append(f"Approaching overbought: RSI at {rsi:.1f}")
-                elif rsi < 40:
-                    momentum_score += 10
-                    momentum_reasons.append(f"Approaching oversold: RSI at {rsi:.1f}")
-                
-                # RSI trend analysis
-                if previous_analysis and 'rsi' in previous_analysis:
-                    rsi_change = rsi - previous_analysis['rsi']
-                    if abs(rsi_change) >= 5:
-                        momentum_reasons.append(f"Significant RSI change: {rsi_change:+.1f}")
-            
-            # MACD Analysis
-            if all(x in stock_data for x in ['macd', 'macd_signal']):
                 macd = stock_data['macd']
                 macd_signal = stock_data['macd_signal']
+                ao = stock_data['ao']
                 
-                if macd > macd_signal:
-                    momentum_score += 10
-                    momentum_reasons.append("Positive MACD: Above signal line")
-                else:
-                    momentum_score -= 10
-                    momentum_reasons.append("Negative MACD: Below signal line")
+                momentum_strength = 0
                 
-                # MACD crossover analysis
-                if previous_analysis and all(x in previous_analysis for x in ['macd', 'macd_signal']):
-                    prev_macd = previous_analysis['macd']
-                    prev_signal = previous_analysis['macd_signal']
+                # RSI Analysis
+                if rsi < 30:
+                    momentum_strength += 15
+                    analysis['analysis_summary'].append(f"Strong oversold: RSI at {rsi:.2f}")
+                elif rsi < 40:
+                    momentum_strength += 10
+                    analysis['analysis_summary'].append(f"Moderately oversold: RSI at {rsi:.2f}")
+                elif rsi > 70:
+                    momentum_strength -= 15
+                    analysis['analysis_summary'].append(f"Strong overbought: RSI at {rsi:.2f}")
+                elif rsi > 60:
+                    momentum_strength -= 10
+                    analysis['analysis_summary'].append(f"Moderately overbought: RSI at {rsi:.2f}")
+                
+                # MACD Analysis
+                macd_diff = macd - macd_signal
+                macd_diff_percent = (macd_diff / abs(macd_signal)) * 100 if macd_signal != 0 else 0
+                
+                if previous_analysis:
+                    prev_macd = previous_analysis.get('macd', 0)
+                    prev_macd_signal = previous_analysis.get('macd_signal', 0)
                     
-                    if macd > macd_signal and prev_macd <= prev_signal:
-                        momentum_score += 15
-                        momentum_reasons.append("Bullish MACD crossover")
-                    elif macd < macd_signal and prev_macd >= prev_signal:
-                        momentum_score -= 15
-                        momentum_reasons.append("Bearish MACD crossover")
-            
-            # Rate of Change Analysis
-            if 'change_percent' in stock_data and stock_data['change_percent'] is not None:
-                roc = stock_data['change_percent']
-                if abs(roc) >= 5:
-                    momentum_score += 10 if roc > 0 else -10
-                    momentum_reasons.append(f"Strong price movement: {roc:+.1f}%")
-            
-            # Update analysis dictionary
-            analysis['momentum_score'] = momentum_score
-            analysis['momentum_reasons'] = momentum_reasons
-            analysis['indicators_used'].extend(['RSI', 'MACD', 'ROC'])
-            
+                    if macd > macd_signal and prev_macd <= prev_macd_signal:
+                        momentum_strength += 10
+                        analysis['analysis_summary'].append("Bullish MACD crossover detected")
+                    elif macd < macd_signal and prev_macd >= prev_macd_signal:
+                        momentum_strength -= 10
+                        analysis['analysis_summary'].append("Bearish MACD crossover detected")
+                
+                # Awesome Oscillator Analysis
+                ao_abs = abs(ao)
+                ao_threshold = 50
+                
+                if previous_analysis:
+                    prev_ao = previous_analysis.get('ao', 0)
+                    if ao > 0 and prev_ao <= 0:
+                        momentum_strength += 5
+                        analysis['analysis_summary'].append("Bullish AO crossover detected")
+                    elif ao < 0 and prev_ao >= 0:
+                        momentum_strength -= 5
+                        analysis['analysis_summary'].append("Bearish AO crossover detected")
+                
+                if ao > ao_threshold:
+                    momentum_strength += 5
+                    analysis['analysis_summary'].append(f"Strong bullish AO: {ao:.2f}")
+                elif ao > 0:
+                    momentum_strength += 2
+                    analysis['analysis_summary'].append(f"Moderate bullish AO: {ao:.2f}")
+                elif ao < -ao_threshold:
+                    momentum_strength -= 5
+                    analysis['analysis_summary'].append(f"Strong bearish AO: {ao:.2f}")
+                elif ao < 0:
+                    momentum_strength -= 2
+                    analysis['analysis_summary'].append(f"Moderate bearish AO: {ao:.2f}")
+                
+                analysis['momentum_score'] = momentum_strength
+                
         except Exception as e:
-            logger.error(f"Error in momentum analysis: {e}")
-            analysis['momentum_score'] = 0
-            analysis['momentum_reasons'] = [f"Error in momentum analysis: {str(e)}"]
+            logger.error(f"Error analyzing momentum: {e}")
 
     def _analyze_volume(self, stock_data: Dict, analysis: Dict, previous_analysis: Dict = None):
         """Analyze volume indicators"""
@@ -1726,9 +1475,7 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                 conn.close()
 
     def fetch_tradingview_ta_data(self, symbol: str) -> Dict:
-        """Fetch data using tradingview_ta library with weekly timeframe and improved caching.
-        Optimized to prioritize the most common symbol format and implement better rate limiting.
-        """
+        """Fetch data using tradingview_ta library with weekly timeframe"""
         try:
             # First check if we have valid cached data
             cached_data = self.get_latest_data(symbol)
@@ -1751,7 +1498,8 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                 logger.info(f"Using existing data for {symbol}")
                 return cached_data
             
-            # Prioritize the most common symbol format to reduce API calls
+            # Try different symbol formats with retry mechanism
+            # Start with the most common format first
             symbol_formats = [
                 symbol,           # Just the symbol (most common)
                 f"{symbol}.PSX",  # PSX suffix (second most common)
@@ -1762,11 +1510,9 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             data = {}
             success = False
             max_retries = 2
-            initial_retry_delay = 2
-            max_delay = 10
+            retry_delay = 1
             
             for symbol_format in symbol_formats:
-                retry_delay = initial_retry_delay
                 for attempt in range(max_retries):
                     try:
                         logger.info(f"Attempting to fetch data for {symbol} using format: {symbol_format} (Attempt {attempt + 1}/{max_retries})")
@@ -1785,6 +1531,13 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                             logger.warning(f"Invalid analysis data received for {symbol} using format {symbol_format}")
                             continue
                         
+                        # Debug logging for raw data
+                        logger.info(f"Raw analysis for {symbol} ({symbol_format}):")
+                        logger.info(f"Summary: {analysis.summary}")
+                        logger.info(f"Oscillators: {analysis.oscillators}")
+                        logger.info(f"Moving Averages: {analysis.moving_averages}")
+                        logger.info(f"Indicators: {analysis.indicators}")
+                        
                         # Extract summary data
                         if analysis.summary:
                             data.update({
@@ -1793,6 +1546,7 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                                 'sell_signals': analysis.summary.get('SELL'),
                                 'neutral_signals': analysis.summary.get('NEUTRAL')
                             })
+                            logger.info(f"Extracted summary data for {symbol}: {data}")
                         
                         # Extract all indicators from the indicators dictionary
                         if analysis.indicators:
@@ -1813,19 +1567,28 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                             
                             # Calculate daily change if we have both close and open
                             if close is not None and open_price is not None:
+                                # Calculate absolute change
                                 price_metrics['change'] = close - open_price
+                                
+                                # Calculate percentage change
                                 if open_price != 0:
                                     price_metrics['change_percent'] = (price_metrics['change'] / open_price) * 100
+                                    logger.info(f"Calculated change: {price_metrics['change']:.2f} ({price_metrics['change_percent']:.2f}%)")
+                                else:
+                                    logger.warning(f"Open price is zero for {symbol}, cannot calculate percentage change")
                             
                             # Calculate high-low range if we have both high and low
                             if high is not None and low is not None:
                                 price_metrics['high_low_range'] = high - low
                                 if low != 0:
                                     price_metrics['high_low_range_percent'] = (price_metrics['high_low_range'] / low) * 100
+                                    logger.info(f"High-Low range: {price_metrics['high_low_range']:.2f} ({price_metrics['high_low_range_percent']:.2f}%)")
                             
                             # Calculate volatility (standard deviation of price changes)
                             if all(x is not None for x in [close, open_price, high, low]):
+                                # Simple volatility calculation based on high-low range
                                 price_metrics['volatility'] = price_metrics['high_low_range_percent'] / 2
+                                logger.info(f"Calculated volatility: {price_metrics['volatility']:.2f}%")
                             
                             indicator_data = {
                                 # Oscillators
@@ -1869,6 +1632,7 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                             required_fields = ['close', 'open', 'high', 'low', 'volume']
                             if all(indicator_data.get(field) is not None for field in required_fields):
                                 data.update(indicator_data)
+                                logger.info(f"Extracted all indicators for {symbol}: {indicator_data}")
                                 success = True
                                 break
                             else:
@@ -1888,7 +1652,6 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                         
                         if attempt < max_retries - 1:
                             time.sleep(retry_delay)
-                            retry_delay = min(retry_delay * 2, max_delay)  # Exponential backoff for retries
                         continue
                 
                 if success:
@@ -2080,22 +1843,8 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             if 'conn' in locals():
                 conn.close()
 
-    def analyze_stock_signals(self, batch_size: int = 10):
-        """Analyze stock data and generate AI-based signals for all symbols in batches.
-        
-        This method fetches the latest data for each symbol from the database,
-        performs a comprehensive analysis using technical indicators, and integrates
-        AI-based insights to generate trading signals. It leverages the 
-        `analyze_stock_indicators` method for individual stock analysis to avoid
-        code duplication and ensure consistency. Processing is done in batches to
-        manage memory usage and improve performance with large datasets.
-        
-        Args:
-            batch_size (int): Number of stocks to process in each batch. Default is 10.
-        
-        Returns:
-            List[Dict]: A list of signal dictionaries for each analyzed stock.
-        """
+    def analyze_stock_signals(self):
+        """Analyze stock data and generate AI-based signals"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -2124,28 +1873,15 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                 stock = dict(zip(columns, row))
                 stocks.append(stock)
             
-            # Analyze stocks in batches
+            # Analyze each stock
             signals = []
-            total_stocks = len(stocks)
-            logger.info(f"Starting analysis of {total_stocks} stocks in batches of {batch_size}")
+            for stock in stocks:
+                signal = self._generate_stock_signal(stock)
+                signals.append(signal)
             
-            for i in range(0, total_stocks, batch_size):
-                batch = stocks[i:i + batch_size]
-                logger.info(f"Processing batch {i//batch_size + 1} with {len(batch)} stocks")
-                
-                for stock in batch:
-                    symbol = stock['symbol']
-                    logger.info(f"Analyzing signals for {symbol}")
-                    signal = self.analyze_stock_indicators(stock)
-                    if signal:
-                        signals.append(signal)
-                        self.save_analysis_to_db(symbol, signal)
-                
-                logger.info(f"Completed batch {i//batch_size + 1}")
-                # Add a small delay between batches to prevent overloading
-                time.sleep(1)
+            # Save signals to database
+            self._save_signals_to_db(signals)
             
-            logger.info(f"Completed analysis of all {total_stocks} stocks")
             conn.close()
             return signals
             
@@ -2154,6 +1890,172 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             if 'conn' in locals():
                 conn.close()
             return []
+
+    def _generate_stock_signal(self, stock):
+        """Generate AI-based signal for a single stock"""
+        try:
+            # Initialize signal dictionary
+            signal = {
+                'symbol': stock['symbol'],
+                'date': stock['date'],
+                'signal': 'NEUTRAL',
+                'confidence': 0.0,
+                'reasons': []
+            }
+            
+            # Technical Analysis Score (0-100)
+            ta_score = 0
+            reasons = []
+            
+            # 1. Trend Analysis (30 points)
+            trend_score = 0
+            if stock['sma_20'] is not None and stock['sma_50'] is not None:
+                if stock['close'] > stock['sma_20'] > stock['sma_50']:
+                    trend_score += 15
+                    reasons.append("Strong uptrend: Price above both SMAs")
+                elif stock['close'] > stock['sma_20']:
+                    trend_score += 10
+                    reasons.append("Moderate uptrend: Price above SMA20")
+                elif stock['close'] < stock['sma_20'] < stock['sma_50']:
+                    trend_score -= 15
+                    reasons.append("Strong downtrend: Price below both SMAs")
+                elif stock['close'] < stock['sma_20']:
+                    trend_score -= 10
+                    reasons.append("Moderate downtrend: Price below SMA20")
+            
+            # 2. Momentum Analysis (30 points)
+            momentum_score = 0
+            if stock['rsi'] is not None:
+                if stock['rsi'] > 70:
+                    momentum_score -= 10
+                    reasons.append("Overbought: RSI above 70")
+                elif stock['rsi'] < 30:
+                    momentum_score += 10
+                    reasons.append("Oversold: RSI below 30")
+            
+            if stock['macd'] is not None and stock['macd_signal'] is not None:
+                if stock['macd'] > stock['macd_signal']:
+                    momentum_score += 10
+                    reasons.append("Positive MACD crossover")
+                else:
+                    momentum_score -= 10
+                    reasons.append("Negative MACD crossover")
+            
+            # 3. Volume Analysis (20 points)
+            volume_score = 0
+            if stock['volume'] is not None and stock['change'] is not None:
+                if stock['change'] > 0 and stock['volume'] > 1000000:  # High volume with price increase
+                    volume_score += 10
+                    reasons.append("High volume with price increase")
+                elif stock['change'] < 0 and stock['volume'] > 1000000:  # High volume with price decrease
+                    volume_score -= 10
+                    reasons.append("High volume with price decrease")
+            
+            # 4. Volatility Analysis (20 points)
+            volatility_score = 0
+            if stock['bb_upper'] is not None and stock['bb_lower'] is not None:
+                bb_range = stock['bb_upper'] - stock['bb_lower']
+                volatility = bb_range / stock['close'] * 100
+                price_position = (stock['close'] - stock['bb_lower']) / bb_range * 100
+                
+                # Volatility score based on BB range
+                if volatility > 15:
+                    volatility_score = -20
+                    reasons.append("Very high volatility: BB range > 15%")
+                elif volatility > 10:
+                    volatility_score = -15
+                    reasons.append("High volatility: BB range > 10%")
+                elif volatility < 5:
+                    volatility_score = 15
+                    reasons.append("Low volatility: BB range < 5%")
+                elif volatility < 8:
+                    volatility_score = 10
+                    reasons.append("Moderate volatility: BB range < 8%")
+                
+                # Calculate support and resistance levels
+                signal['support_level'] = stock['bb_lower']
+                signal['resistance_level'] = stock['bb_upper']
+                
+                # Add price position relative to BB
+                if price_position > 80:
+                    reasons.append("Price near upper BB: 80% of range")
+                    volatility_score -= 5
+                elif price_position < 20:
+                    reasons.append("Price near lower BB: 20% of range")
+                    volatility_score += 5
+            
+            # Calculate final score
+            final_score = trend_score + momentum_score + volume_score + volatility_score
+            
+            # Determine signal and confidence
+            if final_score >= 30:
+                signal['signal'] = 'STRONG_BUY'
+                signal['confidence'] = min(final_score / 50, 1.0)
+            elif final_score >= 15:
+                signal['signal'] = 'BUY'
+                signal['confidence'] = min(final_score / 40, 0.8)
+            elif final_score <= -30:
+                signal['signal'] = 'STRONG_SELL'
+                signal['confidence'] = min(abs(final_score) / 50, 1.0)
+            elif final_score <= -15:
+                signal['signal'] = 'SELL'
+                signal['confidence'] = min(abs(final_score) / 40, 0.8)
+            else:
+                signal['signal'] = 'NEUTRAL'
+                signal['confidence'] = 0.5
+            
+            signal['reasons'] = reasons
+            signal['score'] = final_score
+            
+            return signal
+            
+        except Exception as e:
+            logger.error(f"Error generating signal for {stock['symbol']}: {e}")
+            return None
+
+    def _save_signals_to_db(self, signals):
+        """Save generated signals to database"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Create signals table if it doesn't exist
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS stock_signals (
+                symbol TEXT,
+                date TEXT,
+                signal TEXT,
+                confidence REAL,
+                score REAL,
+                reasons TEXT,
+                PRIMARY KEY (symbol, date)
+            )
+            ''')
+            
+            # Insert signals
+            for signal in signals:
+                if signal:
+                    cursor.execute('''
+                    INSERT OR REPLACE INTO stock_signals
+                    (symbol, date, signal, confidence, score, reasons)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (
+                        signal['symbol'],
+                        signal['date'],
+                        signal['signal'],
+                        signal['confidence'],
+                        signal['score'],
+                        '|'.join(signal['reasons'])
+                    ))
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"Successfully saved {len(signals)} signals to database")
+            
+        except Exception as e:
+            logger.error(f"Error saving signals to database: {e}")
+            if 'conn' in locals():
+                conn.close()
 
     def verify_database_data(self):
         """Verify the quality and completeness of data in the database"""
@@ -2322,6 +2224,368 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                 conn.close()
             return None
 
+    def analyze_with_ai(self, symbol: str, technical_data: Dict, financial_data: Dict) -> Dict:
+        """Analyze stock data using AI to enhance signal generation with focus on investment perspective"""
+        try:
+            logger.info(f"Starting AI analysis for symbol: {symbol}")
+            
+            # Get financial announcements and reports
+            announcements = self.read_psx_announcements()
+            symbol_announcements = announcements.get(symbol, [])
+            
+            # Get dividend analysis
+            dividend_analysis = self.analyze_dividend_data(symbol)
+            
+            # Get latest financial reports
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get latest financial data
+            cursor.execute("""
+                SELECT * FROM financial_reports 
+                WHERE symbol = ? 
+                ORDER BY report_date DESC 
+                LIMIT 2
+            """, (symbol,))
+            
+            financial_reports = cursor.fetchall()
+            columns = [description[0] for description in cursor.description]
+            
+            # Convert to list of dictionaries
+            latest_reports = []
+            for report in financial_reports:
+                latest_reports.append(dict(zip(columns, report)))
+            
+            conn.close()
+            
+            # Prepare data for AI analysis
+            analysis_data = {
+                'symbol': symbol,
+                'technical': {
+                    'price': {
+                        'close': technical_data.get('close'),
+                        'open': technical_data.get('open'),
+                        'high': technical_data.get('high'),
+                        'low': technical_data.get('low'),
+                        'volume': technical_data.get('volume'),
+                        'change_percent': technical_data.get('change_percent')
+                    },
+                    'indicators': {
+                        'rsi': technical_data.get('rsi'),
+                        'macd': technical_data.get('macd'),
+                        'macd_signal': technical_data.get('macd_signal'),
+                        'sma_20': technical_data.get('sma_20'),
+                        'sma_50': technical_data.get('sma_50'),
+                        'sma_200': technical_data.get('sma_200'),
+                        'bb_upper': technical_data.get('bb_upper'),
+                        'bb_lower': technical_data.get('bb_lower')
+                    },
+                    'signals': {
+                        'trend_score': technical_data.get('trend_score'),
+                        'momentum_score': technical_data.get('momentum_score'),
+                        'volume_score': technical_data.get('volume_score'),
+                        'volatility_score': technical_data.get('volatility_score')
+                    }
+                },
+                'financial': {
+                    'current': {
+                        'eps_growth': financial_data.get('eps_growth'),
+                        'revenue_growth': financial_data.get('revenue_growth'),
+                        'profit_margin': financial_data.get('profit_margin'),
+                        'debt_to_equity': financial_data.get('debt_to_equity'),
+                        'current_ratio': financial_data.get('current_ratio'),
+                        'roe': financial_data.get('roe')
+                    },
+                    'reports': latest_reports,
+                    'announcements': symbol_announcements
+                },
+                'dividend': dividend_analysis
+            }
+            
+            logger.info(f"Prepared analysis data for {symbol} with technical indicators, financial data, and dividend information")
+            
+            # Get historical data for pattern recognition
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get last 30 days of data
+            cursor.execute("""
+                SELECT * FROM tradingview_ta 
+                WHERE symbol = ? 
+                ORDER BY date DESC 
+                LIMIT 30
+            """, (symbol,))
+            
+            historical_data = cursor.fetchall()
+            conn.close()
+            
+            if historical_data:
+                # Convert historical data to list of dictionaries
+                columns = [description[0] for description in cursor.description]
+                historical_analysis = []
+                for row in historical_data:
+                    historical_analysis.append(dict(zip(columns, row)))
+                
+                analysis_data['historical'] = historical_analysis
+                logger.info(f"Retrieved {len(historical_analysis)} days of historical data for {symbol}")
+            
+            # Prepare AI analysis prompt with enhanced investment focus
+            prompt = f"""Analyze this stock data and provide a professional investment analysis:
+
+Symbol: {symbol}
+
+TECHNICAL ANALYSIS
+-----------------
+Current Price: {analysis_data['technical']['price']['close']}
+Price Change: {analysis_data['technical']['price']['change_percent']}%
+Volume: {analysis_data['technical']['price']['volume']}
+
+Key Indicators:
+- RSI: {analysis_data['technical']['indicators']['rsi']}
+- MACD: {analysis_data['technical']['indicators']['macd']}
+- Signal Line: {analysis_data['technical']['indicators']['macd_signal']}
+- SMA20: {analysis_data['technical']['indicators']['sma_20']}
+- SMA50: {analysis_data['technical']['indicators']['sma_50']}
+- SMA200: {analysis_data['technical']['indicators']['sma_200']}
+
+Technical Scores:
+- Trend Score: {analysis_data['technical']['signals']['trend_score']}
+- Momentum Score: {analysis_data['technical']['signals']['momentum_score']}
+- Volume Score: {analysis_data['technical']['signals']['volume_score']}
+- Volatility Score: {analysis_data['technical']['signals']['volatility_score']}
+
+FINANCIAL ANALYSIS
+-----------------
+Current Metrics:
+- EPS Growth: {analysis_data['financial']['current']['eps_growth']}%
+- Revenue Growth: {analysis_data['financial']['current']['revenue_growth']}%
+- Profit Margin: {analysis_data['financial']['current']['profit_margin']}%
+- Debt-to-Equity: {analysis_data['financial']['current']['debt_to_equity']}
+- Current Ratio: {analysis_data['financial']['current']['current_ratio']}
+- ROE: {analysis_data['financial']['current']['roe']}%
+
+DIVIDEND ANALYSIS
+----------------
+Current Dividend:
+- Amount: {analysis_data['dividend']['current_dividend']['dividend_amount'] if analysis_data['dividend']['current_dividend'] else 'N/A'}
+- Yield: {f"{analysis_data['dividend']['dividend_yield']:.2f}%" if analysis_data['dividend']['dividend_yield'] else 'N/A'}
+- Growth: {f"{analysis_data['dividend']['dividend_growth']:.2f}%" if analysis_data['dividend']['dividend_growth'] else 'N/A'}
+- Sustainability: {analysis_data['dividend']['dividend_sustainability']}
+
+Dividend Statistics:
+- Total Dividends: {analysis_data['dividend']['dividend_stats']['total_dividends'] if analysis_data['dividend']['dividend_stats'] else 'N/A'}
+- Average Amount: {analysis_data['dividend']['dividend_stats']['avg_dividend_amount'] if analysis_data['dividend']['dividend_stats'] else 'N/A'}
+- Frequency: {analysis_data['dividend']['dividend_stats']['dividend_frequency'] if analysis_data['dividend']['dividend_stats'] else 'N/A'}
+
+Financial Reports:
+{json.dumps(analysis_data['financial']['reports'], indent=2)}
+
+Recent Announcements:
+{json.dumps(analysis_data['financial']['announcements'], indent=2)}
+
+HISTORICAL PATTERN ANALYSIS
+--------------------------
+{analysis_data.get('historical', [])}
+
+Please provide a professional investment analysis in the following format:
+
+1. COMPANY OVERVIEW
+------------------
+- Business model analysis
+- Market position
+- Competitive advantages
+- Growth potential
+- Recent developments and announcements
+
+2. FINANCIAL HEALTH
+------------------
+- Revenue and earnings analysis
+- Profitability trends
+- Balance sheet strength
+- Cash flow analysis
+- Dividend history and policy
+- Financial ratios analysis
+- Peer comparison
+
+3. INVESTMENT THESIS
+-------------------
+- Key investment drivers
+- Growth catalysts
+- Risk factors
+- Competitive position
+- Industry outlook
+- Management quality assessment
+- Corporate governance analysis
+
+4. VALUATION ANALYSIS
+--------------------
+- Current valuation metrics
+- Peer comparison
+- Historical valuation ranges
+- Fair value estimate
+- Margin of safety
+- DCF analysis (if possible)
+- Comparable company analysis
+
+5. INVESTMENT RECOMMENDATION
+---------------------------
+- Clear investment bias (Strong Buy/Buy/Hold/Sell/Strong Sell)
+- Investment horizon
+- Entry price range
+- Target price
+- Position sizing guidelines
+- Risk management approach
+- Portfolio fit analysis
+
+6. MONITORING POINTS
+-------------------
+- Key metrics to track
+- Important announcements to watch
+- Risk factors to monitor
+- Exit criteria
+- Quarterly earnings expectations
+- Industry developments to watch
+
+Please ensure the analysis is clear, professional, and focused on long-term investment value rather than short-term trading opportunities. Consider both quantitative metrics and qualitative factors in your analysis.
+
+Additional Guidelines:
+1. For stocks with limited financial data (like PAEL), focus on:
+   - Technical analysis and price patterns
+   - Volume analysis and liquidity
+   - Market sentiment and momentum
+   - Recent announcements and news
+   - Industry trends and peer comparison
+   - Risk assessment and volatility
+
+2. For stocks with complete financial data, include:
+   - Detailed financial ratio analysis
+   - Growth projections
+   - Valuation models
+   - Dividend analysis
+   - Management quality assessment
+
+3. Always consider:
+   - Market conditions and sector trends
+   - Regulatory environment
+   - Competitive landscape
+   - Risk factors and mitigation strategies
+   - Entry and exit points
+   - Position sizing recommendations
+
+4. Provide specific price targets and levels:
+   - Support and resistance levels
+   - Stop loss recommendations
+   - Take profit targets
+   - Risk-reward ratios
+   - Entry price ranges
+   - Exit criteria
+
+5. Include risk warnings and disclaimers:
+   - Market risk factors
+   - Company-specific risks
+   - Liquidity concerns
+   - Regulatory risks
+   - Industry-specific risks
+
+Please provide a balanced analysis that considers both opportunities and risks, with clear recommendations and actionable insights.
+"""
+            
+            logger.info(f"Prepared AI analysis prompt for {symbol}")
+            
+            # Call AI model (using DeepSeek or similar)
+            ai_analysis = self.call_ai_model(prompt)
+            
+            if ai_analysis:
+                # Process AI analysis with enhanced investment focus
+                processed_analysis = {
+                    'company_overview': ai_analysis.get('company_overview', ''),
+                    'financial_health': ai_analysis.get('financial_health', ''),
+                    'investment_thesis': ai_analysis.get('investment_thesis', ''),
+                    'valuation_analysis': ai_analysis.get('valuation_analysis', ''),
+                    'investment_recommendation': ai_analysis.get('investment_recommendation', ''),
+                    'monitoring_points': ai_analysis.get('monitoring_points', ''),
+                    'confidence_score': ai_analysis.get('confidence_score', 0.0),
+                    'fair_value': ai_analysis.get('fair_value', None),
+                    'target_price': ai_analysis.get('target_price', None),
+                    'entry_range': ai_analysis.get('entry_range', []),
+                    'investment_horizon': ai_analysis.get('investment_horizon', ''),
+                    'position_size': ai_analysis.get('position_size', ''),
+                    'dcf_value': ai_analysis.get('dcf_value', None),
+                    'peer_comparison': ai_analysis.get('peer_comparison', {}),
+                    'risk_assessment': ai_analysis.get('risk_assessment', {}),
+                    'growth_catalysts': ai_analysis.get('growth_catalysts', []),
+                    'management_quality': ai_analysis.get('management_quality', ''),
+                    'corporate_governance': ai_analysis.get('corporate_governance', ''),
+                    'dividend_analysis': dividend_analysis
+                }
+                
+                # Format the analysis for logging
+                formatted_analysis = f"""
+AI Investment Analysis for {symbol}
+=================================
+
+Company Overview
+---------------
+{processed_analysis['company_overview']}
+
+Financial Health
+---------------
+{processed_analysis['financial_health']}
+
+Investment Thesis
+----------------
+{processed_analysis['investment_thesis']}
+
+Valuation Analysis
+-----------------
+{processed_analysis['valuation_analysis']}
+
+Investment Recommendation
+------------------------
+{processed_analysis['investment_recommendation']}
+
+Monitoring Points
+----------------
+{processed_analysis['monitoring_points']}
+
+Key Metrics
+-----------
+Confidence Score: {processed_analysis['confidence_score']}
+Fair Value: {processed_analysis['fair_value']}
+DCF Value: {processed_analysis['dcf_value']}
+Target Price: {processed_analysis['target_price']}
+Entry Range: {processed_analysis['entry_range']}
+Investment Horizon: {processed_analysis['investment_horizon']}
+Position Size: {processed_analysis['position_size']}
+
+Dividend Analysis
+----------------
+Current Dividend: {json.dumps(processed_analysis['dividend_analysis']['current_dividend'], indent=2) if processed_analysis['dividend_analysis']['current_dividend'] else 'N/A'}
+Dividend Yield: {f"{processed_analysis['dividend_analysis']['dividend_yield']:.2f}%" if processed_analysis['dividend_analysis']['dividend_yield'] else 'N/A'}
+Dividend Growth: {f"{processed_analysis['dividend_analysis']['dividend_growth']:.2f}%" if processed_analysis['dividend_analysis']['dividend_growth'] else 'N/A'}
+Dividend Sustainability: {processed_analysis['dividend_analysis']['dividend_sustainability']}
+
+Additional Analysis
+------------------
+Peer Comparison: {json.dumps(processed_analysis['peer_comparison'], indent=2)}
+Risk Assessment: {json.dumps(processed_analysis['risk_assessment'], indent=2)}
+Growth Catalysts: {json.dumps(processed_analysis['growth_catalysts'], indent=2)}
+Management Quality: {processed_analysis['management_quality']}
+Corporate Governance: {processed_analysis['corporate_governance']}
+"""
+                
+                logger.info(f"Successfully processed AI investment analysis for {symbol}")
+                logger.info(formatted_analysis)
+                
+                return processed_analysis
+            else:
+                logger.warning(f"No AI analysis returned for {symbol}")
+                return None
+            
+        except Exception as e:
+            logger.error(f"Error in AI analysis for {symbol}: {e}")
+            return None
+
     def _retry_with_backoff(self, func, max_retries=3, initial_delay=1, max_delay=32):
         """Helper method to retry operations with exponential backoff"""
         delay = initial_delay
@@ -2396,19 +2660,7 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             return False
 
     def call_ai_model(self, prompt: str) -> Dict:
-        """Call AI model for analysis with improved error handling and retries.
-        
-        This method handles the communication with the DeepSeek API to obtain AI-based financial analysis.
-        It includes validation of the API key, retry logic for handling transient failures, and robust
-        parsing of the AI response to extract structured data for further processing.
-        
-        Args:
-            prompt (str): The prompt to send to the AI model for analysis.
-        
-        Returns:
-            Dict: A dictionary containing the parsed AI analysis with predefined keys for various
-                  analysis sections and metrics. Returns None if the API call or parsing fails.
-        """
+        """Call AI model for analysis with improved error handling and retries"""
         try:
             # Validate API key first
             if not self._validate_api_key():
@@ -2418,6 +2670,8 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             # Get API key from environment
             api_key = os.getenv('DEEPSEEK_API_KEY')
             logger.info("DeepSeek API key validated, proceeding with API call")
+            
+            logger.info("DeepSeek API key found, proceeding with API call")
             
             headers = {
                 "Authorization": f"Bearer {api_key}",
@@ -2492,8 +2746,8 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                 
                 # Process the analysis sections and extract data
                 try:
-                    # Split the analysis into sections based on numbered or titled headings
-                    sections = re.split(r'\n(?=\d+\.\s|\b[A-Z\s]+:\s)', analysis)
+                    # Split the analysis into sections
+                    sections = analysis.split('\n\n')
                     current_section = None
                     section_content = []
                     
@@ -2505,8 +2759,8 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                         # Check for section headers and process content
                         for section_name in ai_analysis.keys():
                             header = section_name.upper().replace('_', ' ')
-                            if header in section.upper() or section_name.replace('_', ' ').upper() in section.upper():
-                                if current_section and section_content:
+                            if header in section:
+                                if current_section:
                                     ai_analysis[current_section] = '\n'.join(section_content)
                                 current_section = section_name
                                 section_content = []
@@ -2519,59 +2773,47 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                     if current_section and section_content:
                         ai_analysis[current_section] = '\n'.join(section_content)
                     
-                    # Extract metrics using regex patterns with improved robustness
+                    # Extract metrics using regex patterns
                     patterns = {
-                        'confidence_score': r'confidence\s*score\s*[:\-]?\s*(\d+\.?\d*)',
-                        'fair_value': r'fair\s*value\s*[:\-]?\s*(\d+\.?\d*)',
-                        'target_price': r'target\s*price\s*[:\-]?\s*(\d+\.?\d*)',
-                        'entry_range': r'entry\s*range\s*[:\-]?\s*(\d+\.?\d*)\s*[-–—to\s]+(\d+\.?\d*)',
-                        'investment_horizon': r'investment\s*horizon\s*[:\-]?\s*(\d+\s*(?:months|years))',
-                        'position_size': r'position\s*size\s*[:\-]?\s*(\d+\.?\d*%)',
-                        'dcf_value': r'dcf\s*value\s*[:\-]?\s*(\d+\.?\d*)'
+                        'confidence_score': r'confidence score.*?(\d+\.?\d*)',
+                        'fair_value': r'fair value.*?(\d+\.?\d*)',
+                        'target_price': r'target price.*?(\d+\.?\d*)',
+                        'entry_range': r'entry range.*?(\d+\.?\d*)\s*-\s*(\d+\.?\d*)',
+                        'investment_horizon': r'investment horizon.*?(\d+\s*(?:months|years))',
+                        'position_size': r'position size.*?(\d+\.?\d*%)',
+                        'dcf_value': r'dcf value.*?(\d+\.?\d*)'
                     }
                     
                     for metric, pattern in patterns.items():
-                        match = re.search(pattern, analysis.lower(), re.IGNORECASE)
+                        match = re.search(pattern, analysis.lower())
                         if match:
-                            try:
-                                if metric == 'entry_range':
-                                    ai_analysis[metric] = [float(match.group(1)), float(match.group(2))]
-                                elif metric in ['confidence_score', 'fair_value', 'target_price', 'dcf_value']:
-                                    ai_analysis[metric] = float(match.group(1))
-                                else:
-                                    ai_analysis[metric] = match.group(1)
-                            except ValueError as e:
-                                logger.warning(f"Failed to convert {metric} value to float: {match.group(1)}")
+                            if metric == 'entry_range':
+                                ai_analysis[metric] = [float(match.group(1)), float(match.group(2))]
+                            elif metric in ['confidence_score', 'fair_value', 'target_price', 'dcf_value']:
+                                ai_analysis[metric] = float(match.group(1))
+                            else:
+                                ai_analysis[metric] = match.group(1)
                     
-                    # Extract JSON-formatted sections with improved error handling
+                    # Extract JSON-formatted sections
                     json_sections = ['peer_comparison', 'risk_assessment', 'growth_catalysts', 
-                                     'technical_analysis', 'market_sentiment', 'industry_analysis',
-                                     'regulatory_analysis', 'liquidity_analysis', 'volatility_analysis']
+                                   'technical_analysis', 'market_sentiment', 'industry_analysis',
+                                   'regulatory_analysis', 'liquidity_analysis', 'volatility_analysis']
                     
                     for section in json_sections:
-                        pattern = f"{section.replace('_', ' ').lower()}.*?({{.*?}})"
+                        pattern = f"{section.replace('_', ' ')}.*?({{\n.*?\n}})"
                         match = re.search(pattern, analysis, re.DOTALL | re.IGNORECASE)
                         if match:
                             try:
-                                json_str = match.group(1)
-                                # Clean up potential formatting issues
-                                json_str = json_str.replace('\n', '').replace('\r', '')
-                                ai_analysis[section] = json.loads(json_str)
-                            except json.JSONDecodeError as e:
-                                logger.warning(f"Failed to parse JSON for {section}: {e}")
+                                ai_analysis[section] = json.loads(match.group(1))
+                            except json.JSONDecodeError:
+                                logger.warning(f"Failed to parse JSON for {section}")
                     
                     logger.info("Successfully parsed AI analysis")
                     return ai_analysis
                     
                 except Exception as e:
                     logger.error(f"Error parsing AI response: {e}")
-                    # Return a minimal analysis structure to avoid downstream errors
-                    return {
-                        'confidence_score': 0.0,
-                        'fair_value': None,
-                        'target_price': None,
-                        'investment_recommendation': 'Error in parsing AI response'
-                    }
+                    return None
             else:
                 logger.warning("No analysis received from AI model")
                 return None
