@@ -509,140 +509,275 @@ class FairValueCalculator:
                 'recent_announcements': []
             }
 
-    def analyze_with_ai(self, symbol: str, technical_analysis: Dict, financial_analysis: Dict) -> Dict:
-        """Analyze stock data using DeepSeek AI"""
+    def analyze_with_ai(self, symbol: str, technical_data: Dict, financial_data: Dict) -> Dict:
+        """Analyze stock data using AI to enhance signal generation with focus on investment perspective"""
         try:
-            # Get API key from environment
-            api_key = os.getenv('DEEPSEEK_API_KEY')
-            if not api_key:
-                logger.warning("DeepSeek API key not found in environment variables")
-                return None
+            logger.info(f"Starting AI analysis for symbol: {symbol}")
             
-            # Prepare financial data summary
-            financial_summary = f"""
-Financial Metrics:
-- EPS Growth: {financial_analysis.get('eps_growth', 'N/A')}%
-- Revenue Growth: {financial_analysis.get('revenue_growth', 'N/A')}%
-- Profit Margin: {financial_analysis.get('profit_margin', 'N/A')}%
-- Debt-to-Equity: {financial_analysis.get('debt_to_equity', 'N/A')}
-- Current Ratio: {financial_analysis.get('current_ratio', 'N/A')}
-- ROE: {financial_analysis.get('roe', 'N/A')}%
-"""
+            # Get financial announcements and reports
+            announcements = self.read_psx_announcements()
+            symbol_announcements = announcements.get(symbol, [])
             
-            # Prepare announcements summary
-            announcements_summary = "Recent Announcements:\n"
-            for announcement in financial_analysis.get('recent_announcements', []):
-                announcements_summary += f"- {announcement['date']}: {announcement['title']}\n"
+            # Get dividend analysis
+            dividend_analysis = self.analyze_dividend_data(symbol)
             
-            # Prepare the prompt
-            prompt = f"""You are a professional financial analyst. Analyze this stock:
+            # Get latest financial reports
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get latest financial data
+            cursor.execute("""
+                SELECT * FROM financial_reports 
+                WHERE symbol = ? 
+                ORDER BY report_date DESC 
+                LIMIT 2
+            """, (symbol,))
+            
+            financial_reports = cursor.fetchall()
+            columns = [description[0] for description in cursor.description]
+            
+            # Convert to list of dictionaries
+            latest_reports = []
+            for report in financial_reports:
+                latest_reports.append(dict(zip(columns, report)))
+            
+            conn.close()
+            
+            # Prepare data for AI analysis
+            analysis_data = {
+                'symbol': symbol,
+                'technical': {
+                    'price': {
+                        'close': technical_data.get('close'),
+                        'open': technical_data.get('open'),
+                        'high': technical_data.get('high'),
+                        'low': technical_data.get('low'),
+                        'volume': technical_data.get('volume'),
+                        'change_percent': technical_data.get('change_percent')
+                    },
+                    'indicators': {
+                        'rsi': technical_data.get('rsi'),
+                        'macd': technical_data.get('macd'),
+                        'macd_signal': technical_data.get('macd_signal'),
+                        'sma_20': technical_data.get('sma_20'),
+                        'sma_50': technical_data.get('sma_50'),
+                        'sma_200': technical_data.get('sma_200'),
+                        'bb_upper': technical_data.get('bb_upper'),
+                        'bb_lower': technical_data.get('bb_lower')
+                    },
+                    'signals': {
+                        'trend_score': technical_data.get('trend_score'),
+                        'momentum_score': technical_data.get('momentum_score'),
+                        'volume_score': technical_data.get('volume_score'),
+                        'volatility_score': technical_data.get('volatility_score')
+                    }
+                },
+                'financial': {
+                    'current': {
+                        'eps_growth': financial_data.get('eps_growth', 'N/A'),
+                        'revenue_growth': financial_data.get('revenue_growth', 'N/A'),
+                        'profit_margin': financial_data.get('profit_margin', 'N/A'),
+                        'debt_to_equity': financial_data.get('debt_to_equity', 'N/A'),
+                        'current_ratio': financial_data.get('current_ratio', 'N/A'),
+                        'roe': financial_data.get('roe', 'N/A')
+                    },
+                    'reports': latest_reports,
+                    'announcements': symbol_announcements
+                },
+                'dividend': {
+                    'current_dividend': dividend_analysis.get('current_dividend') if dividend_analysis else None,
+                    'dividend_yield': dividend_analysis.get('dividend_yield') if dividend_analysis else None,
+                    'dividend_growth': dividend_analysis.get('dividend_growth') if dividend_analysis else None,
+                    'dividend_sustainability': dividend_analysis.get('dividend_sustainability') if dividend_analysis else None
+                }
+            }
+            
+            # Prepare AI analysis prompt with enhanced investment focus
+            prompt = f"""Analyze this stock data and provide a professional investment analysis:
 
 Symbol: {symbol}
 
-{financial_summary}
+TECHNICAL ANALYSIS
+-----------------
+Current Price: {analysis_data['technical']['price']['close']}
+Price Change: {analysis_data['technical']['price']['change_percent']}%
+Volume: {analysis_data['technical']['price']['volume']}
 
-{announcements_summary}
+Key Indicators:
+- RSI: {analysis_data['technical']['indicators']['rsi']}
+- MACD: {analysis_data['technical']['indicators']['macd']}
+- Signal Line: {analysis_data['technical']['indicators']['macd_signal']}
+- SMA20: {analysis_data['technical']['indicators']['sma_20']}
+- SMA50: {analysis_data['technical']['indicators']['sma_50']}
+- SMA200: {analysis_data['technical']['indicators']['sma_200']}
+
+Technical Scores:
+- Trend Score: {analysis_data['technical']['signals']['trend_score']}
+- Momentum Score: {analysis_data['technical']['signals']['momentum_score']}
+- Volume Score: {analysis_data['technical']['signals']['volume_score']}
+- Volatility Score: {analysis_data['technical']['signals']['volatility_score']}
+
+FINANCIAL ANALYSIS
+-----------------
+Current Metrics:
+- EPS Growth: {analysis_data['financial']['current']['eps_growth']}%
+- Revenue Growth: {analysis_data['financial']['current']['revenue_growth']}%
+- Profit Margin: {analysis_data['financial']['current']['profit_margin']}%
+- Debt-to-Equity: {analysis_data['financial']['current']['debt_to_equity']}
+- Current Ratio: {analysis_data['financial']['current']['current_ratio']}
+- ROE: {analysis_data['financial']['current']['roe']}%
+
+DIVIDEND ANALYSIS
+----------------
+Current Dividend:
+- Amount: {analysis_data['dividend']['current_dividend']['dividend_amount'] if analysis_data['dividend']['current_dividend'] else 'N/A'}
+- Yield: {f"{analysis_data['dividend']['dividend_yield']:.2f}%" if analysis_data['dividend']['dividend_yield'] else 'N/A'}
+- Growth: {f"{analysis_data['dividend']['dividend_growth']:.2f}%" if analysis_data['dividend']['dividend_growth'] else 'N/A'}
+- Sustainability: {analysis_data['dividend']['dividend_sustainability']}
+
+RECENT ANNOUNCEMENTS
+-------------------
+{chr(10).join([f"- {announcement['date']}: {announcement['title']}" for announcement in analysis_data['financial']['announcements']]) if analysis_data['financial']['announcements'] else 'No recent announcements'}
 
 Provide a detailed analysis in the following format:
-1. FINANCIAL HEALTH
+
+1. COMPANY OVERVIEW
+- Market position and competitive advantages
+- Growth potential
+- Recent developments
+
+2. FINANCIAL HEALTH
 - Overall financial health assessment
 - Key strengths and weaknesses
 - Growth potential and risks
 
-2. RECENT DEVELOPMENTS
-- Impact of recent announcements
-- Market sentiment analysis
+3. INVESTMENT THESIS
+- Growth catalysts
+- Risk factors
 - Competitive position
+- Management quality
 
-3. TECHNICAL ANALYSIS
-- Current market position
-- Support and resistance levels
-- Trend analysis
+4. VALUATION ANALYSIS
+- Peer comparison
+- Historical valuation ranges
+- Fair value estimate
+- Margin of safety
 
-4. INVESTMENT RECOMMENDATION
+5. INVESTMENT RECOMMENDATION
 - Clear recommendation (Strong Buy/Buy/Hold/Sell/Strong Sell)
 - Detailed rationale
 - Risk factors
-- Price targets (if applicable)
+- Price targets
+
+6. MONITORING POINTS
+- Important announcements to watch
+- Risk factors to monitor
+- Exit criteria
+
+Include specific metrics where possible:
+- Confidence Score (0-1)
+- Fair Value
+- DCF Value
+- Target Price
+- Entry Range
+- Investment Horizon
+- Position Size
 """
             
-            # Call DeepSeek API
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
+            logger.info(f"Prepared AI analysis prompt for {symbol}")
             
-            payload = {
-                "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": "You are a professional financial analyst."},
-                    {"role": "user", "content": prompt}
-                ],
-                "max_tokens": 2000,
-                "temperature": 0.7
-            }
+            # Call AI model
+            ai_analysis = self.call_ai_model(prompt)
             
-            response = requests.post(
-                "https://api.deepseek.com/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                try:
-                    analysis = response.json()['choices'][0]['message']['content']
-                    
-                    # Parse the analysis to extract key components
-                    ai_analysis = {
-                        'financial_health': '',
-                        'recent_developments': '',
-                        'technical_analysis': '',
-                        'recommendation': '',
-                        'confidence_score': 0.0,
-                        'price_target': None
-                    }
-                    
-                    # Extract sections from the analysis
-                    sections = analysis.split('\n\n')
-                    for section in sections:
-                        if 'FINANCIAL HEALTH' in section:
-                            ai_analysis['financial_health'] = section
-                        elif 'RECENT DEVELOPMENTS' in section:
-                            ai_analysis['recent_developments'] = section
-                        elif 'TECHNICAL ANALYSIS' in section:
-                            ai_analysis['technical_analysis'] = section
-                        elif 'INVESTMENT RECOMMENDATION' in section:
-                            ai_analysis['recommendation'] = section
-                            
-                            # Extract confidence score and price target
-                            if 'Strong Buy' in section:
-                                ai_analysis['confidence_score'] = 0.9
-                            elif 'Buy' in section:
-                                ai_analysis['confidence_score'] = 0.7
-                            elif 'Hold' in section:
-                                ai_analysis['confidence_score'] = 0.5
-                            elif 'Sell' in section:
-                                ai_analysis['confidence_score'] = 0.3
-                            elif 'Strong Sell' in section:
-                                ai_analysis['confidence_score'] = 0.1
-                            
-                            # Try to extract price target
-                            price_target_match = re.search(r'price target.*?(\d+\.?\d*)', section.lower())
-                            if price_target_match:
-                                ai_analysis['price_target'] = float(price_target_match.group(1))
-                    
-                    return ai_analysis
-                    
-                except Exception as e:
-                    logger.error(f"Error parsing DeepSeek response: {e}")
-                    return None
-            else:
-                logger.error(f"DeepSeek API request failed with status code {response.status_code}")
-                return None
+            if ai_analysis:
+                # Process AI analysis with enhanced investment focus
+                processed_analysis = {
+                    'company_overview': ai_analysis.get('company_overview', ''),
+                    'financial_health': ai_analysis.get('financial_health', ''),
+                    'investment_thesis': ai_analysis.get('investment_thesis', ''),
+                    'valuation_analysis': ai_analysis.get('valuation_analysis', ''),
+                    'investment_recommendation': ai_analysis.get('investment_recommendation', ''),
+                    'monitoring_points': ai_analysis.get('monitoring_points', ''),
+                    'confidence_score': ai_analysis.get('confidence_score', 0.0),
+                    'fair_value': ai_analysis.get('fair_value', None),
+                    'target_price': ai_analysis.get('target_price', None),
+                    'entry_range': ai_analysis.get('entry_range', []),
+                    'investment_horizon': ai_analysis.get('investment_horizon', ''),
+                    'position_size': ai_analysis.get('position_size', ''),
+                    'dcf_value': ai_analysis.get('dcf_value', None),
+                    'peer_comparison': ai_analysis.get('peer_comparison', {}),
+                    'risk_assessment': ai_analysis.get('risk_assessment', {}),
+                    'growth_catalysts': ai_analysis.get('growth_catalysts', []),
+                    'management_quality': ai_analysis.get('management_quality', ''),
+                    'corporate_governance': ai_analysis.get('corporate_governance', ''),
+                    'dividend_analysis': dividend_analysis
+                }
                 
+                # Format the analysis for logging
+                formatted_analysis = f"""
+AI Investment Analysis for {symbol}
+=================================
+
+Company Overview
+---------------
+{processed_analysis['company_overview']}
+
+Financial Health
+---------------
+{processed_analysis['financial_health']}
+
+Investment Thesis
+----------------
+{processed_analysis['investment_thesis']}
+
+Valuation Analysis
+-----------------
+{processed_analysis['valuation_analysis']}
+
+Investment Recommendation
+------------------------
+{processed_analysis['investment_recommendation']}
+
+Monitoring Points
+----------------
+{processed_analysis['monitoring_points']}
+
+Key Metrics
+-----------
+Confidence Score: {processed_analysis['confidence_score']}
+Fair Value: {processed_analysis['fair_value']}
+DCF Value: {processed_analysis['dcf_value']}
+Target Price: {processed_analysis['target_price']}
+Entry Range: {processed_analysis['entry_range']}
+Investment Horizon: {processed_analysis['investment_horizon']}
+Position Size: {processed_analysis['position_size']}
+
+Dividend Analysis
+----------------
+Current Dividend: {json.dumps(processed_analysis['dividend_analysis']['current_dividend'], indent=2) if processed_analysis['dividend_analysis']['current_dividend'] else 'N/A'}
+Dividend Yield: {f"{processed_analysis['dividend_analysis']['dividend_yield']:.2f}%" if processed_analysis['dividend_analysis']['dividend_yield'] else 'N/A'}
+Dividend Growth: {f"{processed_analysis['dividend_analysis']['dividend_growth']:.2f}%" if processed_analysis['dividend_analysis']['dividend_growth'] else 'N/A'}
+Dividend Sustainability: {processed_analysis['dividend_analysis']['dividend_sustainability']}
+
+Additional Analysis
+------------------
+Peer Comparison: {json.dumps(processed_analysis['peer_comparison'], indent=2)}
+Risk Assessment: {json.dumps(processed_analysis['risk_assessment'], indent=2)}
+Growth Catalysts: {json.dumps(processed_analysis['growth_catalysts'], indent=2)}
+Management Quality: {processed_analysis['management_quality']}
+Corporate Governance: {processed_analysis['corporate_governance']}
+"""
+                
+                logger.info(f"Successfully processed AI investment analysis for {symbol}")
+                logger.info(formatted_analysis)
+                
+                return processed_analysis
+            else:
+                logger.warning(f"No AI analysis returned for {symbol}")
+                return None
+            
         except Exception as e:
-            logger.error(f"Error in DeepSeek analysis: {e}")
+            logger.error(f"Error in AI analysis for {symbol}: {e}")
             return None
 
     def adjust_signal_with_ai(self, technical_analysis: Dict, financial_analysis: Dict) -> Dict:
@@ -2222,368 +2357,6 @@ Provide a detailed analysis in the following format:
             logger.error(f"Error analyzing dividend data for {symbol}: {e}")
             if 'conn' in locals():
                 conn.close()
-            return None
-
-    def analyze_with_ai(self, symbol: str, technical_data: Dict, financial_data: Dict) -> Dict:
-        """Analyze stock data using AI to enhance signal generation with focus on investment perspective"""
-        try:
-            logger.info(f"Starting AI analysis for symbol: {symbol}")
-            
-            # Get financial announcements and reports
-            announcements = self.read_psx_announcements()
-            symbol_announcements = announcements.get(symbol, [])
-            
-            # Get dividend analysis
-            dividend_analysis = self.analyze_dividend_data(symbol)
-            
-            # Get latest financial reports
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Get latest financial data
-            cursor.execute("""
-                SELECT * FROM financial_reports 
-                WHERE symbol = ? 
-                ORDER BY report_date DESC 
-                LIMIT 2
-            """, (symbol,))
-            
-            financial_reports = cursor.fetchall()
-            columns = [description[0] for description in cursor.description]
-            
-            # Convert to list of dictionaries
-            latest_reports = []
-            for report in financial_reports:
-                latest_reports.append(dict(zip(columns, report)))
-            
-            conn.close()
-            
-            # Prepare data for AI analysis
-            analysis_data = {
-                'symbol': symbol,
-                'technical': {
-                    'price': {
-                        'close': technical_data.get('close'),
-                        'open': technical_data.get('open'),
-                        'high': technical_data.get('high'),
-                        'low': technical_data.get('low'),
-                        'volume': technical_data.get('volume'),
-                        'change_percent': technical_data.get('change_percent')
-                    },
-                    'indicators': {
-                        'rsi': technical_data.get('rsi'),
-                        'macd': technical_data.get('macd'),
-                        'macd_signal': technical_data.get('macd_signal'),
-                        'sma_20': technical_data.get('sma_20'),
-                        'sma_50': technical_data.get('sma_50'),
-                        'sma_200': technical_data.get('sma_200'),
-                        'bb_upper': technical_data.get('bb_upper'),
-                        'bb_lower': technical_data.get('bb_lower')
-                    },
-                    'signals': {
-                        'trend_score': technical_data.get('trend_score'),
-                        'momentum_score': technical_data.get('momentum_score'),
-                        'volume_score': technical_data.get('volume_score'),
-                        'volatility_score': technical_data.get('volatility_score')
-                    }
-                },
-                'financial': {
-                    'current': {
-                        'eps_growth': financial_data.get('eps_growth'),
-                        'revenue_growth': financial_data.get('revenue_growth'),
-                        'profit_margin': financial_data.get('profit_margin'),
-                        'debt_to_equity': financial_data.get('debt_to_equity'),
-                        'current_ratio': financial_data.get('current_ratio'),
-                        'roe': financial_data.get('roe')
-                    },
-                    'reports': latest_reports,
-                    'announcements': symbol_announcements
-                },
-                'dividend': dividend_analysis
-            }
-            
-            logger.info(f"Prepared analysis data for {symbol} with technical indicators, financial data, and dividend information")
-            
-            # Get historical data for pattern recognition
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Get last 30 days of data
-            cursor.execute("""
-                SELECT * FROM tradingview_ta 
-                WHERE symbol = ? 
-                ORDER BY date DESC 
-                LIMIT 30
-            """, (symbol,))
-            
-            historical_data = cursor.fetchall()
-            conn.close()
-            
-            if historical_data:
-                # Convert historical data to list of dictionaries
-                columns = [description[0] for description in cursor.description]
-                historical_analysis = []
-                for row in historical_data:
-                    historical_analysis.append(dict(zip(columns, row)))
-                
-                analysis_data['historical'] = historical_analysis
-                logger.info(f"Retrieved {len(historical_analysis)} days of historical data for {symbol}")
-            
-            # Prepare AI analysis prompt with enhanced investment focus
-            prompt = f"""Analyze this stock data and provide a professional investment analysis:
-
-Symbol: {symbol}
-
-TECHNICAL ANALYSIS
------------------
-Current Price: {analysis_data['technical']['price']['close']}
-Price Change: {analysis_data['technical']['price']['change_percent']}%
-Volume: {analysis_data['technical']['price']['volume']}
-
-Key Indicators:
-- RSI: {analysis_data['technical']['indicators']['rsi']}
-- MACD: {analysis_data['technical']['indicators']['macd']}
-- Signal Line: {analysis_data['technical']['indicators']['macd_signal']}
-- SMA20: {analysis_data['technical']['indicators']['sma_20']}
-- SMA50: {analysis_data['technical']['indicators']['sma_50']}
-- SMA200: {analysis_data['technical']['indicators']['sma_200']}
-
-Technical Scores:
-- Trend Score: {analysis_data['technical']['signals']['trend_score']}
-- Momentum Score: {analysis_data['technical']['signals']['momentum_score']}
-- Volume Score: {analysis_data['technical']['signals']['volume_score']}
-- Volatility Score: {analysis_data['technical']['signals']['volatility_score']}
-
-FINANCIAL ANALYSIS
------------------
-Current Metrics:
-- EPS Growth: {analysis_data['financial']['current']['eps_growth']}%
-- Revenue Growth: {analysis_data['financial']['current']['revenue_growth']}%
-- Profit Margin: {analysis_data['financial']['current']['profit_margin']}%
-- Debt-to-Equity: {analysis_data['financial']['current']['debt_to_equity']}
-- Current Ratio: {analysis_data['financial']['current']['current_ratio']}
-- ROE: {analysis_data['financial']['current']['roe']}%
-
-DIVIDEND ANALYSIS
-----------------
-Current Dividend:
-- Amount: {analysis_data['dividend']['current_dividend']['dividend_amount'] if analysis_data['dividend']['current_dividend'] else 'N/A'}
-- Yield: {f"{analysis_data['dividend']['dividend_yield']:.2f}%" if analysis_data['dividend']['dividend_yield'] else 'N/A'}
-- Growth: {f"{analysis_data['dividend']['dividend_growth']:.2f}%" if analysis_data['dividend']['dividend_growth'] else 'N/A'}
-- Sustainability: {analysis_data['dividend']['dividend_sustainability']}
-
-Dividend Statistics:
-- Total Dividends: {analysis_data['dividend']['dividend_stats']['total_dividends'] if analysis_data['dividend']['dividend_stats'] else 'N/A'}
-- Average Amount: {analysis_data['dividend']['dividend_stats']['avg_dividend_amount'] if analysis_data['dividend']['dividend_stats'] else 'N/A'}
-- Frequency: {analysis_data['dividend']['dividend_stats']['dividend_frequency'] if analysis_data['dividend']['dividend_stats'] else 'N/A'}
-
-Financial Reports:
-{json.dumps(analysis_data['financial']['reports'], indent=2)}
-
-Recent Announcements:
-{json.dumps(analysis_data['financial']['announcements'], indent=2)}
-
-HISTORICAL PATTERN ANALYSIS
---------------------------
-{analysis_data.get('historical', [])}
-
-Please provide a professional investment analysis in the following format:
-
-1. COMPANY OVERVIEW
-------------------
-- Business model analysis
-- Market position
-- Competitive advantages
-- Growth potential
-- Recent developments and announcements
-
-2. FINANCIAL HEALTH
-------------------
-- Revenue and earnings analysis
-- Profitability trends
-- Balance sheet strength
-- Cash flow analysis
-- Dividend history and policy
-- Financial ratios analysis
-- Peer comparison
-
-3. INVESTMENT THESIS
--------------------
-- Key investment drivers
-- Growth catalysts
-- Risk factors
-- Competitive position
-- Industry outlook
-- Management quality assessment
-- Corporate governance analysis
-
-4. VALUATION ANALYSIS
---------------------
-- Current valuation metrics
-- Peer comparison
-- Historical valuation ranges
-- Fair value estimate
-- Margin of safety
-- DCF analysis (if possible)
-- Comparable company analysis
-
-5. INVESTMENT RECOMMENDATION
----------------------------
-- Clear investment bias (Strong Buy/Buy/Hold/Sell/Strong Sell)
-- Investment horizon
-- Entry price range
-- Target price
-- Position sizing guidelines
-- Risk management approach
-- Portfolio fit analysis
-
-6. MONITORING POINTS
--------------------
-- Key metrics to track
-- Important announcements to watch
-- Risk factors to monitor
-- Exit criteria
-- Quarterly earnings expectations
-- Industry developments to watch
-
-Please ensure the analysis is clear, professional, and focused on long-term investment value rather than short-term trading opportunities. Consider both quantitative metrics and qualitative factors in your analysis.
-
-Additional Guidelines:
-1. For stocks with limited financial data (like PAEL), focus on:
-   - Technical analysis and price patterns
-   - Volume analysis and liquidity
-   - Market sentiment and momentum
-   - Recent announcements and news
-   - Industry trends and peer comparison
-   - Risk assessment and volatility
-
-2. For stocks with complete financial data, include:
-   - Detailed financial ratio analysis
-   - Growth projections
-   - Valuation models
-   - Dividend analysis
-   - Management quality assessment
-
-3. Always consider:
-   - Market conditions and sector trends
-   - Regulatory environment
-   - Competitive landscape
-   - Risk factors and mitigation strategies
-   - Entry and exit points
-   - Position sizing recommendations
-
-4. Provide specific price targets and levels:
-   - Support and resistance levels
-   - Stop loss recommendations
-   - Take profit targets
-   - Risk-reward ratios
-   - Entry price ranges
-   - Exit criteria
-
-5. Include risk warnings and disclaimers:
-   - Market risk factors
-   - Company-specific risks
-   - Liquidity concerns
-   - Regulatory risks
-   - Industry-specific risks
-
-Please provide a balanced analysis that considers both opportunities and risks, with clear recommendations and actionable insights.
-"""
-            
-            logger.info(f"Prepared AI analysis prompt for {symbol}")
-            
-            # Call AI model (using DeepSeek or similar)
-            ai_analysis = self.call_ai_model(prompt)
-            
-            if ai_analysis:
-                # Process AI analysis with enhanced investment focus
-                processed_analysis = {
-                    'company_overview': ai_analysis.get('company_overview', ''),
-                    'financial_health': ai_analysis.get('financial_health', ''),
-                    'investment_thesis': ai_analysis.get('investment_thesis', ''),
-                    'valuation_analysis': ai_analysis.get('valuation_analysis', ''),
-                    'investment_recommendation': ai_analysis.get('investment_recommendation', ''),
-                    'monitoring_points': ai_analysis.get('monitoring_points', ''),
-                    'confidence_score': ai_analysis.get('confidence_score', 0.0),
-                    'fair_value': ai_analysis.get('fair_value', None),
-                    'target_price': ai_analysis.get('target_price', None),
-                    'entry_range': ai_analysis.get('entry_range', []),
-                    'investment_horizon': ai_analysis.get('investment_horizon', ''),
-                    'position_size': ai_analysis.get('position_size', ''),
-                    'dcf_value': ai_analysis.get('dcf_value', None),
-                    'peer_comparison': ai_analysis.get('peer_comparison', {}),
-                    'risk_assessment': ai_analysis.get('risk_assessment', {}),
-                    'growth_catalysts': ai_analysis.get('growth_catalysts', []),
-                    'management_quality': ai_analysis.get('management_quality', ''),
-                    'corporate_governance': ai_analysis.get('corporate_governance', ''),
-                    'dividend_analysis': dividend_analysis
-                }
-                
-                # Format the analysis for logging
-                formatted_analysis = f"""
-AI Investment Analysis for {symbol}
-=================================
-
-Company Overview
----------------
-{processed_analysis['company_overview']}
-
-Financial Health
----------------
-{processed_analysis['financial_health']}
-
-Investment Thesis
-----------------
-{processed_analysis['investment_thesis']}
-
-Valuation Analysis
------------------
-{processed_analysis['valuation_analysis']}
-
-Investment Recommendation
-------------------------
-{processed_analysis['investment_recommendation']}
-
-Monitoring Points
-----------------
-{processed_analysis['monitoring_points']}
-
-Key Metrics
------------
-Confidence Score: {processed_analysis['confidence_score']}
-Fair Value: {processed_analysis['fair_value']}
-DCF Value: {processed_analysis['dcf_value']}
-Target Price: {processed_analysis['target_price']}
-Entry Range: {processed_analysis['entry_range']}
-Investment Horizon: {processed_analysis['investment_horizon']}
-Position Size: {processed_analysis['position_size']}
-
-Dividend Analysis
-----------------
-Current Dividend: {json.dumps(processed_analysis['dividend_analysis']['current_dividend'], indent=2) if processed_analysis['dividend_analysis']['current_dividend'] else 'N/A'}
-Dividend Yield: {f"{processed_analysis['dividend_analysis']['dividend_yield']:.2f}%" if processed_analysis['dividend_analysis']['dividend_yield'] else 'N/A'}
-Dividend Growth: {f"{processed_analysis['dividend_analysis']['dividend_growth']:.2f}%" if processed_analysis['dividend_analysis']['dividend_growth'] else 'N/A'}
-Dividend Sustainability: {processed_analysis['dividend_analysis']['dividend_sustainability']}
-
-Additional Analysis
-------------------
-Peer Comparison: {json.dumps(processed_analysis['peer_comparison'], indent=2)}
-Risk Assessment: {json.dumps(processed_analysis['risk_assessment'], indent=2)}
-Growth Catalysts: {json.dumps(processed_analysis['growth_catalysts'], indent=2)}
-Management Quality: {processed_analysis['management_quality']}
-Corporate Governance: {processed_analysis['corporate_governance']}
-"""
-                
-                logger.info(f"Successfully processed AI investment analysis for {symbol}")
-                logger.info(formatted_analysis)
-                
-                return processed_analysis
-            else:
-                logger.warning(f"No AI analysis returned for {symbol}")
-                return None
-            
-        except Exception as e:
-            logger.error(f"Error in AI analysis for {symbol}: {e}")
             return None
 
     def _retry_with_backoff(self, func, max_retries=3, initial_delay=1, max_delay=32):
