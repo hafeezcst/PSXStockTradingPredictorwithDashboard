@@ -1,8 +1,8 @@
 {
     "telegram": {
         "enabled": true,
-        "bot_token": "",
-        "chat_ids": []
+        "bot_token": "6860197701:AAESTzERZLYbqyU6gFKfAwJQL8jJ_HNKLbM",
+        "chat_ids": ["-4152327824"]
     },
     "alerts": {
         "signal_transitions": true,

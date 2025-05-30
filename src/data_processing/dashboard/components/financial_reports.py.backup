@@ -2407,30 +2407,30 @@ Please try:
                         for i, chunk in enumerate(report1_chunks):
                             logger.info(f"Analyzing chunk {i+1}/{len(report1_chunks)} with DeepSeek")
                             prompt = f"{base_prompt}\n\nFirst Report Section {i+1}/{len(report1_chunks)}:\n{chunk}"
-                            
-                            payload = {
-                                "model": MODEL_OPTIONS["DeepSeek"]["model_name"],
-                                "messages": [
+                        
+                        payload = {
+                            "model": MODEL_OPTIONS["DeepSeek"]["model_name"],
+                            "messages": [
                                     {"role": "system", "content": "Financial analyst"},
-                                    {"role": "user", "content": prompt}
-                                ],
-                                "max_tokens": MODEL_OPTIONS["DeepSeek"]["max_tokens"],
-                                "temperature": 0.7,
-                                "top_p": 0.95
-                            }
-                            
+                                {"role": "user", "content": prompt}
+                            ],
+                            "max_tokens": MODEL_OPTIONS["DeepSeek"]["max_tokens"],
+                            "temperature": 0.7,
+                            "top_p": 0.95
+                        }
+                        
                             try:
-                                response = requests.post(
-                                    MODEL_OPTIONS["DeepSeek"]["url"],
-                                    headers=headers,
-                                    json=payload,
-                                    timeout=60
-                                )
-                                
-                                if response.status_code == 200:
+                        response = requests.post(
+                            MODEL_OPTIONS["DeepSeek"]["url"],
+                            headers=headers,
+                            json=payload,
+                            timeout=60
+                        )
+                        
+                        if response.status_code == 200:
                                     chunk_analysis = response.json()['choices'][0]['message']['content']
                                     analyses.append(chunk_analysis)
-                                    used_model = "DeepSeek"
+                            used_model = "DeepSeek"
                                     logger.info(f"Successfully analyzed chunk {i+1} with DeepSeek")
                                 else:
                                     logger.error(f"Error analyzing chunk {i+1} with DeepSeek: {response.text}")
@@ -2444,31 +2444,31 @@ Please try:
                             for i, chunk in enumerate(report2_chunks):
                                 logger.info(f"Analyzing second report chunk {i+1}/{len(report2_chunks)} with DeepSeek")
                                 prompt = f"{base_prompt}\n\nSecond Report Section {i+1}/{len(report2_chunks)}:\n{chunk}"
-                                
-                                payload = {
+                        
+                        payload = {
                                     "model": MODEL_OPTIONS["DeepSeek"]["model_name"],
-                                    "messages": [
+                            "messages": [
                                         {"role": "system", "content": "Financial analyst"},
-                                        {"role": "user", "content": prompt}
-                                    ],
+                                {"role": "user", "content": prompt}
+                            ],
                                     "max_tokens": MODEL_OPTIONS["DeepSeek"]["max_tokens"],
-                                    "temperature": 0.7,
+                                "temperature": 0.7,
                                     "top_p": 0.95
-                                }
-                                
+                        }
+                        
                                 try:
-                                    response = requests.post(
+                        response = requests.post(
                                         MODEL_OPTIONS["DeepSeek"]["url"],
-                                        headers=headers,
-                                        json=payload,
-                                        timeout=60
-                                    )
-                                    
-                                    if response.status_code == 200:
+                            headers=headers,
+                            json=payload,
+                            timeout=60
+                        )
+                        
+                        if response.status_code == 200:
                                         chunk_analysis = response.json()['choices'][0]['message']['content']
                                         analyses.append(chunk_analysis)
                                         logger.info(f"Successfully analyzed second report chunk {i+1} with DeepSeek")
-                                    else:
+                            else:
                                         logger.error(f"Error analyzing second report chunk {i+1} with DeepSeek: {response.text}")
                                         analyses.append(f"Error analyzing section {i+1}: {response.text}")
                                 except Exception as e:
