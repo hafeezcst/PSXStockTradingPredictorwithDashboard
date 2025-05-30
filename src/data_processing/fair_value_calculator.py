@@ -32,6 +32,7 @@ class FairValueCalculator:
     - AI-enhanced signal generation and analysis
     - Database storage of analysis results
     - Telegram notification system
+    - Discounted Cash Flow (DCF) valuation
     
     Attributes:
         db_path (str): Path to the main analysis database
@@ -52,129 +53,227 @@ class FairValueCalculator:
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        # Initialize database
         self._init_database()
+
+    def _handle_error(self, error: Exception, context: str, default_return=None):
+        """Utility method to handle exceptions with consistent logging.
+        
+        Args:
+            error: The exception object caught.
+            context: A string describing the context of the error.
+            default_return: The value to return in case of error, if applicable.
+        
+        Returns:
+            The default_return value if provided, otherwise None.
+        """
+        logger.error(f"Error in {context}: {str(error)}")
+        return default_return
+
+    def calculate_dcf_value(self, symbol: str, years: int = 5, discount_rate: float = 0.1, terminal_growth_rate: float = 0.03) -> float:
+        """Calculate the Discounted Cash Flow (DCF) value for a given stock symbol.
+        
+        This method uses the DCF model to estimate the intrinsic value of a stock based on projected
+        free cash flows, a discount rate, and a terminal growth rate. It includes estimates for capital
+        expenditures and changes in working capital based on historical data or industry averages if
+        specific data is unavailable.
+        
+        Args:
+            symbol (str): The stock symbol to calculate the DCF value for.
+            years (int): Number of years for cash flow projections. Default is 5.
+            discount_rate (float): The discount rate used in the DCF calculation. Default is 0.1 (10%).
+            terminal_growth_rate (float): The terminal growth rate for perpetuity. Default is 0.03 (3%).
+        
+        Returns:
+            float: The calculated DCF value of the stock.
+        
+        Raises:
+            ValueError: If the required financial data is not available or invalid.
+        """
+        try:
+            # Get the latest financial data
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT * FROM financial_reports 
+                WHERE symbol = ? 
+                ORDER BY report_date DESC 
+                LIMIT 1
+            """, (symbol,))
+            
+            financial_data = cursor.fetchone()
+            conn.close()
+            
+            if not financial_data:
+                raise ValueError(f"No financial data available for symbol: {symbol}")
+            
+            # Extract necessary financial metrics
+            revenue = financial_data['revenue_growth']
+            ebitda = financial_data['profit_margin'] * revenue / 100  # Assuming profit margin is EBITDA margin
+            
+            # Estimate capital expenditures (capex) and change in working capital (change_in_wc)
+            # Using industry average assumptions if specific data is not available
+            # Assuming capex is 10% of revenue as a rough estimate
+            capex = revenue * 0.1
+            # Assuming change in working capital is 5% of revenue growth
+            change_in_wc = revenue * 0.05
+            
+            # Calculate free cash flow
+            fcf = ebitda - capex - change_in_wc
+            
+            # Project future cash flows with a more conservative growth adjustment
+            projected_cash_flows = []
+            for year in range(1, years + 1):
+                growth_factor = min(revenue / 100, 0.2)  # Cap growth rate at 20% to avoid unrealistic projections
+                projected_cash_flow = fcf * (1 + growth_factor) ** year
+                projected_cash_flows.append(projected_cash_flow / (1 + discount_rate) ** year)
+            
+            # Calculate terminal value with a sanity check
+            if discount_rate <= terminal_growth_rate:
+                raise ValueError(f"Discount rate ({discount_rate}) must be greater than terminal growth rate ({terminal_growth_rate})")
+            terminal_value = projected_cash_flows[-1] * (1 + terminal_growth_rate) / (discount_rate - terminal_growth_rate)
+            terminal_value_discounted = terminal_value / (1 + discount_rate) ** years
+            
+            # Sum up the present value of projected cash flows and terminal value
+            dcf_value = sum(projected_cash_flows) + terminal_value_discounted
+            
+            # Ensure DCF value is not negative
+            return max(dcf_value, 0.0)
+            
+        except Exception as e:
+            self._handle_error(e, f"calculating DCF value for {symbol}")
+            raise
 
     def _init_database(self):
         """Initialize the SQLite database and create necessary tables"""
         try:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-            
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Create tradingview_ta table with updated schema
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS tradingview_ta (
-                symbol TEXT,
-                date TEXT,
-                recommendation TEXT,
-                buy_signals INTEGER,
-                sell_signals INTEGER,
-                neutral_signals INTEGER,
-                rsi REAL,
-                stoch_k REAL,
-                stoch_d REAL,
-                macd REAL,
-                macd_signal REAL,
-                macd_hist REAL,
-                sma_20 REAL,
-                sma_50 REAL,
-                sma_200 REAL,
-                ema_20 REAL,
-                ema_50 REAL,
-                ema_200 REAL,
-                close REAL,
-                open REAL,
-                high REAL,
-                low REAL,
-                volume REAL,
-                change REAL,
-                change_percent REAL,
-                bb_upper REAL,
-                bb_lower REAL,
-                ao REAL,
-                psar REAL,
-                vwma REAL,
-                hull_ma9 REAL,
-                source TEXT,
-                last_updated TEXT,
-                PRIMARY KEY (symbol, date)
-            )
-            ''')
-            
-            # Create tradingview_signals table with enhanced schema
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS tradingview_signals (
-                symbol TEXT,
-                date TEXT,
-                signal_type TEXT,
-                signal_strength REAL,
-                confidence_score REAL,
-                technical_score REAL,
-                trend_score REAL,
-                momentum_score REAL,
-                volume_score REAL,
-                volatility_score REAL,
-                support_level REAL,
-                resistance_level REAL,
-                stop_loss REAL,
-                take_profit REAL,
-                risk_reward_ratio REAL,
-                analysis_summary TEXT,
-                indicators_used TEXT,
-                last_updated TEXT,
-                ai_score REAL,
-                ai_confidence REAL,
-                ai_pattern_recognition TEXT,
-                ai_signal_strength TEXT,
-                ai_risk_assessment TEXT,
-                ai_recommendation TEXT,
-                ai_price_targets TEXT,
-                ai_entry_points TEXT,
-                ai_exit_points TEXT,
-                ai_analysis_date TEXT,
-                PRIMARY KEY (symbol, date)
-            )
-            ''')
-            
-            # Create financial_reports table
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS financial_reports (
-                symbol TEXT,
-                report_date TEXT,
-                eps_growth REAL,
-                revenue_growth REAL,
-                profit_margin REAL,
-                debt_to_equity REAL,
-                current_ratio REAL,
-                roe REAL,
-                last_updated TEXT,
-                PRIMARY KEY (symbol, report_date)
-            )
-            ''')
-            
-            conn.commit()
-            
-            # Verify tables exist and have correct structure
-            cursor.execute("SELECT COUNT(*) FROM tradingview_ta")
-            logger.info(f"tradingview_ta table initialized with {cursor.fetchone()[0]} records")
-            
-            cursor.execute("SELECT COUNT(*) FROM tradingview_signals")
-            logger.info(f"tradingview_signals table initialized with {cursor.fetchone()[0]} records")
-            
-            cursor.execute("SELECT COUNT(*) FROM financial_reports")
-            logger.info(f"financial_reports table initialized with {cursor.fetchone()[0]} records")
-            
-            conn.close()
-            logger.info(f"Database initialized successfully at {self.db_path}")
-            
+            self._create_database_directory()
+            self._connect_to_database()
+            self._create_tables()
+            self._verify_tables()
+            self._close_database_connection()
         except Exception as e:
-            logger.error(f"Error initializing database: {str(e)}")
-            if 'conn' in locals():
-                conn.close()
+            self._handle_error(e, "initializing database")
+            if hasattr(self, 'conn'):
+                self.conn.close()
             raise
+
+    def _create_database_directory(self):
+        """Create the directory for the database if it doesn't exist"""
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+
+    def _connect_to_database(self):
+        """Connect to the SQLite database"""
+        self.conn = sqlite3.connect(self.db_path)
+        self.cursor = self.conn.cursor()
+
+    def _create_tables(self):
+        """Create necessary tables in the database"""
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tradingview_ta (
+            symbol TEXT,
+            date TEXT,
+            recommendation TEXT,
+            buy_signals INTEGER,
+            sell_signals INTEGER,
+            neutral_signals INTEGER,
+            rsi REAL,
+            stoch_k REAL,
+            stoch_d REAL,
+            macd REAL,
+            macd_signal REAL,
+            macd_hist REAL,
+            sma_20 REAL,
+            sma_50 REAL,
+            sma_200 REAL,
+            ema_20 REAL,
+            ema_50 REAL,
+            ema_200 REAL,
+            close REAL,
+            open REAL,
+            high REAL,
+            low REAL,
+            volume REAL,
+            change REAL,
+            change_percent REAL,
+            bb_upper REAL,
+            bb_lower REAL,
+            ao REAL,
+            psar REAL,
+            vwma REAL,
+            hull_ma9 REAL,
+            source TEXT,
+            last_updated TEXT,
+            PRIMARY KEY (symbol, date)
+        )
+        ''')
+
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tradingview_signals (
+            symbol TEXT,
+            date TEXT,
+            signal_type TEXT,
+            signal_strength REAL,
+            confidence_score REAL,
+            technical_score REAL,
+            trend_score REAL,
+            momentum_score REAL,
+            volume_score REAL,
+            volatility_score REAL,
+            support_level REAL,
+            resistance_level REAL,
+            stop_loss REAL,
+            take_profit REAL,
+            risk_reward_ratio REAL,
+            analysis_summary TEXT,
+            indicators_used TEXT,
+            last_updated TEXT,
+            ai_score REAL,
+            ai_confidence REAL,
+            ai_pattern_recognition TEXT,
+            ai_signal_strength TEXT,
+            ai_risk_assessment TEXT,
+            ai_recommendation TEXT,
+            ai_price_targets TEXT,
+            ai_entry_points TEXT,
+            ai_exit_points TEXT,
+            ai_analysis_date TEXT,
+            PRIMARY KEY (symbol, date)
+        )
+        ''')
+
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS financial_reports (
+            symbol TEXT,
+            report_date TEXT,
+            eps_growth REAL,
+            revenue_growth REAL,
+            profit_margin REAL,
+            debt_to_equity REAL,
+            current_ratio REAL,
+            roe REAL,
+            last_updated TEXT,
+            PRIMARY KEY (symbol, report_date)
+        )
+        ''')
+
+        self.conn.commit()
+
+    def _verify_tables(self):
+        """Verify tables exist and have correct structure"""
+        self.cursor.execute("SELECT COUNT(*) FROM tradingview_ta")
+        logger.info(f"tradingview_ta table initialized with {self.cursor.fetchone()[0]} records")
+
+        self.cursor.execute("SELECT COUNT(*) FROM tradingview_signals")
+        logger.info(f"tradingview_signals table initialized with {self.cursor.fetchone()[0]} records")
+
+        self.cursor.execute("SELECT COUNT(*) FROM financial_reports")
+        logger.info(f"financial_reports table initialized with {self.cursor.fetchone()[0]} records")
+
+    def _close_database_connection(self):
+        """Close the database connection"""
+        self.conn.close()
+        logger.info(f"Database initialized successfully at {self.db_path}")
 
     def fetch_psx_symbols(self) -> List[str]:
         """Fetch list of PSX symbols from Excel file.
@@ -757,6 +856,16 @@ Provide a detailed analysis in the following format:
 - Risk factors to monitor
 - Exit criteria
 
+7. TECHNICAL ANALYSIS
+- Key technical indicators and their implications
+- Trend analysis
+- Support and resistance levels
+
+8. RISK MANAGEMENT
+- Position sizing
+- Stop loss and take profit strategies
+- Risk-reward ratio analysis
+
 Include specific metrics where possible:
 - Confidence Score (0-1)
 - Fair Value
@@ -765,6 +874,7 @@ Include specific metrics where possible:
 - Entry Range
 - Investment Horizon
 - Position Size
+- Risk-Reward Ratio
 """
             
             logger.info(f"Prepared AI analysis prompt for {symbol}")
@@ -1693,7 +1803,9 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                 conn.close()
 
     def fetch_tradingview_ta_data(self, symbol: str) -> Dict:
-        """Fetch data using tradingview_ta library with weekly timeframe"""
+        """Fetch data using tradingview_ta library with weekly timeframe and improved caching.
+        Optimized to prioritize the most common symbol format and implement better rate limiting.
+        """
         try:
             # First check if we have valid cached data
             cached_data = self.get_latest_data(symbol)
@@ -1716,8 +1828,7 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                 logger.info(f"Using existing data for {symbol}")
                 return cached_data
             
-            # Try different symbol formats with retry mechanism
-            # Start with the most common format first
+            # Prioritize the most common symbol format to reduce API calls
             symbol_formats = [
                 symbol,           # Just the symbol (most common)
                 f"{symbol}.PSX",  # PSX suffix (second most common)
@@ -1728,9 +1839,11 @@ Corporate Governance: {processed_analysis['corporate_governance']}
             data = {}
             success = False
             max_retries = 2
-            retry_delay = 1
+            initial_retry_delay = 2
+            max_delay = 10
             
             for symbol_format in symbol_formats:
+                retry_delay = initial_retry_delay
                 for attempt in range(max_retries):
                     try:
                         logger.info(f"Attempting to fetch data for {symbol} using format: {symbol_format} (Attempt {attempt + 1}/{max_retries})")
@@ -1749,13 +1862,6 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                             logger.warning(f"Invalid analysis data received for {symbol} using format {symbol_format}")
                             continue
                         
-                        # Debug logging for raw data
-                        logger.info(f"Raw analysis for {symbol} ({symbol_format}):")
-                        logger.info(f"Summary: {analysis.summary}")
-                        logger.info(f"Oscillators: {analysis.oscillators}")
-                        logger.info(f"Moving Averages: {analysis.moving_averages}")
-                        logger.info(f"Indicators: {analysis.indicators}")
-                        
                         # Extract summary data
                         if analysis.summary:
                             data.update({
@@ -1764,7 +1870,6 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                                 'sell_signals': analysis.summary.get('SELL'),
                                 'neutral_signals': analysis.summary.get('NEUTRAL')
                             })
-                            logger.info(f"Extracted summary data for {symbol}: {data}")
                         
                         # Extract all indicators from the indicators dictionary
                         if analysis.indicators:
@@ -1785,28 +1890,19 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                             
                             # Calculate daily change if we have both close and open
                             if close is not None and open_price is not None:
-                                # Calculate absolute change
                                 price_metrics['change'] = close - open_price
-                                
-                                # Calculate percentage change
                                 if open_price != 0:
                                     price_metrics['change_percent'] = (price_metrics['change'] / open_price) * 100
-                                    logger.info(f"Calculated change: {price_metrics['change']:.2f} ({price_metrics['change_percent']:.2f}%)")
-                                else:
-                                    logger.warning(f"Open price is zero for {symbol}, cannot calculate percentage change")
                             
                             # Calculate high-low range if we have both high and low
                             if high is not None and low is not None:
                                 price_metrics['high_low_range'] = high - low
                                 if low != 0:
                                     price_metrics['high_low_range_percent'] = (price_metrics['high_low_range'] / low) * 100
-                                    logger.info(f"High-Low range: {price_metrics['high_low_range']:.2f} ({price_metrics['high_low_range_percent']:.2f}%)")
                             
                             # Calculate volatility (standard deviation of price changes)
                             if all(x is not None for x in [close, open_price, high, low]):
-                                # Simple volatility calculation based on high-low range
                                 price_metrics['volatility'] = price_metrics['high_low_range_percent'] / 2
-                                logger.info(f"Calculated volatility: {price_metrics['volatility']:.2f}%")
                             
                             indicator_data = {
                                 # Oscillators
@@ -1850,7 +1946,6 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                             required_fields = ['close', 'open', 'high', 'low', 'volume']
                             if all(indicator_data.get(field) is not None for field in required_fields):
                                 data.update(indicator_data)
-                                logger.info(f"Extracted all indicators for {symbol}: {indicator_data}")
                                 success = True
                                 break
                             else:
@@ -1870,6 +1965,7 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                         
                         if attempt < max_retries - 1:
                             time.sleep(retry_delay)
+                            retry_delay = min(retry_delay * 2, max_delay)  # Exponential backoff for retries
                         continue
                 
                 if success:
@@ -2062,7 +2158,17 @@ Corporate Governance: {processed_analysis['corporate_governance']}
                 conn.close()
 
     def analyze_stock_signals(self):
-        """Analyze stock data and generate AI-based signals"""
+        """Analyze stock data and generate AI-based signals for all symbols.
+        
+        This method fetches the latest data for each symbol from the database,
+        performs a comprehensive analysis using technical indicators, and integrates
+        AI-based insights to generate trading signals. It leverages the 
+        `analyze_stock_indicators` method for individual stock analysis to avoid
+        code duplication and ensure consistency.
+        
+        Returns:
+            List[Dict]: A list of signal dictionaries for each analyzed stock.
+        """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -2094,11 +2200,12 @@ Corporate Governance: {processed_analysis['corporate_governance']}
             # Analyze each stock
             signals = []
             for stock in stocks:
-                signal = self._generate_stock_signal(stock)
-                signals.append(signal)
-            
-            # Save signals to database
-            self._save_signals_to_db(signals)
+                symbol = stock['symbol']
+                logger.info(f"Analyzing signals for {symbol}")
+                signal = self.analyze_stock_indicators(stock)
+                if signal:
+                    signals.append(signal)
+                    self.save_analysis_to_db(symbol, signal)
             
             conn.close()
             return signals
@@ -2108,172 +2215,6 @@ Corporate Governance: {processed_analysis['corporate_governance']}
             if 'conn' in locals():
                 conn.close()
             return []
-
-    def _generate_stock_signal(self, stock):
-        """Generate AI-based signal for a single stock"""
-        try:
-            # Initialize signal dictionary
-            signal = {
-                'symbol': stock['symbol'],
-                'date': stock['date'],
-                'signal': 'NEUTRAL',
-                'confidence': 0.0,
-                'reasons': []
-            }
-            
-            # Technical Analysis Score (0-100)
-            ta_score = 0
-            reasons = []
-            
-            # 1. Trend Analysis (30 points)
-            trend_score = 0
-            if stock['sma_20'] is not None and stock['sma_50'] is not None:
-                if stock['close'] > stock['sma_20'] > stock['sma_50']:
-                    trend_score += 15
-                    reasons.append("Strong uptrend: Price above both SMAs")
-                elif stock['close'] > stock['sma_20']:
-                    trend_score += 10
-                    reasons.append("Moderate uptrend: Price above SMA20")
-                elif stock['close'] < stock['sma_20'] < stock['sma_50']:
-                    trend_score -= 15
-                    reasons.append("Strong downtrend: Price below both SMAs")
-                elif stock['close'] < stock['sma_20']:
-                    trend_score -= 10
-                    reasons.append("Moderate downtrend: Price below SMA20")
-            
-            # 2. Momentum Analysis (30 points)
-            momentum_score = 0
-            if stock['rsi'] is not None:
-                if stock['rsi'] > 70:
-                    momentum_score -= 10
-                    reasons.append("Overbought: RSI above 70")
-                elif stock['rsi'] < 30:
-                    momentum_score += 10
-                    reasons.append("Oversold: RSI below 30")
-            
-            if stock['macd'] is not None and stock['macd_signal'] is not None:
-                if stock['macd'] > stock['macd_signal']:
-                    momentum_score += 10
-                    reasons.append("Positive MACD crossover")
-                else:
-                    momentum_score -= 10
-                    reasons.append("Negative MACD crossover")
-            
-            # 3. Volume Analysis (20 points)
-            volume_score = 0
-            if stock['volume'] is not None and stock['change'] is not None:
-                if stock['change'] > 0 and stock['volume'] > 1000000:  # High volume with price increase
-                    volume_score += 10
-                    reasons.append("High volume with price increase")
-                elif stock['change'] < 0 and stock['volume'] > 1000000:  # High volume with price decrease
-                    volume_score -= 10
-                    reasons.append("High volume with price decrease")
-            
-            # 4. Volatility Analysis (20 points)
-            volatility_score = 0
-            if stock['bb_upper'] is not None and stock['bb_lower'] is not None:
-                bb_range = stock['bb_upper'] - stock['bb_lower']
-                volatility = bb_range / stock['close'] * 100
-                price_position = (stock['close'] - stock['bb_lower']) / bb_range * 100
-                
-                # Volatility score based on BB range
-                if volatility > 15:
-                    volatility_score = -20
-                    reasons.append("Very high volatility: BB range > 15%")
-                elif volatility > 10:
-                    volatility_score = -15
-                    reasons.append("High volatility: BB range > 10%")
-                elif volatility < 5:
-                    volatility_score = 15
-                    reasons.append("Low volatility: BB range < 5%")
-                elif volatility < 8:
-                    volatility_score = 10
-                    reasons.append("Moderate volatility: BB range < 8%")
-                
-                # Calculate support and resistance levels
-                signal['support_level'] = stock['bb_lower']
-                signal['resistance_level'] = stock['bb_upper']
-                
-                # Add price position relative to BB
-                if price_position > 80:
-                    reasons.append("Price near upper BB: 80% of range")
-                    volatility_score -= 5
-                elif price_position < 20:
-                    reasons.append("Price near lower BB: 20% of range")
-                    volatility_score += 5
-            
-            # Calculate final score
-            final_score = trend_score + momentum_score + volume_score + volatility_score
-            
-            # Determine signal and confidence
-            if final_score >= 30:
-                signal['signal'] = 'STRONG_BUY'
-                signal['confidence'] = min(final_score / 50, 1.0)
-            elif final_score >= 15:
-                signal['signal'] = 'BUY'
-                signal['confidence'] = min(final_score / 40, 0.8)
-            elif final_score <= -30:
-                signal['signal'] = 'STRONG_SELL'
-                signal['confidence'] = min(abs(final_score) / 50, 1.0)
-            elif final_score <= -15:
-                signal['signal'] = 'SELL'
-                signal['confidence'] = min(abs(final_score) / 40, 0.8)
-            else:
-                signal['signal'] = 'NEUTRAL'
-                signal['confidence'] = 0.5
-            
-            signal['reasons'] = reasons
-            signal['score'] = final_score
-            
-            return signal
-            
-        except Exception as e:
-            logger.error(f"Error generating signal for {stock['symbol']}: {e}")
-            return None
-
-    def _save_signals_to_db(self, signals):
-        """Save generated signals to database"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Create signals table if it doesn't exist
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS stock_signals (
-                symbol TEXT,
-                date TEXT,
-                signal TEXT,
-                confidence REAL,
-                score REAL,
-                reasons TEXT,
-                PRIMARY KEY (symbol, date)
-            )
-            ''')
-            
-            # Insert signals
-            for signal in signals:
-                if signal:
-                    cursor.execute('''
-                    INSERT OR REPLACE INTO stock_signals
-                    (symbol, date, signal, confidence, score, reasons)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (
-                        signal['symbol'],
-                        signal['date'],
-                        signal['signal'],
-                        signal['confidence'],
-                        signal['score'],
-                        '|'.join(signal['reasons'])
-                    ))
-            
-            conn.commit()
-            conn.close()
-            logger.info(f"Successfully saved {len(signals)} signals to database")
-            
-        except Exception as e:
-            logger.error(f"Error saving signals to database: {e}")
-            if 'conn' in locals():
-                conn.close()
 
     def verify_database_data(self):
         """Verify the quality and completeness of data in the database"""
