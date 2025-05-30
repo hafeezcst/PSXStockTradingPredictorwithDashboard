@@ -6,6 +6,8 @@ import json
 import requests
 from typing import Dict, List, Optional, Tuple, Union, Any
 from datetime import datetime
+from dotenv import load_dotenv
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +21,145 @@ class AIAnalyzer:
         None
     """
     
+    def validate_env_file(self) -> Dict[str, bool]:
+        """Validate the .env file and API keys.
+        
+        Returns:
+            Dict[str, bool]: Dictionary containing validation results for each key
+        """
+        validation_results = {
+            'env_file_exists': False,
+            'deepseek_key_valid': False,
+            'grok_key_valid': False,
+            'deepseek_key_format': False,
+            'grok_key_format': False
+        }
+        
+        try:
+            # Check if .env file exists
+            env_path = "/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/.env"
+            if os.path.exists(env_path):
+                validation_results['env_file_exists'] = True
+                logger.info(f"Found .env file at {env_path}")
+                
+                # Load environment variables
+                load_dotenv(env_path, override=True)
+                
+                # Validate DeepSeek API key
+                deepseek_key = os.getenv('DEEPSEEK_API_KEY')
+                if deepseek_key:
+                    validation_results['deepseek_key_valid'] = True
+                    if deepseek_key.startswith('ds-') or deepseek_key.startswith('sk-'):
+                        validation_results['deepseek_key_format'] = True
+                        logger.info("DeepSeek API key format is valid")
+                    else:
+                        logger.warning("DeepSeek API key has invalid format")
+                else:
+                    logger.warning("DeepSeek API key not found in .env file")
+                
+                # Validate Grok API key (XAI)
+                grok_key = os.getenv('XAI_API_KEY')
+                if grok_key:
+                    validation_results['grok_key_valid'] = True
+                    if grok_key.startswith('xai-'):
+                        validation_results['grok_key_format'] = True
+                        logger.info("Grok API key format is valid")
+                    else:
+                        logger.warning("Grok API key has invalid format")
+                else:
+                    logger.warning("Grok API key not found in .env file")
+                
+                # Print validation summary
+                print("\nAPI Key Validation Results:")
+                print("=" * 30)
+                print(f"✓ .env file exists: {validation_results['env_file_exists']}")
+                print("\nDeepSeek API Key:")
+                print(f"  • Key present: {validation_results['deepseek_key_valid']}")
+                print(f"  • Valid format: {validation_results['deepseek_key_format']}")
+                if validation_results['deepseek_key_valid'] and not validation_results['deepseek_key_format']:
+                    print("  ⚠ Format should start with 'ds-' or 'sk-'")
+                
+                print("\nGrok API Key (XAI):")
+                print(f"  • Key present: {validation_results['grok_key_valid']}")
+                print(f"  • Valid format: {validation_results['grok_key_format']}")
+                if validation_results['grok_key_valid'] and not validation_results['grok_key_format']:
+                    print("  ⚠ Format should start with 'xai-'")
+                
+                print("\nRecommendations:")
+                if not validation_results['env_file_exists']:
+                    print("• Create a .env file in the project root")
+                if not validation_results['deepseek_key_valid']:
+                    print("• Add DeepSeek API key to .env file")
+                if not validation_results['grok_key_valid']:
+                    print("• Add Grok API key to .env file")
+                if validation_results['deepseek_key_valid'] and not validation_results['deepseek_key_format']:
+                    print("• Update DeepSeek API key format")
+                if validation_results['grok_key_valid'] and not validation_results['grok_key_format']:
+                    print("• Update Grok API key format")
+                
+                print("\nExample .env format:")
+                print("DEEPSEEK_API_KEY=ds-your-key-here")
+                print("XAI_API_KEY=xai-your-key-here")
+                print("=" * 30)
+                
+            else:
+                logger.error(f".env file not found at {env_path}")
+                print("\n⚠️  Error: .env file not found!")
+                print(f"Please create a .env file at: {env_path}")
+                print("\nRequired format:")
+                print("DEEPSEEK_API_KEY=ds-your-key-here")
+                print("XAI_API_KEY=xai-your-key-here")
+            
+            return validation_results
+            
+        except Exception as e:
+            logger.error(f"Error validating .env file: {str(e)}")
+            return validation_results
+
     def __init__(self) -> None:
         """Initialize the AIAnalyzer."""
-        pass
+        # Validate .env file and API keys first
+        self.validate_env_file()
+        
+        # Load environment variables from the correct path
+        env_path = "/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/.env"
+        if os.path.exists(env_path):
+            logger.debug(f"Loading environment variables from {env_path}")
+            load_dotenv(env_path, override=True)
+        else:
+            logger.warning(f".env file not found at {env_path}")
+        
+        # Load API keys
+        self.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
+        self.grok_api_key = os.getenv('XAI_API_KEY')  # Using XAI API key for Grok
+        
+        # Log API key status (safely)
+        if self.deepseek_api_key:
+            if len(self.deepseek_api_key) < 20:
+                logger.warning("DeepSeek API key appears to be incomplete")
+            else:
+                logger.info("DeepSeek API key loaded successfully")
+                logger.debug(f"DeepSeek API key starts with: {self.deepseek_api_key[:8]}...")
+        else:
+            logger.warning("DeepSeek API key not found in environment variables")
+            
+        if self.grok_api_key:
+            if self.grok_api_key == 'xai-':
+                logger.warning("Grok API key appears to be incomplete (only prefix provided)")
+            elif len(self.grok_api_key) < 20:
+                logger.warning("Grok API key appears to be incomplete")
+            else:
+                logger.info("Grok API key loaded successfully")
+                logger.debug(f"Grok API key starts with: {self.grok_api_key[:8]}...")
+        else:
+            logger.warning("Grok API key not found in environment variables")
+        
+        self.deepseek_api_url = "https://api.deepseek.com/v1/chat/completions"
+        self.grok_api_url = "https://api.grok.ai/v1/chat/completions"  # Replace with actual Grok API endpoint
+        self._round_float = lambda x: round(float(x), 2) if x is not None else None
+        self._cache = {}
+        self._last_call_time = {}
+        self._cooldown = int(os.getenv('ANALYSIS_COOLDOWN', '300'))  # 5 minutes cooldown between calls for same symbol
 
     def _handle_error(self, error: Exception, context: str, default_return=None):
         """Utility method to handle exceptions with consistent logging.
@@ -49,7 +187,6 @@ class AIAnalyzer:
         Returns:
             The result of the function if successful, None otherwise.
         """
-        import time
         delay = initial_delay
         last_exception = None
         
@@ -72,58 +209,54 @@ class AIAnalyzer:
         logger.error(f"Failed after {max_retries} retries. Last error: {str(last_exception)}")
         return None
 
-    def _validate_api_key(self) -> bool:
-        """Validate the DeepSeek API key with a simple test call.
+    def _validate_api_keys(self) -> bool:
+        """Validate both DeepSeek and Grok API keys."""
+        if not self.deepseek_api_key and not self.grok_api_key:
+            logger.warning("No API keys found. AI analysis will be disabled.")
+            return False
         
-        Returns:
-            bool: True if API key is valid, False otherwise.
-        """
-        try:
-            api_key = os.getenv('DEEPSEEK_API_KEY')
-            if not api_key:
-                logger.warning("DeepSeek API key not found in environment variables")
+        # Validate DeepSeek API key if present
+        if self.deepseek_api_key:
+            # Remove any whitespace or newlines
+            self.deepseek_api_key = self.deepseek_api_key.strip()
+            
+            # Check for minimum length
+            if len(self.deepseek_api_key) < 20:
+                logger.error("DeepSeek API key is too short. Please check your API key format.")
+                return False
+                
+            # Check for valid prefix
+            if not (self.deepseek_api_key.startswith('ds-') or self.deepseek_api_key.startswith('sk-')):
+                logger.error("Invalid DeepSeek API key format. API key should start with 'ds-' or 'sk-'")
                 return False
             
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
+            # Log key format (safely)
+            logger.debug(f"DeepSeek API key format: {self.deepseek_api_key[:8]}...{self.deepseek_api_key[-4:]}")
             
-            payload = {
-                "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": "Test API key validation"},
-                    {"role": "user", "content": "Test"}
-                ],
-                "max_tokens": 10,
-                "temperature": 0.7
-            }
+        # Validate Grok API key if present (using XAI API key)
+        if self.grok_api_key:
+            # Remove any whitespace or newlines
+            self.grok_api_key = self.grok_api_key.strip()
             
-            def test_api_call():
-                response = requests.post(
-                    "https://api.deepseek.com/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=30
-                )
+            # Check for minimum length
+            if len(self.grok_api_key) < 20:
+                logger.error("Grok API key is too short. Please check your API key format.")
+                return False
                 
-                if response.status_code == 200:
-                    return True
-                elif response.status_code == 401:
-                    logger.error("Invalid API key or authentication failed")
-                    return False
-                elif response.status_code == 429:
-                    raise requests.exceptions.RequestException("Rate limit exceeded")
-                else:
-                    raise requests.exceptions.RequestException(f"API request failed with status code {response.status_code}")
+            # Check for valid prefix (using XAI prefix)
+            if not self.grok_api_key.startswith('xai-'):
+                logger.error("Invalid Grok API key format. API key should start with 'xai-'")
+                return False
             
-            # Try the test call with retries
-            result = self._retry_with_backoff(test_api_call, max_retries=2, initial_delay=1)
-            return bool(result)
+            # Check if key is complete
+            if self.grok_api_key == 'xai-':
+                logger.error("Grok API key is incomplete. Please provide the complete API key.")
+                return False
             
-        except Exception as e:
-            logger.error(f"Error validating API key: {e}")
-            return False
+            # Log key format (safely)
+            logger.debug(f"Grok API key format: {self.grok_api_key[:8]}...{self.grok_api_key[-4:]}")
+            
+        return True
 
     def call_ai_model(self, prompt: str) -> Dict:
         """Call AI model for analysis with improved error handling and retries.
@@ -136,13 +269,13 @@ class AIAnalyzer:
         """
         try:
             # Validate API key first
-            if not self._validate_api_key():
-                logger.error("Failed to validate DeepSeek API key")
+            if not self._validate_api_keys():
+                logger.error("Failed to validate API keys")
                 return None
             
             # Get API key from environment
-            api_key = os.getenv('DEEPSEEK_API_KEY')
-            logger.info("DeepSeek API key validated, proceeding with API call")
+            api_key = self.deepseek_api_key or self.grok_api_key
+            logger.info("API key validated, proceeding with API call")
             
             headers = {
                 "Authorization": f"Bearer {api_key}",
@@ -150,7 +283,7 @@ class AIAnalyzer:
             }
             
             payload = {
-                "model": "deepseek-chat",
+                "model": "gpt-4",
                 "messages": [
                     {"role": "system", "content": "You are a professional financial analyst."},
                     {"role": "user", "content": prompt}
@@ -161,9 +294,9 @@ class AIAnalyzer:
             
             # Define the API call function
             def make_api_call():
-                logger.info("Making API call to DeepSeek...")
+                logger.info("Making API call to OpenAI...")
                 response = requests.post(
-                    "https://api.deepseek.com/v1/chat/completions",
+                    "https://api.openai.com/v1/chat/completions",
                     headers=headers,
                     json=payload,
                     timeout=120  # Increased timeout
@@ -293,213 +426,632 @@ class AIAnalyzer:
             logger.error(f"Error in AI model call: {e}")
             return None
 
-    def analyze_with_ai(self, symbol: str, technical_data: Dict, financial_data: Dict) -> Dict:
-        """Analyze stock data using AI to enhance signal generation with focus on investment perspective.
-        
-        Args:
-            symbol (str): Stock symbol to analyze.
-            technical_data (Dict): Technical analysis data.
-            financial_data (Dict): Financial analysis data.
-            
-        Returns:
-            Dict: AI-enhanced analysis results.
-        """
+    def analyze_with_ai(self, symbol: str, technical_data: Dict, financial_data: Dict) -> Optional[Dict]:
+        """Analyze stock data using AI"""
         try:
-            logger.info(f"Starting AI analysis for symbol: {symbol}")
-            
-            # Placeholder for dividend analysis (assuming it's part of financial_data or fetched separately)
-            dividend_analysis = financial_data.get('dividend_analysis', {})
-            
-            # Prepare data for AI analysis
-            analysis_data = {
-                'symbol': symbol,
-                'technical': {
-                    'price': {
-                        'close': technical_data.get('close'),
-                        'open': technical_data.get('open'),
-                        'high': technical_data.get('high'),
-                        'low': technical_data.get('low'),
-                        'volume': technical_data.get('volume'),
-                        'change_percent': technical_data.get('change_percent')
-                    },
-                    'indicators': {
-                        'rsi': technical_data.get('rsi'),
-                        'macd': technical_data.get('macd'),
-                        'macd_signal': technical_data.get('macd_signal'),
-                        'sma_20': technical_data.get('sma_20'),
-                        'sma_50': technical_data.get('sma_50'),
-                        'sma_200': technical_data.get('sma_200'),
-                        'bb_upper': technical_data.get('bb_upper'),
-                        'bb_lower': technical_data.get('bb_lower')
-                    },
-                    'signals': {
-                        'trend_score': technical_data.get('trend_score'),
-                        'momentum_score': technical_data.get('momentum_score'),
-                        'volume_score': technical_data.get('volume_score'),
-                        'volatility_score': technical_data.get('volatility_score')
-                    }
-                },
-                'financial': {
-                    'current': {
-                        'eps_growth': financial_data.get('eps_growth', 'N/A'),
-                        'revenue_growth': financial_data.get('revenue_growth', 'N/A'),
-                        'profit_margin': financial_data.get('profit_margin', 'N/A'),
-                        'debt_to_equity': financial_data.get('debt_to_equity', 'N/A'),
-                        'current_ratio': financial_data.get('current_ratio', 'N/A'),
-                        'roe': financial_data.get('roe', 'N/A')
-                    },
-                    'reports': financial_data.get('reports', []),
-                    'announcements': financial_data.get('recent_announcements', [])
-                },
-                'dividend': {
-                    'current_dividend': dividend_analysis.get('current_dividend') if dividend_analysis else None,
-                    'dividend_yield': dividend_analysis.get('dividend_yield') if dividend_analysis else None,
-                    'dividend_growth': dividend_analysis.get('dividend_growth') if dividend_analysis else None,
-                    'dividend_sustainability': dividend_analysis.get('dividend_sustainability') if dividend_analysis else None
-                }
-            }
-            
-            # Prepare AI analysis prompt with enhanced investment focus
-            prompt = f"""Analyze this stock data and provide a professional investment analysis:
-
-Symbol: {symbol}
-
-TECHNICAL ANALYSIS
------------------
-Current Price: {analysis_data['technical']['price']['close']}
-Price Change: {analysis_data['technical']['price']['change_percent']}%
-Volume: {analysis_data['technical']['price']['volume']}
-
-Key Indicators:
-- RSI: {analysis_data['technical']['indicators']['rsi']}
-- MACD: {analysis_data['technical']['indicators']['macd']}
-- Signal Line: {analysis_data['technical']['indicators']['macd_signal']}
-- SMA20: {analysis_data['technical']['indicators']['sma_20']}
-- SMA50: {analysis_data['technical']['indicators']['sma_50']}
-- SMA200: {analysis_data['technical']['indicators']['sma_200']}
-
-Technical Scores:
-- Trend Score: {analysis_data['technical']['signals']['trend_score']}
-- Momentum Score: {analysis_data['technical']['signals']['momentum_score']}
-- Volume Score: {analysis_data['technical']['signals']['volume_score']}
-- Volatility Score: {analysis_data['technical']['signals']['volatility_score']}
-
-FINANCIAL ANALYSIS
------------------
-Current Metrics:
-- EPS Growth: {analysis_data['financial']['current']['eps_growth']}%
-- Revenue Growth: {analysis_data['financial']['current']['revenue_growth']}%
-- Profit Margin: {analysis_data['financial']['current']['profit_margin']}%
-- Debt-to-Equity: {analysis_data['financial']['current']['debt_to_equity']}
-- Current Ratio: {analysis_data['financial']['current']['current_ratio']}
-- ROE: {analysis_data['financial']['current']['roe']}%
-
-DIVIDEND ANALYSIS
-----------------
-Current Dividend:
-- Amount: {analysis_data['dividend']['current_dividend']['dividend_amount'] if analysis_data['dividend']['current_dividend'] else 'N/A'}
-- Yield: {f"{analysis_data['dividend']['dividend_yield']:.2f}%" if analysis_data['dividend']['dividend_yield'] else 'N/A'}
-- Growth: {f"{analysis_data['dividend']['dividend_growth']:.2f}%" if analysis_data['dividend']['dividend_growth'] else 'N/A'}
-- Sustainability: {analysis_data['dividend']['dividend_sustainability']}
-
-RECENT ANNOUNCEMENTS
--------------------
-{chr(10).join([f"- {announcement['date']}: {announcement['title']}" for announcement in analysis_data['financial']['announcements']]) if analysis_data['financial']['announcements'] else 'No recent announcements'}
-
-Provide a detailed analysis in the following format:
-
-1. COMPANY OVERVIEW
-- Market position and competitive advantages
-- Growth potential
-- Recent developments
-
-2. FINANCIAL HEALTH
-- Overall financial health assessment
-- Key strengths and weaknesses
-- Growth potential and risks
-
-3. INVESTMENT THESIS
-- Growth catalysts
-- Risk factors
-- Competitive position
-- Management quality
-
-4. VALUATION ANALYSIS
-- Peer comparison
-- Historical valuation ranges
-- Fair value estimate
-- Margin of safety
-
-5. INVESTMENT RECOMMENDATION
-- Clear recommendation (Strong Buy/Buy/Hold/Sell/Strong Sell)
-- Detailed rationale
-- Risk factors
-- Price targets
-
-6. MONITORING POINTS
-- Important announcements to watch
-- Risk factors to monitor
-- Exit criteria
-
-7. TECHNICAL ANALYSIS
-- Key technical indicators and their implications
-- Trend analysis
-- Support and resistance levels
-
-8. RISK MANAGEMENT
-- Position sizing
-- Stop loss and take profit strategies
-- Risk-reward ratio analysis
-
-Include specific metrics where possible:
-- Confidence Score (0-1)
-- Fair Value
-- DCF Value
-- Target Price
-- Entry Range
-- Investment Horizon
-- Position Size
-- Risk-Reward Ratio
-"""
-            
-            logger.info(f"Prepared AI analysis prompt for {symbol}")
-            
-            # Call AI model
-            ai_analysis = self.call_ai_model(prompt)
-            
-            if ai_analysis:
-                # Process AI analysis with enhanced investment focus
-                processed_analysis = {
-                    'company_overview': ai_analysis.get('company_overview', ''),
-                    'financial_health': ai_analysis.get('financial_health', ''),
-                    'investment_thesis': ai_analysis.get('investment_thesis', ''),
-                    'valuation_analysis': ai_analysis.get('valuation_analysis', ''),
-                    'investment_recommendation': ai_analysis.get('investment_recommendation', ''),
-                    'monitoring_points': ai_analysis.get('monitoring_points', ''),
-                    'confidence_score': ai_analysis.get('confidence_score', 0.0),
-                    'fair_value': ai_analysis.get('fair_value', None),
-                    'target_price': ai_analysis.get('target_price', None),
-                    'entry_range': ai_analysis.get('entry_range', []),
-                    'investment_horizon': ai_analysis.get('investment_horizon', ''),
-                    'position_size': ai_analysis.get('position_size', ''),
-                    'dcf_value': ai_analysis.get('dcf_value', None),
-                    'peer_comparison': ai_analysis.get('peer_comparison', {}),
-                    'risk_assessment': ai_analysis.get('risk_assessment', {}),
-                    'growth_catalysts': ai_analysis.get('growth_catalysts', []),
-                    'management_quality': ai_analysis.get('management_quality', ''),
-                    'corporate_governance': ai_analysis.get('corporate_governance', ''),
-                    'dividend_analysis': dividend_analysis
-                }
-                
-                logger.info(f"Successfully processed AI investment analysis for {symbol}")
-                return processed_analysis
-            else:
-                logger.warning(f"No AI analysis returned for {symbol}")
+            # Check if API key is available
+            if not self._validate_api_keys():
+                logger.warning("Skipping AI analysis due to missing API keys")
                 return None
+
+            # Check cache first
+            current_time = datetime.now().timestamp()
+            if symbol in self._cache:
+                last_call = self._last_call_time.get(symbol, 0)
+                if current_time - last_call < self._cooldown:
+                    logger.info(f"Using cached AI analysis for {symbol}")
+                    return self._cache[symbol]
+
+            # Prepare data for analysis
+            analysis_data = self._prepare_analysis_data(symbol, technical_data, financial_data)
+            
+            # Make API call
+            response = self._make_api_call(analysis_data)
+            
+            if response:
+                # Update cache
+                self._cache[symbol] = response
+                self._last_call_time[symbol] = current_time
+                return response
+            
+            return None
             
         except Exception as e:
-            logger.error(f"Error in AI analysis for {symbol}: {e}")
+            logger.error(f"Error in AI analysis for {symbol}: {str(e)}")
             return None
+
+    def _prepare_analysis_data(self, symbol: str, technical_data: Dict, financial_data: Dict) -> Dict:
+        """Prepare data for AI analysis"""
+        try:
+            # Technical Analysis Data
+            technical_metrics = {
+                'current_price': technical_data.get('close'),
+                'price_change': technical_data.get('change'),
+                'volume': technical_data.get('volume'),
+                'rsi': technical_data.get('rsi'),
+                'macd': technical_data.get('macd'),
+                'sma_20': technical_data.get('sma_20'),
+                'sma_50': technical_data.get('sma_50'),
+                'sma_200': technical_data.get('sma_200'),
+                'bb_upper': technical_data.get('bb_upper'),
+                'bb_lower': technical_data.get('bb_lower')
+            }
+            
+            # Financial Analysis Data
+            financial_metrics = {
+                'eps_growth': financial_data.get('eps_growth'),
+                'revenue_growth': financial_data.get('revenue_growth'),
+                'profit_margin': financial_data.get('profit_margin'),
+                'debt_to_equity': financial_data.get('debt_to_equity'),
+                'current_ratio': financial_data.get('current_ratio'),
+                'roe': financial_data.get('roe')
+            }
+            
+            # Recent Announcements
+            announcements = technical_data.get('recent_announcements', [])
+            
+            # Dividend Analysis
+            dividend_data = {
+                'dividend_yield': technical_data.get('dividend_yield'),
+                'dividend_growth': technical_data.get('dividend_growth'),
+                'payout_ratio': technical_data.get('payout_ratio')
+            }
+            
+            return {
+                'symbol': symbol,
+                'technical_metrics': technical_metrics,
+                'financial_metrics': financial_metrics,
+                'announcements': announcements,
+                'dividend_data': dividend_data
+            }
+            
+        except Exception as e:
+            logger.error(f"Error preparing analysis data: {str(e)}")
+            return {}
+
+    def _make_api_call(self, analysis_data: Dict) -> Optional[Dict]:
+        """Make API call to DeepSeek or Grok based on available keys."""
+        try:
+            if not self._validate_api_keys():
+                return None
+
+            # Try DeepSeek first if available
+            if self.deepseek_api_key and (self.deepseek_api_key.startswith('ds-') or self.deepseek_api_key.startswith('sk-')):
+                logger.info("Using DeepSeek API with provided key")
+                return self._make_deepseek_call(analysis_data)
+            # Fall back to Grok if DeepSeek is not available
+            elif self.grok_api_key and self.grok_api_key.startswith('xai-'):
+                logger.info("Using Grok API with provided key")
+                return self._make_grok_call(analysis_data)
+            else:
+                logger.warning("No valid API keys available for AI analysis")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error making API call: {str(e)}")
+            return None
+
+    def _make_deepseek_call(self, analysis_data: Dict) -> Optional[Dict]:
+        """Make API call to DeepSeek."""
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.deepseek_api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            # Log request details for debugging (mask API key)
+            masked_key = f"{self.deepseek_api_key[:8]}...{self.deepseek_api_key[-4:]}"
+            logger.debug(f"Making DeepSeek API call to {self.deepseek_api_url}")
+            logger.debug(f"Request headers: {{'Authorization': 'Bearer {masked_key}', 'Content-Type': 'application/json'}}")
+            
+            prompt = self._construct_prompt(analysis_data)
+            
+            data = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a professional stock market analyst with expertise in technical and fundamental analysis."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "temperature": 0.7,
+                "max_tokens": 2000
+            }
+            
+            # Increase timeout and add retry logic
+            max_retries = 3
+            timeout = (30, 120)  # (connect timeout, read timeout)
+            
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(
+                        self.deepseek_api_url,
+                        headers=headers,
+                        json=data,
+                        timeout=timeout
+                    )
+                    
+                    # Log response details for debugging
+                    logger.debug(f"Response status code: {response.status_code}")
+                    logger.debug(f"Response headers: {response.headers}")
+                    
+                    if response.status_code == 401:
+                        error_msg = "Authentication failed. Please check your DeepSeek API key."
+                        try:
+                            error_data = response.json()
+                            if 'error' in error_data and 'message' in error_data['error']:
+                                error_msg = f"Authentication failed: {error_data['error']['message']}"
+                        except:
+                            pass
+                        logger.error(error_msg)
+                        logger.debug(f"Response body: {response.text}")
+                        return None
+                        
+                    response.raise_for_status()
+                    
+                    result = response.json()
+                    analysis_text = result['choices'][0]['message']['content']
+                    
+                    # Parse the analysis into structured format
+                    return self._parse_analysis(analysis_text, analysis_data)
+                    
+                except requests.exceptions.Timeout:
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 5  # Exponential backoff
+                        logger.warning(f"Request timed out (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                    else:
+                        logger.error("All retry attempts timed out. Falling back to Grok API.")
+                        return self._make_grok_call(analysis_data)
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 5
+                        logger.warning(f"Request failed (attempt {attempt + 1}/{max_retries}): {str(e)}. Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                    else:
+                        raise
+            
+        except Exception as e:
+            logger.error(f"Error making DeepSeek API call: {str(e)}")
+            return None
+
+    def _make_grok_call(self, analysis_data: Dict) -> Optional[Dict]:
+        """Make API call to Grok."""
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.grok_api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            # Log request details for debugging (mask API key)
+            masked_key = f"{self.grok_api_key[:8]}...{self.grok_api_key[-4:]}"
+            logger.debug(f"Making Grok API call to {self.grok_api_url}")
+            logger.debug(f"Request headers: {{'Authorization': 'Bearer {masked_key}', 'Content-Type': 'application/json'}}")
+            
+            prompt = self._construct_prompt(analysis_data)
+            
+            data = {
+                "model": "grok-1",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a professional stock market analyst with expertise in technical and fundamental analysis."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "temperature": 0.7,
+                "max_tokens": 2000
+            }
+            
+            response = requests.post(self.grok_api_url, headers=headers, json=data, timeout=30)
+            
+            # Log response details for debugging
+            logger.debug(f"Response status code: {response.status_code}")
+            logger.debug(f"Response headers: {response.headers}")
+            
+            if response.status_code == 401:
+                error_msg = "Authentication failed. Please check your Grok API key."
+                try:
+                    error_data = response.json()
+                    if 'error' in error_data and 'message' in error_data['error']:
+                        error_msg = f"Authentication failed: {error_data['error']['message']}"
+                except:
+                    pass
+                logger.error(error_msg)
+                logger.debug(f"Response body: {response.text}")
+                return None
+                
+            response.raise_for_status()
+            
+            result = response.json()
+            analysis_text = result['choices'][0]['message']['content']
+            
+            # Parse the analysis into structured format
+            return self._parse_analysis(analysis_text, analysis_data)
+            
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                error_msg = "Invalid Grok API key. Please check your API key in the .env file."
+                try:
+                    error_data = e.response.json()
+                    if 'error' in error_data and 'message' in error_data['error']:
+                        error_msg = f"Authentication failed: {error_data['error']['message']}"
+                except:
+                    pass
+                logger.error(error_msg)
+                logger.debug(f"Response body: {e.response.text}")
+            else:
+                logger.error(f"HTTP error making API call: {str(e)}")
+            return None
+        except requests.exceptions.Timeout:
+            logger.error("Grok API call timed out. Please try again.")
+            return None
+        except Exception as e:
+            logger.error(f"Error making Grok API call: {str(e)}")
+            return None
+
+    def _construct_prompt(self, analysis_data: Dict) -> str:
+        """Construct prompt for AI analysis"""
+        try:
+            symbol = analysis_data['symbol']
+            tech = analysis_data['technical_metrics']
+            fin = analysis_data['financial_metrics']
+            div = analysis_data['dividend_data']
+            
+            prompt = f"""Please provide a comprehensive investment analysis for {symbol} based on the following data:
+
+Technical Analysis:
+- Current Price: ${tech['current_price']}
+- Price Change: {tech['price_change']}%
+- Volume: {tech['volume']}
+- RSI: {tech['rsi']}
+- MACD: {tech['macd']}
+- Moving Averages: SMA20=${tech['sma_20']}, SMA50=${tech['sma_50']}, SMA200=${tech['sma_200']}
+- Bollinger Bands: Upper=${tech['bb_upper']}, Lower=${tech['bb_lower']}
+
+Financial Analysis:
+- EPS Growth: {fin['eps_growth']}%
+- Revenue Growth: {fin['revenue_growth']}%
+- Profit Margin: {fin['profit_margin']}%
+- Debt-to-Equity: {fin['debt_to_equity']}
+- Current Ratio: {fin['current_ratio']}
+- ROE: {fin['roe']}%
+
+Dividend Analysis:
+- Dividend Yield: {div['dividend_yield']}%
+- Dividend Growth: {div['dividend_growth']}%
+- Payout Ratio: {div['payout_ratio']}%
+
+Recent Announcements:
+{chr(10).join(analysis_data['announcements'])}
+
+Please provide a detailed analysis covering:
+1. Company Overview
+2. Technical Analysis
+3. Financial Health
+4. Growth Prospects
+5. Risk Assessment
+6. Dividend Analysis
+7. Investment Thesis
+8. Price Targets
+9. Risk Management
+10. Trading Strategy
+11. Market Sentiment
+12. Industry Position
+13. Competitive Advantages
+14. Management Quality
+15. Corporate Governance
+16. Environmental Factors
+17. Social Impact
+18. Regulatory Environment
+19. Market Trends
+20. Economic Outlook
+21. Sector Analysis
+22. Peer Comparison
+23. Valuation Metrics
+24. Investment Timeline
+25. Exit Strategy
+
+Format the response as a JSON object with the following structure:
+{{
+    "analysis": {{
+        "overview": "",
+        "technical_analysis": "",
+        "financial_analysis": "",
+        "growth_analysis": "",
+        "risk_analysis": "",
+        "dividend_analysis": "",
+        "investment_thesis": "",
+        "price_targets": {{
+            "short_term": "",
+            "medium_term": "",
+            "long_term": ""
+        }},
+        "risk_management": "",
+        "trading_strategy": "",
+        "market_sentiment": "",
+        "industry_position": "",
+        "competitive_advantages": [],
+        "management_quality": "",
+        "corporate_governance": "",
+        "environmental_factors": "",
+        "social_impact": "",
+        "regulatory_environment": "",
+        "market_trends": "",
+        "economic_outlook": "",
+        "sector_analysis": "",
+        "peer_comparison": "",
+        "valuation_metrics": {{}},
+        "investment_timeline": "",
+        "exit_strategy": ""
+    }},
+    "recommendation": {{
+        "action": "",
+        "confidence": 0.0,
+        "timeframe": "",
+        "risk_level": "",
+        "position_size": ""
+    }},
+    "key_metrics": {{
+        "technical_score": 0.0,
+        "financial_score": 0.0,
+        "growth_score": 0.0,
+        "risk_score": 0.0,
+        "overall_score": 0.0
+    }}
+}}"""
+            
+            return prompt
+            
+        except Exception as e:
+            logger.error(f"Error constructing prompt: {str(e)}")
+            return ""
+
+    def _parse_analysis(self, analysis_text: str, original_data: Dict) -> Dict:
+        """Parse AI analysis into structured format"""
+        try:
+            # Log the raw response for debugging
+            logger.debug(f"Raw AI response: {analysis_text[:500]}...")  # Log first 500 chars
+            
+            # Clean the response text
+            cleaned_text = self._clean_response_text(analysis_text)
+            
+            # Try to parse JSON response
+            try:
+                analysis = json.loads(cleaned_text)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse AI response as JSON: {str(e)}")
+                logger.debug("Attempting to extract JSON from response...")
+                
+                # Try to find JSON-like structure in the response
+                json_match = re.search(r'({[\s\S]*})', cleaned_text)
+                if json_match:
+                    try:
+                        analysis = json.loads(json_match.group(1))
+                        logger.info("Successfully extracted JSON from response")
+                    except json.JSONDecodeError:
+                        logger.error("Failed to parse extracted JSON")
+                        return self._create_fallback_analysis(original_data)
+                else:
+                    logger.error("No JSON structure found in response")
+                    return self._create_fallback_analysis(original_data)
+            
+            # Validate required fields
+            required_fields = ['analysis', 'recommendation', 'key_metrics']
+            missing_fields = [field for field in required_fields if field not in analysis]
+            
+            if missing_fields:
+                logger.error(f"Missing required fields in AI response: {missing_fields}")
+                return self._create_fallback_analysis(original_data)
+            
+            # Add original data
+            analysis['original_data'] = original_data
+            
+            # Add timestamp
+            analysis['timestamp'] = datetime.now().isoformat()
+            
+            # Round all float values
+            self._round_dict_values(analysis)
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error parsing analysis: {str(e)}")
+            return self._create_fallback_analysis(original_data)
+
+    def _clean_response_text(self, text: str) -> str:
+        """Clean the response text to handle various formats."""
+        try:
+            # Remove markdown code block markers
+            text = re.sub(r'^```json\s*', '', text)
+            text = re.sub(r'\s*```$', '', text)
+            
+            # Remove any leading/trailing whitespace
+            text = text.strip()
+            
+            # Handle potential markdown formatting
+            text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)  # Remove bold markers
+            text = re.sub(r'\*(.*?)\*', r'\1', text)      # Remove italic markers
+            text = re.sub(r'`(.*?)`', r'\1', text)        # Remove inline code markers
+            
+            # Handle potential HTML entities
+            text = text.replace('&quot;', '"')
+            text = text.replace('&amp;', '&')
+            text = text.replace('&lt;', '<')
+            text = text.replace('&gt;', '>')
+            
+            # Handle potential escaped characters
+            text = text.replace('\\n', ' ')
+            text = text.replace('\\r', ' ')
+            text = text.replace('\\t', ' ')
+            
+            # Remove multiple spaces
+            text = re.sub(r'\s+', ' ', text)
+            
+            return text
+            
+        except Exception as e:
+            logger.error(f"Error cleaning response text: {str(e)}")
+            return text  # Return original text if cleaning fails
+
+    def _create_fallback_analysis(self, original_data: Dict) -> Dict:
+        """Create a fallback analysis when AI response parsing fails"""
+        try:
+            logger.info("Creating fallback analysis structure")
+            
+            # Extract basic metrics from original data
+            tech_data = original_data.get('technical_metrics', {})
+            fin_data = original_data.get('financial_metrics', {})
+            
+            # Calculate basic scores
+            tech_score = self._calculate_technical_score(tech_data)
+            fin_score = self._calculate_financial_score(fin_data)
+            
+            return {
+                'analysis': {
+                    'overview': 'AI analysis was not available. Using technical and financial metrics only.',
+                    'technical_analysis': f"Technical Score: {tech_score:.2f}",
+                    'financial_analysis': f"Financial Score: {fin_score:.2f}",
+                    'investment_thesis': 'Based on technical and financial metrics only.'
+                },
+                'recommendation': {
+                    'action': 'NEUTRAL',
+                    'confidence': 0.5,
+                    'timeframe': 'MEDIUM_TERM',
+                    'risk_level': 'MODERATE',
+                    'position_size': 'STANDARD'
+                },
+                'key_metrics': {
+                    'technical_score': tech_score,
+                    'financial_score': fin_score,
+                    'growth_score': 0.0,
+                    'risk_score': 0.0,
+                    'overall_score': (tech_score * 0.6 + fin_score * 0.4)
+                },
+                'original_data': original_data,
+                'timestamp': datetime.now().isoformat(),
+                'parse_error': True
+            }
+        except Exception as e:
+            logger.error(f"Error creating fallback analysis: {str(e)}")
+            return {}
+
+    def _calculate_technical_score(self, tech_data: Dict) -> float:
+        """Calculate technical score from technical metrics"""
+        try:
+            scores = []
+            
+            # RSI scoring
+            rsi = tech_data.get('rsi')
+            if rsi is not None:
+                if rsi > 70:
+                    scores.append(30)  # Overbought
+                elif rsi < 30:
+                    scores.append(30)  # Oversold
+                else:
+                    scores.append(70)  # Neutral
+            
+            # MACD scoring
+            macd = tech_data.get('macd')
+            macd_signal = tech_data.get('macd_signal')
+            if macd is not None and macd_signal is not None:
+                if macd > macd_signal:
+                    scores.append(70)  # Bullish
+                else:
+                    scores.append(30)  # Bearish
+            
+            # Moving averages scoring
+            price = tech_data.get('current_price')
+            sma20 = tech_data.get('sma_20')
+            sma50 = tech_data.get('sma_50')
+            
+            if all(x is not None for x in [price, sma20, sma50]):
+                if price > sma20 and sma20 > sma50:
+                    scores.append(80)  # Strong uptrend
+                elif price < sma20 and sma20 < sma50:
+                    scores.append(20)  # Strong downtrend
+                else:
+                    scores.append(50)  # Mixed signals
+            
+            return sum(scores) / len(scores) if scores else 50.0
+            
+        except Exception as e:
+            logger.error(f"Error calculating technical score: {str(e)}")
+            return 50.0
+
+    def _calculate_financial_score(self, fin_data: Dict) -> float:
+        """Calculate financial score from financial metrics"""
+        try:
+            scores = []
+            
+            # EPS Growth scoring
+            eps_growth = fin_data.get('eps_growth')
+            if eps_growth is not None:
+                if eps_growth > 15:
+                    scores.append(80)
+                elif eps_growth > 10:
+                    scores.append(70)
+                elif eps_growth > 5:
+                    scores.append(60)
+                elif eps_growth > 0:
+                    scores.append(50)
+                else:
+                    scores.append(30)
+            
+            # Revenue Growth scoring
+            revenue_growth = fin_data.get('revenue_growth')
+            if revenue_growth is not None:
+                if revenue_growth > 20:
+                    scores.append(80)
+                elif revenue_growth > 15:
+                    scores.append(70)
+                elif revenue_growth > 10:
+                    scores.append(60)
+                elif revenue_growth > 5:
+                    scores.append(50)
+                else:
+                    scores.append(30)
+            
+            # Profit Margin scoring
+            profit_margin = fin_data.get('profit_margin')
+            if profit_margin is not None:
+                if profit_margin > 20:
+                    scores.append(80)
+                elif profit_margin > 15:
+                    scores.append(70)
+                elif profit_margin > 10:
+                    scores.append(60)
+                elif profit_margin > 5:
+                    scores.append(50)
+                else:
+                    scores.append(30)
+            
+            return sum(scores) / len(scores) if scores else 50.0
+            
+        except Exception as e:
+            logger.error(f"Error calculating financial score: {str(e)}")
+            return 50.0
+
+    def _round_dict_values(self, data: Dict):
+        """Recursively round all float values in dictionary"""
+        for key, value in data.items():
+            if isinstance(value, dict):
+                self._round_dict_values(value)
+            elif isinstance(value, float):
+                data[key] = self._round_float(value)
+            elif isinstance(value, list):
+                for i, item in enumerate(value):
+                    if isinstance(item, dict):
+                        self._round_dict_values(item)
+                    elif isinstance(item, float):
+                        value[i] = self._round_float(item)
 
     def adjust_signal_with_ai(self, technical_analysis: Dict, financial_analysis: Dict) -> Dict:
         """Adjust trading signals using AI-based analysis.

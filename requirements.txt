@@ -3,6 +3,7 @@ numpy>=1.26.4
 pandas>=2.2.1
 plotly>=5.19.0
 plotly-express>=0.4.1
+openpyxl>=3.1.2
 
 # Web framework
 streamlit>=1.32.0
@@ -32,4 +33,7 @@ psycopg2-binary>=2.9.9
 fpdf2>=2.7.7
 pillow>=10.2.0
 PyPDF2>=3.0.1
-python-docx>=1.1.0 
+python-docx>=1.1.0
+
+# TradingView
+tradingview_ta>=3.2.6 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 from typing import Dict, List, Optional, Tuple, Union, Any
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ class TechnicalAnalyzer:
     
     def __init__(self) -> None:
         """Initialize the TechnicalAnalyzer."""
-        pass
+        self._round_float = lambda x: round(float(x), 2) if x is not None else None
 
     def _handle_error(self, error: Exception, context: str, default_return=None):
         """Utility method to handle exceptions with consistent logging.
@@ -363,7 +364,7 @@ class TechnicalAnalyzer:
         """
         try:
             # Calculate technical score
-            analysis['technical_score'] = (
+            analysis['technical_score'] = self._round_float(
                 analysis['trend_score'] +
                 analysis['momentum_score'] +
                 analysis['volume_score'] +
@@ -373,19 +374,19 @@ class TechnicalAnalyzer:
             # Determine signal type and strength
             if analysis['technical_score'] >= 70:
                 analysis['signal_type'] = 'STRONG_BUY'
-                analysis['signal_strength'] = min(analysis['technical_score'] / 70, 1.0)
+                analysis['signal_strength'] = self._round_float(min(analysis['technical_score'] / 70, 1.0))
             elif analysis['technical_score'] >= 40:
                 analysis['signal_type'] = 'BUY'
-                analysis['signal_strength'] = min(analysis['technical_score'] / 50, 0.8)
+                analysis['signal_strength'] = self._round_float(min(analysis['technical_score'] / 50, 0.8))
             elif analysis['technical_score'] <= -70:
                 analysis['signal_type'] = 'STRONG_SELL'
-                analysis['signal_strength'] = min(abs(analysis['technical_score']) / 70, 1.0)
+                analysis['signal_strength'] = self._round_float(min(abs(analysis['technical_score']) / 70, 1.0))
             elif analysis['technical_score'] <= -40:
                 analysis['signal_type'] = 'SELL'
-                analysis['signal_strength'] = min(abs(analysis['technical_score']) / 50, 0.8)
+                analysis['signal_strength'] = self._round_float(min(abs(analysis['technical_score']) / 50, 0.8))
             else:
                 analysis['signal_type'] = 'NEUTRAL'
-                analysis['signal_strength'] = 0.5
+                analysis['signal_strength'] = 0.50
             
             # Debug logging for required values
             logger.debug(f"Required values for {analysis.get('symbol', 'unknown')}:")
@@ -398,33 +399,33 @@ class TechnicalAnalyzer:
             
             # Calculate stop loss and take profit levels
             if analysis.get('close') is not None:
-                current_price = analysis['close']
+                current_price = self._round_float(analysis['close'])
                 logger.debug(f"Using current price: {current_price}")
                 
                 # Calculate stop loss based on volatility and support levels
                 if analysis.get('bb_lower') is not None and analysis.get('bb_upper') is not None:
                     # Use Bollinger Bands for stop loss
-                    stop_loss_long = analysis['bb_lower']
-                    stop_loss_short = analysis['bb_upper']
+                    stop_loss_long = self._round_float(analysis['bb_lower'])
+                    stop_loss_short = self._round_float(analysis['bb_upper'])
                     logger.debug("Using Bollinger Bands for stop loss calculation")
                 elif analysis.get('sma_20') is not None:
                     # Use SMA20 as fallback
-                    stop_loss_long = analysis['sma_20'] * 0.95  # 5% below SMA20
-                    stop_loss_short = analysis['sma_20'] * 1.05  # 5% above SMA20
+                    stop_loss_long = self._round_float(analysis['sma_20'] * 0.95)  # 5% below SMA20
+                    stop_loss_short = self._round_float(analysis['sma_20'] * 1.05)  # 5% above SMA20
                     logger.debug("Using SMA20 as fallback for stop loss calculation")
                 else:
                     # Default to percentage-based stop loss
-                    stop_loss_long = current_price * 0.95  # 5% below current price
-                    stop_loss_short = current_price * 1.05  # 5% above current price
+                    stop_loss_long = self._round_float(current_price * 0.95)  # 5% below current price
+                    stop_loss_short = self._round_float(current_price * 1.05)  # 5% above current price
                     logger.debug("Using percentage-based stop loss calculation")
                 
                 # Calculate take profit based on risk-reward ratio and volatility
                 if analysis.get('volatility_score') is not None:
                     # Adjust take profit based on volatility
-                    volatility_factor = 1 + (abs(analysis['volatility_score']) / 100)
+                    volatility_factor = self._round_float(1 + (abs(analysis['volatility_score']) / 100))
                     logger.debug(f"Using volatility factor: {volatility_factor}")
                 else:
-                    volatility_factor = 1.0
+                    volatility_factor = 1.00
                     logger.debug("No volatility score available, using default factor")
                 
                 # Set take profit levels based on signal type

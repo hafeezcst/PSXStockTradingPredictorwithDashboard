@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from src.data_processing.fair_value_calculator import FairValueCalculator
 
 class TestFairValueCalculator(unittest.TestCase):

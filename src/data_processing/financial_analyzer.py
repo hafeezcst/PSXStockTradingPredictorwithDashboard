@@ -4,6 +4,7 @@ import sqlite3
 import pandas as pd
 import os
 from typing import Dict, List, Optional, Tuple, Union, Any
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class FinancialAnalyzer:
         """
         self.db_path = db_path
         self.dividend_db_path = dividend_db_path
+        self._round_float = lambda x: round(float(x), 2) if x is not None else None
 
     def _handle_error(self, error: Exception, context: str, default_return=None):
         """Utility method to handle exceptions with consistent logging.
@@ -402,3 +404,416 @@ class FinancialAnalyzer:
             if 'conn' in locals():
                 conn.close()
             return None
+
+    def analyze_financials(self, financial_data: Dict) -> Dict:
+        """Analyze financial data and calculate key metrics"""
+        try:
+            analysis = {
+                'financial_score': 0.0,
+                'profitability_score': 0.0,
+                'growth_score': 0.0,
+                'efficiency_score': 0.0,
+                'liquidity_score': 0.0,
+                'debt_score': 0.0,
+                'valuation_score': 0.0,
+                'analysis_summary': [],
+                'metrics_used': []
+            }
+            
+            # Add symbol to analysis
+            analysis['symbol'] = financial_data['symbol']
+            
+            # Copy financial data
+            for key, value in financial_data.items():
+                if key != 'symbol':
+                    analysis[key] = value
+            
+            # Perform analysis
+            self._analyze_profitability(financial_data, analysis)
+            self._analyze_growth(financial_data, analysis)
+            self._analyze_efficiency(financial_data, analysis)
+            self._analyze_liquidity(financial_data, analysis)
+            self._analyze_debt(financial_data, analysis)
+            self._analyze_valuation(financial_data, analysis)
+            
+            # Calculate final financial score
+            self._calculate_final_scores(analysis)
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error analyzing financials: {str(e)}")
+            return None
+
+    def _analyze_profitability(self, data: Dict, analysis: Dict):
+        """Analyze profitability metrics"""
+        try:
+            if all(x is not None for x in [data.get('net_income'), data.get('revenue'), data.get('total_assets')]):
+                analysis['metrics_used'].extend(['Net Income', 'Revenue', 'ROA'])
+                
+                # Calculate ROA
+                roa = (data['net_income'] / data['total_assets']) * 100
+                analysis['roa'] = self._round_float(roa)
+                
+                # Calculate profit margin
+                profit_margin = (data['net_income'] / data['revenue']) * 100
+                analysis['profit_margin'] = self._round_float(profit_margin)
+                
+                # Score profitability
+                profitability_score = 0
+                
+                if roa > 15:
+                    profitability_score += 25
+                    analysis['analysis_summary'].append(f"Excellent ROA: {roa:.2f}%")
+                elif roa > 10:
+                    profitability_score += 20
+                    analysis['analysis_summary'].append(f"Good ROA: {roa:.2f}%")
+                elif roa > 5:
+                    profitability_score += 15
+                    analysis['analysis_summary'].append(f"Average ROA: {roa:.2f}%")
+                elif roa > 0:
+                    profitability_score += 10
+                    analysis['analysis_summary'].append(f"Low ROA: {roa:.2f}%")
+                else:
+                    profitability_score -= 10
+                    analysis['analysis_summary'].append(f"Negative ROA: {roa:.2f}%")
+                
+                if profit_margin > 20:
+                    profitability_score += 25
+                    analysis['analysis_summary'].append(f"Excellent profit margin: {profit_margin:.2f}%")
+                elif profit_margin > 15:
+                    profitability_score += 20
+                    analysis['analysis_summary'].append(f"Good profit margin: {profit_margin:.2f}%")
+                elif profit_margin > 10:
+                    profitability_score += 15
+                    analysis['analysis_summary'].append(f"Average profit margin: {profit_margin:.2f}%")
+                elif profit_margin > 5:
+                    profitability_score += 10
+                    analysis['analysis_summary'].append(f"Low profit margin: {profit_margin:.2f}%")
+                else:
+                    profitability_score -= 10
+                    analysis['analysis_summary'].append(f"Very low profit margin: {profit_margin:.2f}%")
+                
+                analysis['profitability_score'] = self._round_float(profitability_score)
+                
+        except Exception as e:
+            logger.error(f"Error analyzing profitability: {e}")
+
+    def _analyze_growth(self, data: Dict, analysis: Dict):
+        """Analyze growth metrics"""
+        try:
+            if all(x is not None for x in [data.get('revenue_growth'), data.get('eps_growth')]):
+                analysis['metrics_used'].extend(['Revenue Growth', 'EPS Growth'])
+                
+                revenue_growth = data['revenue_growth']
+                eps_growth = data['eps_growth']
+                
+                growth_score = 0
+                
+                # Score revenue growth
+                if revenue_growth > 20:
+                    growth_score += 25
+                    analysis['analysis_summary'].append(f"Excellent revenue growth: {revenue_growth:.2f}%")
+                elif revenue_growth > 15:
+                    growth_score += 20
+                    analysis['analysis_summary'].append(f"Strong revenue growth: {revenue_growth:.2f}%")
+                elif revenue_growth > 10:
+                    growth_score += 15
+                    analysis['analysis_summary'].append(f"Good revenue growth: {revenue_growth:.2f}%")
+                elif revenue_growth > 5:
+                    growth_score += 10
+                    analysis['analysis_summary'].append(f"Moderate revenue growth: {revenue_growth:.2f}%")
+                elif revenue_growth > 0:
+                    growth_score += 5
+                    analysis['analysis_summary'].append(f"Low revenue growth: {revenue_growth:.2f}%")
+                else:
+                    growth_score -= 10
+                    analysis['analysis_summary'].append(f"Negative revenue growth: {revenue_growth:.2f}%")
+                
+                # Score EPS growth
+                if eps_growth > 20:
+                    growth_score += 25
+                    analysis['analysis_summary'].append(f"Excellent EPS growth: {eps_growth:.2f}%")
+                elif eps_growth > 15:
+                    growth_score += 20
+                    analysis['analysis_summary'].append(f"Strong EPS growth: {eps_growth:.2f}%")
+                elif eps_growth > 10:
+                    growth_score += 15
+                    analysis['analysis_summary'].append(f"Good EPS growth: {eps_growth:.2f}%")
+                elif eps_growth > 5:
+                    growth_score += 10
+                    analysis['analysis_summary'].append(f"Moderate EPS growth: {eps_growth:.2f}%")
+                elif eps_growth > 0:
+                    growth_score += 5
+                    analysis['analysis_summary'].append(f"Low EPS growth: {eps_growth:.2f}%")
+                else:
+                    growth_score -= 10
+                    analysis['analysis_summary'].append(f"Negative EPS growth: {eps_growth:.2f}%")
+                
+                analysis['growth_score'] = self._round_float(growth_score)
+                
+        except Exception as e:
+            logger.error(f"Error analyzing growth: {e}")
+
+    def _analyze_efficiency(self, data: Dict, analysis: Dict):
+        """Analyze efficiency metrics"""
+        try:
+            if all(x is not None for x in [data.get('total_assets'), data.get('revenue'), data.get('inventory')]):
+                analysis['metrics_used'].extend(['Asset Turnover', 'Inventory Turnover'])
+                
+                # Calculate asset turnover
+                asset_turnover = data['revenue'] / data['total_assets']
+                analysis['asset_turnover'] = self._round_float(asset_turnover)
+                
+                # Calculate inventory turnover
+                inventory_turnover = data['revenue'] / data['inventory'] if data['inventory'] != 0 else 0
+                analysis['inventory_turnover'] = self._round_float(inventory_turnover)
+                
+                efficiency_score = 0
+                
+                # Score asset turnover
+                if asset_turnover > 2:
+                    efficiency_score += 25
+                    analysis['analysis_summary'].append(f"Excellent asset turnover: {asset_turnover:.2f}")
+                elif asset_turnover > 1.5:
+                    efficiency_score += 20
+                    analysis['analysis_summary'].append(f"Good asset turnover: {asset_turnover:.2f}")
+                elif asset_turnover > 1:
+                    efficiency_score += 15
+                    analysis['analysis_summary'].append(f"Average asset turnover: {asset_turnover:.2f}")
+                elif asset_turnover > 0.5:
+                    efficiency_score += 10
+                    analysis['analysis_summary'].append(f"Low asset turnover: {asset_turnover:.2f}")
+                else:
+                    efficiency_score -= 10
+                    analysis['analysis_summary'].append(f"Very low asset turnover: {asset_turnover:.2f}")
+                
+                # Score inventory turnover
+                if inventory_turnover > 10:
+                    efficiency_score += 25
+                    analysis['analysis_summary'].append(f"Excellent inventory turnover: {inventory_turnover:.2f}")
+                elif inventory_turnover > 7:
+                    efficiency_score += 20
+                    analysis['analysis_summary'].append(f"Good inventory turnover: {inventory_turnover:.2f}")
+                elif inventory_turnover > 5:
+                    efficiency_score += 15
+                    analysis['analysis_summary'].append(f"Average inventory turnover: {inventory_turnover:.2f}")
+                elif inventory_turnover > 3:
+                    efficiency_score += 10
+                    analysis['analysis_summary'].append(f"Low inventory turnover: {inventory_turnover:.2f}")
+                else:
+                    efficiency_score -= 10
+                    analysis['analysis_summary'].append(f"Very low inventory turnover: {inventory_turnover:.2f}")
+                
+                analysis['efficiency_score'] = self._round_float(efficiency_score)
+                
+        except Exception as e:
+            logger.error(f"Error analyzing efficiency: {e}")
+
+    def _analyze_liquidity(self, data: Dict, analysis: Dict):
+        """Analyze liquidity metrics"""
+        try:
+            if all(x is not None for x in [data.get('current_assets'), data.get('current_liabilities')]):
+                analysis['metrics_used'].extend(['Current Ratio', 'Quick Ratio'])
+                
+                # Calculate current ratio
+                current_ratio = data['current_assets'] / data['current_liabilities']
+                analysis['current_ratio'] = self._round_float(current_ratio)
+                
+                # Calculate quick ratio
+                quick_ratio = (data['current_assets'] - data.get('inventory', 0)) / data['current_liabilities']
+                analysis['quick_ratio'] = self._round_float(quick_ratio)
+                
+                liquidity_score = 0
+                
+                # Score current ratio
+                if current_ratio > 2:
+                    liquidity_score += 25
+                    analysis['analysis_summary'].append(f"Excellent current ratio: {current_ratio:.2f}")
+                elif current_ratio > 1.5:
+                    liquidity_score += 20
+                    analysis['analysis_summary'].append(f"Good current ratio: {current_ratio:.2f}")
+                elif current_ratio > 1:
+                    liquidity_score += 15
+                    analysis['analysis_summary'].append(f"Average current ratio: {current_ratio:.2f}")
+                elif current_ratio > 0.8:
+                    liquidity_score += 10
+                    analysis['analysis_summary'].append(f"Low current ratio: {current_ratio:.2f}")
+                else:
+                    liquidity_score -= 10
+                    analysis['analysis_summary'].append(f"Very low current ratio: {current_ratio:.2f}")
+                
+                # Score quick ratio
+                if quick_ratio > 1.5:
+                    liquidity_score += 25
+                    analysis['analysis_summary'].append(f"Excellent quick ratio: {quick_ratio:.2f}")
+                elif quick_ratio > 1:
+                    liquidity_score += 20
+                    analysis['analysis_summary'].append(f"Good quick ratio: {quick_ratio:.2f}")
+                elif quick_ratio > 0.8:
+                    liquidity_score += 15
+                    analysis['analysis_summary'].append(f"Average quick ratio: {quick_ratio:.2f}")
+                elif quick_ratio > 0.5:
+                    liquidity_score += 10
+                    analysis['analysis_summary'].append(f"Low quick ratio: {quick_ratio:.2f}")
+                else:
+                    liquidity_score -= 10
+                    analysis['analysis_summary'].append(f"Very low quick ratio: {quick_ratio:.2f}")
+                
+                analysis['liquidity_score'] = self._round_float(liquidity_score)
+                
+        except Exception as e:
+            logger.error(f"Error analyzing liquidity: {e}")
+
+    def _analyze_debt(self, data: Dict, analysis: Dict):
+        """Analyze debt metrics"""
+        try:
+            if all(x is not None for x in [data.get('total_debt'), data.get('total_assets'), data.get('ebitda')]):
+                analysis['metrics_used'].extend(['Debt-to-Equity', 'Interest Coverage'])
+                
+                # Calculate debt-to-equity ratio
+                debt_to_equity = data['total_debt'] / (data['total_assets'] - data['total_debt'])
+                analysis['debt_to_equity'] = self._round_float(debt_to_equity)
+                
+                # Calculate interest coverage ratio
+                interest_coverage = data['ebitda'] / data.get('interest_expense', 1)
+                analysis['interest_coverage'] = self._round_float(interest_coverage)
+                
+                debt_score = 0
+                
+                # Score debt-to-equity ratio
+                if debt_to_equity < 0.5:
+                    debt_score += 25
+                    analysis['analysis_summary'].append(f"Excellent debt-to-equity ratio: {debt_to_equity:.2f}")
+                elif debt_to_equity < 1:
+                    debt_score += 20
+                    analysis['analysis_summary'].append(f"Good debt-to-equity ratio: {debt_to_equity:.2f}")
+                elif debt_to_equity < 1.5:
+                    debt_score += 15
+                    analysis['analysis_summary'].append(f"Average debt-to-equity ratio: {debt_to_equity:.2f}")
+                elif debt_to_equity < 2:
+                    debt_score += 10
+                    analysis['analysis_summary'].append(f"High debt-to-equity ratio: {debt_to_equity:.2f}")
+                else:
+                    debt_score -= 10
+                    analysis['analysis_summary'].append(f"Very high debt-to-equity ratio: {debt_to_equity:.2f}")
+                
+                # Score interest coverage ratio
+                if interest_coverage > 5:
+                    debt_score += 25
+                    analysis['analysis_summary'].append(f"Excellent interest coverage: {interest_coverage:.2f}")
+                elif interest_coverage > 3:
+                    debt_score += 20
+                    analysis['analysis_summary'].append(f"Good interest coverage: {interest_coverage:.2f}")
+                elif interest_coverage > 2:
+                    debt_score += 15
+                    analysis['analysis_summary'].append(f"Average interest coverage: {interest_coverage:.2f}")
+                elif interest_coverage > 1:
+                    debt_score += 10
+                    analysis['analysis_summary'].append(f"Low interest coverage: {interest_coverage:.2f}")
+                else:
+                    debt_score -= 10
+                    analysis['analysis_summary'].append(f"Very low interest coverage: {interest_coverage:.2f}")
+                
+                analysis['debt_score'] = self._round_float(debt_score)
+                
+        except Exception as e:
+            logger.error(f"Error analyzing debt: {e}")
+
+    def _analyze_valuation(self, data: Dict, analysis: Dict):
+        """Analyze valuation metrics"""
+        try:
+            if all(x is not None for x in [data.get('market_cap'), data.get('eps'), data.get('book_value')]):
+                analysis['metrics_used'].extend(['P/E Ratio', 'P/B Ratio'])
+                
+                # Calculate P/E ratio
+                pe_ratio = data['market_cap'] / (data['eps'] * data.get('shares_outstanding', 1))
+                analysis['pe_ratio'] = self._round_float(pe_ratio)
+                
+                # Calculate P/B ratio
+                pb_ratio = data['market_cap'] / (data['book_value'] * data.get('shares_outstanding', 1))
+                analysis['pb_ratio'] = self._round_float(pb_ratio)
+                
+                valuation_score = 0
+                
+                # Score P/E ratio
+                if pe_ratio < 10:
+                    valuation_score += 25
+                    analysis['analysis_summary'].append(f"Excellent P/E ratio: {pe_ratio:.2f}")
+                elif pe_ratio < 15:
+                    valuation_score += 20
+                    analysis['analysis_summary'].append(f"Good P/E ratio: {pe_ratio:.2f}")
+                elif pe_ratio < 20:
+                    valuation_score += 15
+                    analysis['analysis_summary'].append(f"Average P/E ratio: {pe_ratio:.2f}")
+                elif pe_ratio < 25:
+                    valuation_score += 10
+                    analysis['analysis_summary'].append(f"High P/E ratio: {pe_ratio:.2f}")
+                else:
+                    valuation_score -= 10
+                    analysis['analysis_summary'].append(f"Very high P/E ratio: {pe_ratio:.2f}")
+                
+                # Score P/B ratio
+                if pb_ratio < 1:
+                    valuation_score += 25
+                    analysis['analysis_summary'].append(f"Excellent P/B ratio: {pb_ratio:.2f}")
+                elif pb_ratio < 1.5:
+                    valuation_score += 20
+                    analysis['analysis_summary'].append(f"Good P/B ratio: {pb_ratio:.2f}")
+                elif pb_ratio < 2:
+                    valuation_score += 15
+                    analysis['analysis_summary'].append(f"Average P/B ratio: {pb_ratio:.2f}")
+                elif pb_ratio < 3:
+                    valuation_score += 10
+                    analysis['analysis_summary'].append(f"High P/B ratio: {pb_ratio:.2f}")
+                else:
+                    valuation_score -= 10
+                    analysis['analysis_summary'].append(f"Very high P/B ratio: {pb_ratio:.2f}")
+                
+                analysis['valuation_score'] = self._round_float(valuation_score)
+                
+        except Exception as e:
+            logger.error(f"Error analyzing valuation: {e}")
+
+    def _calculate_final_scores(self, analysis: Dict):
+        """Calculate final financial score"""
+        try:
+            # Calculate weighted financial score
+            weights = {
+                'profitability_score': 0.25,
+                'growth_score': 0.20,
+                'efficiency_score': 0.15,
+                'liquidity_score': 0.15,
+                'debt_score': 0.15,
+                'valuation_score': 0.10
+            }
+            
+            financial_score = sum(
+                analysis[score] * weight
+                for score, weight in weights.items()
+                if score in analysis
+            )
+            
+            analysis['financial_score'] = self._round_float(financial_score)
+            
+            # Add overall financial health assessment
+            if financial_score >= 80:
+                analysis['financial_health'] = 'EXCELLENT'
+            elif financial_score >= 60:
+                analysis['financial_health'] = 'GOOD'
+            elif financial_score >= 40:
+                analysis['financial_health'] = 'AVERAGE'
+            elif financial_score >= 20:
+                analysis['financial_health'] = 'POOR'
+            else:
+                analysis['financial_health'] = 'CRITICAL'
+            
+            analysis['analysis_summary'].append(
+                f"Overall financial health: {analysis['financial_health']} "
+                f"(Score: {financial_score:.2f})"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error calculating final scores: {e}")
+            analysis['financial_score'] = 0.00
+            analysis['financial_health'] = 'UNKNOWN'
