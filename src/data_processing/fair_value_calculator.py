@@ -906,59 +906,50 @@ Include specific metrics where possible:
                     'dividend_analysis': dividend_analysis
                 }
                 
-                # Format the analysis for logging
+                # Format the analysis for logging, handling empty sections
+                def format_section(title, content):
+                    return f"{title}\n{'-' * len(title)}\n{content if content else 'No data available for this section.'}"
+
                 formatted_analysis = f"""
 AI Investment Analysis for {symbol}
 =================================
 
-Company Overview
----------------
-{processed_analysis['company_overview']}
+{format_section('Company Overview', processed_analysis['company_overview'])}
 
-Financial Health
----------------
-{processed_analysis['financial_health']}
+{format_section('Financial Health', processed_analysis['financial_health'])}
 
-Investment Thesis
-----------------
-{processed_analysis['investment_thesis']}
+{format_section('Investment Thesis', processed_analysis['investment_thesis'])}
 
-Valuation Analysis
------------------
-{processed_analysis['valuation_analysis']}
+{format_section('Valuation Analysis', processed_analysis['valuation_analysis'])}
 
-Investment Recommendation
-------------------------
-{processed_analysis['investment_recommendation']}
+{format_section('Investment Recommendation', processed_analysis['investment_recommendation'])}
 
-Monitoring Points
-----------------
-{processed_analysis['monitoring_points']}
+{format_section('Monitoring Points', processed_analysis['monitoring_points'])}
 
 Key Metrics
 -----------
-Confidence Score: {processed_analysis['confidence_score']}
-Fair Value: {processed_analysis['fair_value']}
-DCF Value: {processed_analysis['dcf_value']}
-Target Price: {processed_analysis['target_price']}
-Entry Range: {processed_analysis['entry_range']}
-Investment Horizon: {processed_analysis['investment_horizon']}
-Position Size: {processed_analysis['position_size']}
+Confidence Score: {processed_analysis['confidence_score'] if processed_analysis['confidence_score'] != 0.0 else 'N/A'}
+Fair Value: {processed_analysis['fair_value'] if processed_analysis['fair_value'] is not None else 'N/A'}
+DCF Value: {processed_analysis['dcf_value'] if processed_analysis['dcf_value'] is not None else 'N/A'}
+Target Price: {processed_analysis['target_price'] if processed_analysis['target_price'] is not None else 'N/A'}
+Entry Range: {processed_analysis['entry_range'] if processed_analysis['entry_range'] else 'N/A'}
+Investment Horizon: {processed_analysis['investment_horizon'] if processed_analysis['investment_horizon'] else 'N/A'}
+Position Size: {processed_analysis['position_size'] if processed_analysis['position_size'] else 'N/A'}
 
 Dividend Analysis
 ----------------
-Current Dividend: {json.dumps(processed_analysis['dividend_analysis']['current_dividend'], indent=2) if processed_analysis['dividend_analysis']['current_dividend'] else 'N/A'}
-Dividend Yield: {f"{processed_analysis['dividend_analysis']['dividend_yield']:.2f}%" if processed_analysis['dividend_analysis']['dividend_yield'] else 'N/A'}
-Dividend Growth: {f"{processed_analysis['dividend_analysis']['dividend_growth']:.2f}%" if processed_analysis['dividend_analysis']['dividend_growth'] else 'N/A'}
-Dividend Sustainability: {processed_analysis['dividend_analysis']['dividend_sustainability']}
+Current Dividend: {json.dumps(processed_analysis['dividend_analysis']['current_dividend'], indent=2) if processed_analysis['dividend_analysis'].get('current_dividend') else 'N/A'}
+Dividend Yield: {f"{processed_analysis['dividend_analysis']['dividend_yield']:.2f}%" if processed_analysis['dividend_analysis'].get('dividend_yield') else 'N/A'}
+Dividend Growth: {f"{processed_analysis['dividend_analysis']['dividend_growth']:.2f}%" if processed_analysis['dividend_analysis'].get('dividend_growth') else 'N/A'}
+Dividend Sustainability: {processed_analysis['dividend_analysis'].get('dividend_sustainability', 'N/A')}
 
 Additional Analysis
 ------------------
-Peer Comparison: {json.dumps(processed_analysis['peer_comparison'], indent=2)}
-Risk Assessment: {json.dumps(processed_analysis['risk_assessment'], indent=2)}
-Growth Catalysts: {json.dumps(processed_analysis['growth_catalysts'], indent=2)}
-Management Quality: {processed_analysis['management_quality']}
-Corporate Governance: {processed_analysis['corporate_governance']}
+Peer Comparison: {json.dumps(processed_analysis['peer_comparison'], indent=2) if processed_analysis['peer_comparison'] else 'N/A'}
+Risk Assessment: {json.dumps(processed_analysis['risk_assessment'], indent=2) if processed_analysis['risk_assessment'] else 'N/A'}
+Growth Catalysts: {json.dumps(processed_analysis['growth_catalysts'], indent=2) if processed_analysis['growth_catalysts'] else 'N/A'}
+Management Quality: {processed_analysis['management_quality'] if processed_analysis['management_quality'] else 'N/A'}
+Corporate Governance: {processed_analysis['corporate_governance'] if processed_analysis['corporate_governance'] else 'N/A'}
 """
                 
                 logger.info(f"Successfully processed AI investment analysis for {symbol}")
