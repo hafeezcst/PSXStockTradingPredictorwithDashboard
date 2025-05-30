@@ -1,16 +1,18 @@
-from typing import Dict, List
+from __future__ import annotations
+import json
+import logging
+import os
+import re
+import sqlite3
+import time
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Union, Any
+
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-import re
-import logging
-import sqlite3
-from datetime import datetime
-import os
-from tradingview_ta import TA_Handler, Interval
-import time
-import pandas as pd
-import json
 from dotenv import load_dotenv
+from tradingview_ta import TA_Handler, Interval
 
 # Load environment variables
 load_dotenv()
@@ -18,8 +20,33 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 class FairValueCalculator:
-    def __init__(self):
-        """Initialize the FairValueCalculator with database path and headers"""
+    """A comprehensive stock analysis tool that calculates fair value using multiple indicators.
+    
+    This class integrates technical analysis, fundamental analysis, and AI-based insights
+    to generate trading signals and fair value estimates for stocks. It maintains a database
+    of historical analysis results and provides notification capabilities.
+    
+    Key Features:
+    - Technical analysis using indicators like RSI, MACD, Bollinger Bands
+    - Fundamental analysis of financial reports and announcements
+    - AI-enhanced signal generation and analysis
+    - Database storage of analysis results
+    - Telegram notification system
+    
+    Attributes:
+        db_path (str): Path to the main analysis database
+        dividend_db_path (str): Path to the dividend database
+        headers (dict): HTTP headers for web requests
+    """
+    
+    def __init__(self) -> None:
+        """Initialize the FairValueCalculator with database paths and headers.
+        
+        Sets up:
+        - Paths to SQLite databases
+        - HTTP headers for web requests
+        - Initializes the database structure
+        """
         self.db_path = 'data/databases/production/fairvalue.db'
         self.dividend_db_path = 'data/databases/production/PSX_Dividend_Schedule.db'
         self.headers = {
@@ -150,7 +177,21 @@ class FairValueCalculator:
             raise
 
     def fetch_psx_symbols(self) -> List[str]:
-        """Fetch list of PSX symbols from Excel file"""
+        """Fetch list of PSX symbols from Excel file.
+        
+        Reads symbols from an Excel file and returns them as a cleaned list.
+        Handles duplicate symbols and invalid entries.
+        
+        Returns:
+            List[str]: List of cleaned and validated stock symbols in uppercase
+            
+        Example:
+            >>> calculator.fetch_psx_symbols()
+            ['OGDC', 'PPL', 'LUCK', 'ENGRO']
+            
+        Raises:
+            Exception: If the Excel file cannot be read or processed
+        """
         try:
             # Read symbols from Excel file
             excel_path = 'src/data_processing/psxsymbols.xlsx'
@@ -177,7 +218,28 @@ class FairValueCalculator:
             return []
 
     def should_update_data(self, symbol: str) -> bool:
-        """Check if data needs to be updated for a symbol with weekly timeframe logic"""
+        """Determine if new data should be fetched for a given symbol based on update frequency rules.
+        
+        This method implements a weekly update cadence for stock data, with additional checks to:
+        - Avoid redundant updates within 24 hours
+        - Handle cases where no existing data exists
+        
+        Args:
+            symbol (str): The stock symbol to check update status for
+            
+        Returns:
+            bool: True if data should be updated, False otherwise
+            
+        Example:
+            >>> calculator = FairValueCalculator()
+            >>> calculator.should_update_data('OGDC')
+            True  # If no existing data or weekly update needed
+            
+        Notes:
+            - Weekly updates are determined by comparing ISO week numbers
+            - A 24-hour cooldown period is enforced between updates
+            - Returns True if no existing data is found for the symbol
+        """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -220,7 +282,28 @@ class FairValueCalculator:
             return True
 
     def get_market_status(self) -> bool:
-        """Check if the market is currently open with enhanced timezone handling"""
+        """Determine if the Pakistan Stock Exchange (PSX) is currently open for trading.
+        
+        Checks multiple factors to determine market status:
+        - Current day of week (closed weekends)
+        - Trading hours in Pakistan Time (PKT)
+        - Official market holidays
+        
+        Returns:
+            bool: True if market is open, False otherwise
+            
+        Example:
+            >>> calculator = FairValueCalculator()
+            >>> calculator.get_market_status()
+            False  # If called outside trading hours
+            
+        Notes:
+            - Uses Pakistan Standard Time (UTC+5) for time calculations
+            - Market hours: 9:30 AM - 3:30 PM PKT (regular session)
+            - Pre-market: 9:00 AM - 9:30 AM PKT
+            - Post-market: 3:30 PM - 4:00 PM PKT
+            - Automatically checks for holidays (list can be expanded)
+        """
         try:
             current_time = datetime.now()
             
