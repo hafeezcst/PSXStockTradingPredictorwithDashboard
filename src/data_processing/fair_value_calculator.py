@@ -14,6 +14,12 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from tradingview_ta import TA_Handler, Interval
 
+from database_manager import DatabaseManager
+from technical_analyzer import TechnicalAnalyzer
+from financial_analyzer import FinancialAnalyzer
+from ai_analyzer import AIAnalyzer
+from notification_manager import NotificationManager
+
 # Load environment variables
 load_dotenv()
 
@@ -38,6 +44,11 @@ class FairValueCalculator:
         db_path (str): Path to the main analysis database
         dividend_db_path (str): Path to the dividend database
         headers (dict): HTTP headers for web requests
+        db_manager (DatabaseManager): Manager for database operations
+        tech_analyzer (TechnicalAnalyzer): Analyzer for technical indicators
+        fin_analyzer (FinancialAnalyzer): Analyzer for financial data
+        ai_analyzer (AIAnalyzer): Analyzer for AI-based insights
+        notification_manager (NotificationManager): Manager for sending notifications
     """
     
     def __init__(self) -> None:
@@ -46,14 +57,18 @@ class FairValueCalculator:
         Sets up:
         - Paths to SQLite databases
         - HTTP headers for web requests
-        - Initializes the database structure
+        - Initializes modular components for analysis and notifications
         """
         self.db_path = 'data/databases/production/fairvalue.db'
         self.dividend_db_path = 'data/databases/production/PSX_Dividend_Schedule.db'
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        self._init_database()
+        self.db_manager = DatabaseManager(self.db_path, self.dividend_db_path)
+        self.tech_analyzer = TechnicalAnalyzer()
+        self.fin_analyzer = FinancialAnalyzer(self.db_path, self.dividend_db_path)
+        self.ai_analyzer = AIAnalyzer()
+        self.notification_manager = NotificationManager()
 
     def _handle_error(self, error: Exception, context: str, default_return=None):
         """Utility method to handle exceptions with consistent logging.
@@ -144,136 +159,7 @@ class FairValueCalculator:
             self._handle_error(e, f"calculating DCF value for {symbol}")
             raise
 
-    def _init_database(self):
-        """Initialize the SQLite database and create necessary tables"""
-        try:
-            self._create_database_directory()
-            self._connect_to_database()
-            self._create_tables()
-            self._verify_tables()
-            self._close_database_connection()
-        except Exception as e:
-            self._handle_error(e, "initializing database")
-            if hasattr(self, 'conn'):
-                self.conn.close()
-            raise
-
-    def _create_database_directory(self):
-        """Create the directory for the database if it doesn't exist"""
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-
-    def _connect_to_database(self):
-        """Connect to the SQLite database"""
-        self.conn = sqlite3.connect(self.db_path)
-        self.cursor = self.conn.cursor()
-
-    def _create_tables(self):
-        """Create necessary tables in the database"""
-        self.cursor.execute('''
-        CREATE TABLE IF NOT EXISTS tradingview_ta (
-            symbol TEXT,
-            date TEXT,
-            recommendation TEXT,
-            buy_signals INTEGER,
-            sell_signals INTEGER,
-            neutral_signals INTEGER,
-            rsi REAL,
-            stoch_k REAL,
-            stoch_d REAL,
-            macd REAL,
-            macd_signal REAL,
-            macd_hist REAL,
-            sma_20 REAL,
-            sma_50 REAL,
-            sma_200 REAL,
-            ema_20 REAL,
-            ema_50 REAL,
-            ema_200 REAL,
-            close REAL,
-            open REAL,
-            high REAL,
-            low REAL,
-            volume REAL,
-            change REAL,
-            change_percent REAL,
-            bb_upper REAL,
-            bb_lower REAL,
-            ao REAL,
-            psar REAL,
-            vwma REAL,
-            hull_ma9 REAL,
-            source TEXT,
-            last_updated TEXT,
-            PRIMARY KEY (symbol, date)
-        )
-        ''')
-
-        self.cursor.execute('''
-        CREATE TABLE IF NOT EXISTS tradingview_signals (
-            symbol TEXT,
-            date TEXT,
-            signal_type TEXT,
-            signal_strength REAL,
-            confidence_score REAL,
-            technical_score REAL,
-            trend_score REAL,
-            momentum_score REAL,
-            volume_score REAL,
-            volatility_score REAL,
-            support_level REAL,
-            resistance_level REAL,
-            stop_loss REAL,
-            take_profit REAL,
-            risk_reward_ratio REAL,
-            analysis_summary TEXT,
-            indicators_used TEXT,
-            last_updated TEXT,
-            ai_score REAL,
-            ai_confidence REAL,
-            ai_pattern_recognition TEXT,
-            ai_signal_strength TEXT,
-            ai_risk_assessment TEXT,
-            ai_recommendation TEXT,
-            ai_price_targets TEXT,
-            ai_entry_points TEXT,
-            ai_exit_points TEXT,
-            ai_analysis_date TEXT,
-            PRIMARY KEY (symbol, date)
-        )
-        ''')
-
-        self.cursor.execute('''
-        CREATE TABLE IF NOT EXISTS financial_reports (
-            symbol TEXT,
-            report_date TEXT,
-            eps_growth REAL,
-            revenue_growth REAL,
-            profit_margin REAL,
-            debt_to_equity REAL,
-            current_ratio REAL,
-            roe REAL,
-            last_updated TEXT,
-            PRIMARY KEY (symbol, report_date)
-        )
-        ''')
-
-        self.conn.commit()
-
-    def _verify_tables(self):
-        """Verify tables exist and have correct structure"""
-        self.cursor.execute("SELECT COUNT(*) FROM tradingview_ta")
-        logger.info(f"tradingview_ta table initialized with {self.cursor.fetchone()[0]} records")
-
-        self.cursor.execute("SELECT COUNT(*) FROM tradingview_signals")
-        logger.info(f"tradingview_signals table initialized with {self.cursor.fetchone()[0]} records")
-
-        self.cursor.execute("SELECT COUNT(*) FROM financial_reports")
-        logger.info(f"financial_reports table initialized with {self.cursor.fetchone()[0]} records")
-
-    def _close_database_connection(self):
-        """Close the database connection"""
-        self.conn.close()
-        logger.info(f"Database initialized successfully at {self.db_path}")
+    # Database management methods are now handled by DatabaseManager class
 
     def fetch_psx_symbols(self) -> List[str]:
         """Fetch list of PSX symbols from Excel file.
@@ -928,28 +814,28 @@ AI Investment Analysis for {symbol}
 
 Key Metrics
 -----------
-Confidence Score: {processed_analysis['confidence_score'] if processed_analysis['confidence_score'] != 0.0 else 'N/A'}
-Fair Value: {processed_analysis['fair_value'] if processed_analysis['fair_value'] is not None else 'N/A'}
-DCF Value: {processed_analysis['dcf_value'] if processed_analysis['dcf_value'] is not None else 'N/A'}
-Target Price: {processed_analysis['target_price'] if processed_analysis['target_price'] is not None else 'N/A'}
-Entry Range: {processed_analysis['entry_range'] if processed_analysis['entry_range'] else 'N/A'}
-Investment Horizon: {processed_analysis['investment_horizon'] if processed_analysis['investment_horizon'] else 'N/A'}
-Position Size: {processed_analysis['position_size'] if processed_analysis['position_size'] else 'N/A'}
+Confidence Score: {processed_analysis['confidence_score'] if processed_analysis['confidence_score'] != 0.0 else 'Not available (AI analysis may lack confidence data)'}
+Fair Value: {processed_analysis['fair_value'] if processed_analysis['fair_value'] is not None else 'Not available (AI analysis may lack fair value estimation)'}
+DCF Value: {processed_analysis['dcf_value'] if processed_analysis['dcf_value'] is not None else 'Not available (AI analysis may lack DCF calculation)'}
+Target Price: {processed_analysis['target_price'] if processed_analysis['target_price'] is not None else 'Not available (AI analysis may lack target price)'}
+Entry Range: {processed_analysis['entry_range'] if processed_analysis['entry_range'] else 'Not available (AI analysis may lack entry range)'}
+Investment Horizon: {processed_analysis['investment_horizon'] if processed_analysis['investment_horizon'] else 'Not available (AI analysis may lack horizon data)'}
+Position Size: {processed_analysis['position_size'] if processed_analysis['position_size'] else 'Not available (AI analysis may lack position sizing recommendation)'}
 
 Dividend Analysis
 ----------------
-Current Dividend: {json.dumps(processed_analysis['dividend_analysis']['current_dividend'], indent=2) if processed_analysis['dividend_analysis'].get('current_dividend') else 'N/A'}
-Dividend Yield: {f"{processed_analysis['dividend_analysis']['dividend_yield']:.2f}%" if processed_analysis['dividend_analysis'].get('dividend_yield') else 'N/A'}
-Dividend Growth: {f"{processed_analysis['dividend_analysis']['dividend_growth']:.2f}%" if processed_analysis['dividend_analysis'].get('dividend_growth') else 'N/A'}
-Dividend Sustainability: {processed_analysis['dividend_analysis'].get('dividend_sustainability', 'N/A')}
+Current Dividend: {json.dumps(processed_analysis['dividend_analysis']['current_dividend'], indent=2) if processed_analysis['dividend_analysis'].get('current_dividend') else 'Not available (No current dividend data)'}
+Dividend Yield: {f"{processed_analysis['dividend_analysis']['dividend_yield']:.2f}%" if processed_analysis['dividend_analysis'].get('dividend_yield') else 'Not available (No yield data)'}
+Dividend Growth: {f"{processed_analysis['dividend_analysis']['dividend_growth']:.2f}%" if processed_analysis['dividend_analysis'].get('dividend_growth') else 'Not available (No growth data)'}
+Dividend Sustainability: {processed_analysis['dividend_analysis'].get('dividend_sustainability', 'Not available (No sustainability assessment)')}
 
 Additional Analysis
 ------------------
-Peer Comparison: {json.dumps(processed_analysis['peer_comparison'], indent=2) if processed_analysis['peer_comparison'] else 'N/A'}
-Risk Assessment: {json.dumps(processed_analysis['risk_assessment'], indent=2) if processed_analysis['risk_assessment'] else 'N/A'}
-Growth Catalysts: {json.dumps(processed_analysis['growth_catalysts'], indent=2) if processed_analysis['growth_catalysts'] else 'N/A'}
-Management Quality: {processed_analysis['management_quality'] if processed_analysis['management_quality'] else 'N/A'}
-Corporate Governance: {processed_analysis['corporate_governance'] if processed_analysis['corporate_governance'] else 'N/A'}
+Peer Comparison: {json.dumps(processed_analysis['peer_comparison'], indent=2) if processed_analysis['peer_comparison'] else 'Not available (No peer comparison data)'}
+Risk Assessment: {json.dumps(processed_analysis['risk_assessment'], indent=2) if processed_analysis['risk_assessment'] else 'Not available (No risk assessment data)'}
+Growth Catalysts: {json.dumps(processed_analysis['growth_catalysts'], indent=2) if processed_analysis['growth_catalysts'] else 'Not available (No growth catalysts identified)'}
+Management Quality: {processed_analysis['management_quality'] if processed_analysis['management_quality'] else 'Not available (No management quality assessment)'}
+Corporate Governance: {processed_analysis['corporate_governance'] if processed_analysis['corporate_governance'] else 'Not available (No corporate governance assessment)'}
 """
                 
                 logger.info(f"Successfully processed AI investment analysis for {symbol}")
@@ -1151,33 +1037,33 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             logger.error(f"Error analyzing stock indicators for {symbol}: {str(e)}")
             return None
 
-    def _perform_technical_analysis(self, stock_data: Dict, previous_analysis: Dict = None) -> Dict:
-        """Perform technical analysis on stock data"""
-        try:
-            analysis = {
-                'signal_type': 'NEUTRAL',
-                'signal_strength': 0.0,
-                'confidence_score': 0.0,
-                'technical_score': 0.0,
-                'trend_score': 0.0,
-                'momentum_score': 0.0,
-                'volume_score': 0.0,
-                'volatility_score': 0.0,
-                'support_level': None,
-                'resistance_level': None,
-                'stop_loss': None,
-                'take_profit': None,
-                'risk_reward_ratio': None,
-                'analysis_summary': [],
-                'indicators_used': []
-            }
-            
-            # Add symbol to analysis
-            analysis['symbol'] = stock_data['symbol']
-            
-            # Copy price and indicator data from stock_data to analysis
-            price_fields = ['close', 'open', 'high', 'low', 'volume', 'change', 'change_percent']
-            indicator_fields = ['rsi', 'macd', 'macd_signal', 'sma_20', 'sma_50', 'sma_200', 'bb_upper', 'bb_lower']
+import multiprocessing
+
+def _perform_technical_analysis(self, stock_data: Dict, previous_analysis: Dict = None) -> Dict:
+    """Perform technical analysis on stock data using parallel processing"""
+    try:
+        analysis = {
+            'signal_type': 'NEUTRAL',
+            'signal_strength': 0.0,
+            'confidence_score': 0.0,
+            'technical_score': 0.0,
+            'trend_score': 0.0,
+            'momentum_score': 0.0,
+            'volume_score': 0.0,
+            'volatility_score': 0.0,
+            'support_level': None,
+            'resistance_level': None,
+            'stop_loss': None,
+            'take_profit': None,
+            'risk_reward_ratio': None,
+            'analysis_summary': [],
+            'indicators_used': []
+        }
+        
+        # Add symbol to analysis
+        analysis['symbol'] = stock_data['symbol']
+        
+        # Copy price and indicator data from stock_data to analysis
             
             for field in price_fields + indicator_fields:
                 if field in stock_data:
@@ -2148,14 +2034,18 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             if 'conn' in locals():
                 conn.close()
 
-    def analyze_stock_signals(self):
-        """Analyze stock data and generate AI-based signals for all symbols.
+    def analyze_stock_signals(self, batch_size: int = 10):
+        """Analyze stock data and generate AI-based signals for all symbols in batches.
         
         This method fetches the latest data for each symbol from the database,
         performs a comprehensive analysis using technical indicators, and integrates
         AI-based insights to generate trading signals. It leverages the 
         `analyze_stock_indicators` method for individual stock analysis to avoid
-        code duplication and ensure consistency.
+        code duplication and ensure consistency. Processing is done in batches to
+        manage memory usage and improve performance with large datasets.
+        
+        Args:
+            batch_size (int): Number of stocks to process in each batch. Default is 10.
         
         Returns:
             List[Dict]: A list of signal dictionaries for each analyzed stock.
@@ -2188,16 +2078,28 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                 stock = dict(zip(columns, row))
                 stocks.append(stock)
             
-            # Analyze each stock
+            # Analyze stocks in batches
             signals = []
-            for stock in stocks:
-                symbol = stock['symbol']
-                logger.info(f"Analyzing signals for {symbol}")
-                signal = self.analyze_stock_indicators(stock)
-                if signal:
-                    signals.append(signal)
-                    self.save_analysis_to_db(symbol, signal)
+            total_stocks = len(stocks)
+            logger.info(f"Starting analysis of {total_stocks} stocks in batches of {batch_size}")
             
+            for i in range(0, total_stocks, batch_size):
+                batch = stocks[i:i + batch_size]
+                logger.info(f"Processing batch {i//batch_size + 1} with {len(batch)} stocks")
+                
+                for stock in batch:
+                    symbol = stock['symbol']
+                    logger.info(f"Analyzing signals for {symbol}")
+                    signal = self.analyze_stock_indicators(stock)
+                    if signal:
+                        signals.append(signal)
+                        self.save_analysis_to_db(symbol, signal)
+                
+                logger.info(f"Completed batch {i//batch_size + 1}")
+                # Add a small delay between batches to prevent overloading
+                time.sleep(1)
+            
+            logger.info(f"Completed analysis of all {total_stocks} stocks")
             conn.close()
             return signals
             
@@ -2448,7 +2350,19 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             return False
 
     def call_ai_model(self, prompt: str) -> Dict:
-        """Call AI model for analysis with improved error handling and retries"""
+        """Call AI model for analysis with improved error handling and retries.
+        
+        This method handles the communication with the DeepSeek API to obtain AI-based financial analysis.
+        It includes validation of the API key, retry logic for handling transient failures, and robust
+        parsing of the AI response to extract structured data for further processing.
+        
+        Args:
+            prompt (str): The prompt to send to the AI model for analysis.
+        
+        Returns:
+            Dict: A dictionary containing the parsed AI analysis with predefined keys for various
+                  analysis sections and metrics. Returns None if the API call or parsing fails.
+        """
         try:
             # Validate API key first
             if not self._validate_api_key():
@@ -2458,8 +2372,6 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
             # Get API key from environment
             api_key = os.getenv('DEEPSEEK_API_KEY')
             logger.info("DeepSeek API key validated, proceeding with API call")
-            
-            logger.info("DeepSeek API key found, proceeding with API call")
             
             headers = {
                 "Authorization": f"Bearer {api_key}",
@@ -2534,8 +2446,8 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                 
                 # Process the analysis sections and extract data
                 try:
-                    # Split the analysis into sections
-                    sections = analysis.split('\n\n')
+                    # Split the analysis into sections based on numbered or titled headings
+                    sections = re.split(r'\n(?=\d+\.\s|\b[A-Z\s]+:\s)', analysis)
                     current_section = None
                     section_content = []
                     
@@ -2547,8 +2459,8 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                         # Check for section headers and process content
                         for section_name in ai_analysis.keys():
                             header = section_name.upper().replace('_', ' ')
-                            if header in section:
-                                if current_section:
+                            if header in section.upper() or section_name.replace('_', ' ').upper() in section.upper():
+                                if current_section and section_content:
                                     ai_analysis[current_section] = '\n'.join(section_content)
                                 current_section = section_name
                                 section_content = []
@@ -2561,47 +2473,59 @@ Corporate Governance: {processed_analysis['corporate_governance'] if processed_a
                     if current_section and section_content:
                         ai_analysis[current_section] = '\n'.join(section_content)
                     
-                    # Extract metrics using regex patterns
+                    # Extract metrics using regex patterns with improved robustness
                     patterns = {
-                        'confidence_score': r'confidence score.*?(\d+\.?\d*)',
-                        'fair_value': r'fair value.*?(\d+\.?\d*)',
-                        'target_price': r'target price.*?(\d+\.?\d*)',
-                        'entry_range': r'entry range.*?(\d+\.?\d*)\s*-\s*(\d+\.?\d*)',
-                        'investment_horizon': r'investment horizon.*?(\d+\s*(?:months|years))',
-                        'position_size': r'position size.*?(\d+\.?\d*%)',
-                        'dcf_value': r'dcf value.*?(\d+\.?\d*)'
+                        'confidence_score': r'confidence\s*score\s*[:\-]?\s*(\d+\.?\d*)',
+                        'fair_value': r'fair\s*value\s*[:\-]?\s*(\d+\.?\d*)',
+                        'target_price': r'target\s*price\s*[:\-]?\s*(\d+\.?\d*)',
+                        'entry_range': r'entry\s*range\s*[:\-]?\s*(\d+\.?\d*)\s*[-–—to\s]+(\d+\.?\d*)',
+                        'investment_horizon': r'investment\s*horizon\s*[:\-]?\s*(\d+\s*(?:months|years))',
+                        'position_size': r'position\s*size\s*[:\-]?\s*(\d+\.?\d*%)',
+                        'dcf_value': r'dcf\s*value\s*[:\-]?\s*(\d+\.?\d*)'
                     }
                     
                     for metric, pattern in patterns.items():
-                        match = re.search(pattern, analysis.lower())
+                        match = re.search(pattern, analysis.lower(), re.IGNORECASE)
                         if match:
-                            if metric == 'entry_range':
-                                ai_analysis[metric] = [float(match.group(1)), float(match.group(2))]
-                            elif metric in ['confidence_score', 'fair_value', 'target_price', 'dcf_value']:
-                                ai_analysis[metric] = float(match.group(1))
-                            else:
-                                ai_analysis[metric] = match.group(1)
+                            try:
+                                if metric == 'entry_range':
+                                    ai_analysis[metric] = [float(match.group(1)), float(match.group(2))]
+                                elif metric in ['confidence_score', 'fair_value', 'target_price', 'dcf_value']:
+                                    ai_analysis[metric] = float(match.group(1))
+                                else:
+                                    ai_analysis[metric] = match.group(1)
+                            except ValueError as e:
+                                logger.warning(f"Failed to convert {metric} value to float: {match.group(1)}")
                     
-                    # Extract JSON-formatted sections
+                    # Extract JSON-formatted sections with improved error handling
                     json_sections = ['peer_comparison', 'risk_assessment', 'growth_catalysts', 
-                                   'technical_analysis', 'market_sentiment', 'industry_analysis',
-                                   'regulatory_analysis', 'liquidity_analysis', 'volatility_analysis']
+                                     'technical_analysis', 'market_sentiment', 'industry_analysis',
+                                     'regulatory_analysis', 'liquidity_analysis', 'volatility_analysis']
                     
                     for section in json_sections:
-                        pattern = f"{section.replace('_', ' ')}.*?({{\n.*?\n}})"
+                        pattern = f"{section.replace('_', ' ').lower()}.*?({{.*?}})"
                         match = re.search(pattern, analysis, re.DOTALL | re.IGNORECASE)
                         if match:
                             try:
-                                ai_analysis[section] = json.loads(match.group(1))
-                            except json.JSONDecodeError:
-                                logger.warning(f"Failed to parse JSON for {section}")
+                                json_str = match.group(1)
+                                # Clean up potential formatting issues
+                                json_str = json_str.replace('\n', '').replace('\r', '')
+                                ai_analysis[section] = json.loads(json_str)
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Failed to parse JSON for {section}: {e}")
                     
                     logger.info("Successfully parsed AI analysis")
                     return ai_analysis
                     
                 except Exception as e:
                     logger.error(f"Error parsing AI response: {e}")
-                    return None
+                    # Return a minimal analysis structure to avoid downstream errors
+                    return {
+                        'confidence_score': 0.0,
+                        'fair_value': None,
+                        'target_price': None,
+                        'investment_recommendation': 'Error in parsing AI response'
+                    }
             else:
                 logger.warning("No analysis received from AI model")
                 return None
