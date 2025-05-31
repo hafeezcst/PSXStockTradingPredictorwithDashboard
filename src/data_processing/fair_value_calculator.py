@@ -118,7 +118,7 @@ class FairValueCalculator:
                     )
                     ''')
                     
-                    # Create financial_reports table
+                    # Create financial_reports table with enhanced schema
                     cursor.execute('''
                     CREATE TABLE IF NOT EXISTS financial_reports (
                         symbol TEXT,
@@ -133,6 +133,14 @@ class FairValueCalculator:
                         PRIMARY KEY (symbol, report_date)
                     )
                     ''')
+                    
+                    # Create indices for better query performance
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tradingview_ta_symbol ON tradingview_ta(symbol)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tradingview_ta_date ON tradingview_ta(date)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tradingview_signals_symbol ON tradingview_signals(symbol)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tradingview_signals_date ON tradingview_signals(date)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_financial_reports_symbol ON financial_reports(symbol)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_financial_reports_date ON financial_reports(report_date)')
                     
                     # Verify tables exist and have correct structure
                     cursor.execute("SELECT COUNT(*) FROM tradingview_ta")
@@ -1433,14 +1441,44 @@ Format the response in clear sections with specific metrics and recommendations.
             # Prepare AI-related fields
             ai_data = analysis.get('ai_analysis', {})
             
-            # Convert dictionary values to JSON strings
-            ai_price_targets = json.dumps(ai_data.get('price_targets', {}))
-            ai_entry_points = json.dumps(ai_data.get('entry_points', []))
-            ai_exit_points = json.dumps(ai_data.get('exit_points', []))
-            ai_pattern_recognition = json.dumps(ai_data.get('pattern_recognition', ''))
-            ai_signal_strength = json.dumps(ai_data.get('signal_strength', ''))
-            ai_risk_assessment = json.dumps(ai_data.get('risk_assessment', ''))
-            ai_recommendation = json.dumps(ai_data.get('recommendation', ''))
+            # Convert dictionary values to JSON strings with proper error handling
+            def safe_json_dumps(value, default=None):
+                try:
+                    if isinstance(value, (dict, list)):
+                        return json.dumps(value)
+                    return str(value) if value is not None else default
+                except Exception as e:
+                    logger.warning(f"Error converting value to JSON: {e}")
+                    return default
+            
+            # Convert all complex data types to JSON strings
+            ai_price_targets = safe_json_dumps(ai_data.get('price_targets', {}), '{}')
+            ai_entry_points = safe_json_dumps(ai_data.get('entry_points', []), '[]')
+            ai_exit_points = safe_json_dumps(ai_data.get('exit_points', []), '[]')
+            ai_pattern_recognition = safe_json_dumps(ai_data.get('pattern_recognition', ''), '')
+            ai_signal_strength = safe_json_dumps(ai_data.get('signal_strength', ''), '')
+            ai_risk_assessment = safe_json_dumps(ai_data.get('risk_assessment', {}), '{}')
+            ai_recommendation = safe_json_dumps(ai_data.get('recommendation', ''), '')
+            
+            # Convert analysis summary to string if it's a list
+            analysis_summary = analysis.get('analysis_summary', [])
+            if isinstance(analysis_summary, list):
+                analysis_summary = '|'.join(str(item) for item in analysis_summary)
+            elif isinstance(analysis_summary, dict):
+                analysis_summary = safe_json_dumps(analysis_summary, '')
+            
+            # Convert indicators used to string if it's a list
+            indicators_used = analysis.get('indicators_used', [])
+            if isinstance(indicators_used, list):
+                indicators_used = '|'.join(str(item) for item in indicators_used)
+            elif isinstance(indicators_used, dict):
+                indicators_used = safe_json_dumps(indicators_used, '')
+            
+            # Ensure all values are strings or numbers
+            def safe_convert(value):
+                if isinstance(value, (dict, list)):
+                    return safe_json_dumps(value, '')
+                return value
             
             cursor.execute('''
             INSERT OR REPLACE INTO tradingview_signals
@@ -1455,24 +1493,24 @@ Format the response in clear sections with specific metrics and recommendations.
             ''', (
                 symbol,
                 datetime.now().strftime('%Y-%m-%d'),
-                analysis.get('signal_type'),
-                analysis.get('signal_strength'),
-                analysis.get('confidence_score'),
-                analysis.get('technical_score'),
-                analysis.get('trend_score'),
-                analysis.get('momentum_score'),
-                analysis.get('volume_score'),
-                analysis.get('volatility_score'),
-                analysis.get('support_level'),
-                analysis.get('resistance_level'),
-                analysis.get('stop_loss'),
-                analysis.get('take_profit'),
-                analysis.get('risk_reward_ratio'),
-                '|'.join(analysis.get('analysis_summary', [])),
-                '|'.join(analysis.get('indicators_used', [])),
+                safe_convert(analysis.get('signal_type')),
+                safe_convert(analysis.get('signal_strength')),
+                safe_convert(analysis.get('confidence_score')),
+                safe_convert(analysis.get('technical_score')),
+                safe_convert(analysis.get('trend_score')),
+                safe_convert(analysis.get('momentum_score')),
+                safe_convert(analysis.get('volume_score')),
+                safe_convert(analysis.get('volatility_score')),
+                safe_convert(analysis.get('support_level')),
+                safe_convert(analysis.get('resistance_level')),
+                safe_convert(analysis.get('stop_loss')),
+                safe_convert(analysis.get('take_profit')),
+                safe_convert(analysis.get('risk_reward_ratio')),
+                analysis_summary,
+                indicators_used,
                 current_time,
-                ai_data.get('confidence_score', 0.0),
-                ai_data.get('confidence_score', 0.0),
+                safe_convert(ai_data.get('confidence_score', 0.0)),
+                safe_convert(ai_data.get('confidence_score', 0.0)),
                 ai_pattern_recognition,
                 ai_signal_strength,
                 ai_risk_assessment,
@@ -2328,31 +2366,182 @@ Format the response in clear sections with specific metrics and recommendations.
             api_key = os.getenv('DEEPSEEK_API_KEY')
             logger.info("DeepSeek API key validated, proceeding with API call")
             
-            logger.info("DeepSeek API key found, proceeding with API call")
-            
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             }
             
+            # Enhanced prompt with structured sections and specific metrics
+            enhanced_prompt = f"""Analyze the following stock data and provide a comprehensive investment analysis in a structured format:
+
+{prompt}
+
+Please provide your analysis in the following structured format with specific metrics and values:
+
+1. COMPANY OVERVIEW
+- Company Description: [text]
+- Market Position: [text]
+- Key Business Segments: [list]
+- Competitive Advantages: [list]
+
+2. FINANCIAL HEALTH
+- Revenue Growth: [percentage]
+- Profit Margin: [percentage]
+- Debt-to-Equity: [ratio]
+- Current Ratio: [ratio]
+- ROE: [percentage]
+- Cash Flow Analysis: [text]
+
+3. INVESTMENT THESIS
+- Key Investment Drivers: [list]
+- Growth Opportunities: [list]
+- Competitive Advantages: [list]
+- Market Positioning: [text]
+
+4. VALUATION ANALYSIS
+- Fair Value Estimate: [number]
+- Target Price: [number]
+- Entry Range: [min] - [max]
+- DCF Value: [number]
+- Peer Comparison: {{
+    "P/E Ratio": [number],
+    "P/B Ratio": [number],
+    "EV/EBITDA": [number],
+    "Dividend Yield": [percentage]
+}}
+
+5. INVESTMENT RECOMMENDATION
+- Recommendation: [STRONG_BUY/BUY/HOLD/SELL/STRONG_SELL]
+- Confidence Score: [0-1]
+- Investment Horizon: [time period]
+- Position Size: [percentage]
+
+6. MONITORING POINTS
+- Key Metrics: [list]
+- Risk Factors: [list]
+- Growth Catalysts: [list]
+- Red Flags: [list]
+
+7. RISK ASSESSMENT
+{{
+    "Market Risk": {{
+        "Level": [LOW/MEDIUM/HIGH],
+        "Description": [text]
+    }},
+    "Business Risk": {{
+        "Level": [LOW/MEDIUM/HIGH],
+        "Description": [text]
+    }},
+    "Financial Risk": {{
+        "Level": [LOW/MEDIUM/HIGH],
+        "Description": [text]
+    }},
+    "Regulatory Risk": {{
+        "Level": [LOW/MEDIUM/HIGH],
+        "Description": [text]
+    }}
+}}
+
+8. TECHNICAL ANALYSIS
+{{
+    "Trend": {{
+        "Direction": [BULLISH/BEARISH/NEUTRAL],
+        "Strength": [0-1],
+        "Description": [text]
+    }},
+    "Support Levels": [list of numbers],
+    "Resistance Levels": [list of numbers],
+    "Momentum": {{
+        "RSI": [number],
+        "MACD": [number],
+        "Description": [text]
+    }},
+    "Volume Analysis": {{
+        "Volume Trend": [INCREASING/DECREASING/STABLE],
+        "Description": [text]
+    }}
+}}
+
+9. MARKET SENTIMENT
+{{
+    "Overall Sentiment": [BULLISH/BEARISH/NEUTRAL],
+    "Institutional Interest": [HIGH/MEDIUM/LOW],
+    "Retail Sentiment": [HIGH/MEDIUM/LOW],
+    "Analyst Ratings": {{
+        "Buy": [number],
+        "Hold": [number],
+        "Sell": [number]
+    }}
+}}
+
+10. INDUSTRY ANALYSIS
+{{
+    "Industry Trends": [text],
+    "Competitive Position": [text],
+    "Market Share": [percentage],
+    "Growth Prospects": [text]
+}}
+
+11. REGULATORY ANALYSIS
+{{
+    "Current Regulations": [text],
+    "Potential Changes": [text],
+    "Compliance Status": [COMPLIANT/NON-COMPLIANT]
+}}
+
+12. LIQUIDITY ANALYSIS
+{{
+    "Trading Volume": [number],
+    "Bid-Ask Spread": [percentage],
+    "Market Depth": [HIGH/MEDIUM/LOW]
+}}
+
+13. VOLATILITY ANALYSIS
+{{
+    "Historical Volatility": [percentage],
+    "Implied Volatility": [percentage],
+    "Volatility Trend": [INCREASING/DECREASING/STABLE]
+}}
+
+14. DIVIDEND ANALYSIS
+{{
+    "Dividend Yield": [percentage],
+    "Payout Ratio": [percentage],
+    "Dividend Growth": [percentage],
+    "Sustainability": [HIGH/MEDIUM/LOW]
+}}
+
+15. MANAGEMENT QUALITY
+- Leadership Assessment: [text]
+- Track Record: [text]
+- Strategic Vision: [text]
+- Corporate Governance: [text]
+
+16. CORPORATE GOVERNANCE
+- Board Structure: [text]
+- Shareholder Rights: [text]
+- Transparency: [HIGH/MEDIUM/LOW]
+- Ethical Practices: [text]
+
+Please ensure all sections are filled with specific data points and metrics where applicable. Use numerical values for quantitative metrics and descriptive text for qualitative analysis."""
+
             payload = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "You are a professional financial analyst."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": "You are a professional financial analyst providing detailed stock analysis."},
+                    {"role": "user", "content": enhanced_prompt}
                 ],
-                "max_tokens": 2000,
+                "max_tokens": 4000,
                 "temperature": 0.7
             }
             
-            # Define the API call function
             def make_api_call():
                 logger.info("Making API call to DeepSeek...")
                 response = requests.post(
                     "https://api.deepseek.com/v1/chat/completions",
                     headers=headers,
                     json=payload,
-                    timeout=120  # Increased timeout
+                    timeout=180  # Increased timeout for longer analysis
                 )
                 
                 logger.info(f"API Response Status: {response.status_code}")
@@ -2374,64 +2563,129 @@ Format the response in clear sections with specific metrics and recommendations.
                 
                 # Initialize analysis dictionary with all required sections
                 ai_analysis = {
-                    'company_overview': '',
-                    'financial_health': '',
-                    'investment_thesis': '',
-                    'valuation_analysis': '',
-                    'investment_recommendation': '',
-                    'monitoring_points': '',
-                    'confidence_score': 0.0,
-                    'fair_value': None,
-                    'target_price': None,
-                    'entry_range': [],
-                    'investment_horizon': '',
-                    'position_size': '',
-                    'dcf_value': None,
-                    'peer_comparison': {},
+                    'company_overview': {},
+                    'financial_health': {},
+                    'investment_thesis': {},
+                    'valuation_analysis': {},
+                    'investment_recommendation': {},
+                    'monitoring_points': {},
                     'risk_assessment': {},
-                    'growth_catalysts': [],
-                    'management_quality': '',
-                    'corporate_governance': '',
-                    'dividend_analysis': {},
                     'technical_analysis': {},
                     'market_sentiment': {},
                     'industry_analysis': {},
                     'regulatory_analysis': {},
                     'liquidity_analysis': {},
-                    'volatility_analysis': {}
+                    'volatility_analysis': {},
+                    'dividend_analysis': {},
+                    'management_quality': {},
+                    'corporate_governance': {}
                 }
                 
-                # Process the analysis sections and extract data
                 try:
-                    # Split the analysis into sections
-                    sections = analysis.split('\n\n')
-                    current_section = None
-                    section_content = []
+                    # Extract sections using enhanced regex patterns
+                    section_patterns = {
+                        'company_overview': r'1\.\s*COMPANY OVERVIEW\s*([\s\S]*?)(?=2\.\s*FINANCIAL HEALTH)',
+                        'financial_health': r'2\.\s*FINANCIAL HEALTH\s*([\s\S]*?)(?=3\.\s*INVESTMENT THESIS)',
+                        'investment_thesis': r'3\.\s*INVESTMENT THESIS\s*([\s\S]*?)(?=4\.\s*VALUATION ANALYSIS)',
+                        'valuation_analysis': r'4\.\s*VALUATION ANALYSIS\s*([\s\S]*?)(?=5\.\s*INVESTMENT RECOMMENDATION)',
+                        'investment_recommendation': r'5\.\s*INVESTMENT RECOMMENDATION\s*([\s\S]*?)(?=6\.\s*MONITORING POINTS)',
+                        'monitoring_points': r'6\.\s*MONITORING POINTS\s*([\s\S]*?)(?=7\.\s*RISK ASSESSMENT)',
+                        'risk_assessment': r'7\.\s*RISK ASSESSMENT\s*({[\s\S]*?})(?=8\.\s*TECHNICAL ANALYSIS)',
+                        'technical_analysis': r'8\.\s*TECHNICAL ANALYSIS\s*({[\s\S]*?})(?=9\.\s*MARKET SENTIMENT)',
+                        'market_sentiment': r'9\.\s*MARKET SENTIMENT\s*({[\s\S]*?})(?=10\.\s*INDUSTRY ANALYSIS)',
+                        'industry_analysis': r'10\.\s*INDUSTRY ANALYSIS\s*({[\s\S]*?})(?=11\.\s*REGULATORY ANALYSIS)',
+                        'regulatory_analysis': r'11\.\s*REGULATORY ANALYSIS\s*({[\s\S]*?})(?=12\.\s*LIQUIDITY ANALYSIS)',
+                        'liquidity_analysis': r'12\.\s*LIQUIDITY ANALYSIS\s*({[\s\S]*?})(?=13\.\s*VOLATILITY ANALYSIS)',
+                        'volatility_analysis': r'13\.\s*VOLATILITY ANALYSIS\s*({[\s\S]*?})(?=14\.\s*DIVIDEND ANALYSIS)',
+                        'dividend_analysis': r'14\.\s*DIVIDEND ANALYSIS\s*({[\s\S]*?})(?=15\.\s*MANAGEMENT QUALITY)',
+                        'management_quality': r'15\.\s*MANAGEMENT QUALITY\s*([\s\S]*?)(?=16\.\s*CORPORATE GOVERNANCE)',
+                        'corporate_governance': r'16\.\s*CORPORATE GOVERNANCE\s*([\s\S]*?)(?=\Z)'
+                    }
                     
-                    for section in sections:
-                        section = section.strip()
-                        if not section:
-                            continue
-                        
-                        # Check for section headers and process content
-                        for section_name in ai_analysis.keys():
-                            header = section_name.upper().replace('_', ' ')
-                            if header in section:
-                                if current_section:
-                                    ai_analysis[current_section] = '\n'.join(section_content)
-                                current_section = section_name
-                                section_content = []
-                                break
-                        else:
-                            if current_section:
-                                section_content.append(section)
+                    for section, pattern in section_patterns.items():
+                        match = re.search(pattern, analysis, re.DOTALL | re.IGNORECASE)
+                        if match:
+                            content = match.group(1).strip()
+                            
+                            # Handle JSON sections
+                            if section in ['risk_assessment', 'technical_analysis', 'market_sentiment', 
+                                         'industry_analysis', 'regulatory_analysis', 'liquidity_analysis', 
+                                         'volatility_analysis', 'dividend_analysis']:
+                                try:
+                                    # Clean and parse JSON
+                                    json_str = content.strip()
+                                    # Remove any leading/trailing whitespace and newlines
+                                    json_str = re.sub(r'^\s+|\s+$', '', json_str, flags=re.MULTILINE)
+                                    # Replace single quotes with double quotes
+                                    json_str = json_str.replace("'", '"')
+                                    # Fix property names
+                                    json_str = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
+                                    # Fix string values
+                                    json_str = re.sub(r':\s*([^",\{\}\[\]\d][^",\{\}\[\]]*?)([,}])', r':"\1"\2', json_str)
+                                    # Fix control characters
+                                    json_str = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', json_str)
+                                    # Fix missing commas
+                                    json_str = re.sub(r'"\s*}\s*"', '", "', json_str)
+                                    # Fix trailing commas
+                                    json_str = re.sub(r',\s*}', '}', json_str)
+                                    json_str = re.sub(r',\s*]', ']', json_str)
+                                    
+                                    # Try to parse the cleaned JSON
+                                    try:
+                                        ai_analysis[section] = json.loads(json_str)
+                                    except json.JSONDecodeError as e:
+                                        logger.warning(f"Failed to parse JSON for {section}: {e}")
+                                        # Try to extract key-value pairs manually
+                                        try:
+                                            # Extract key-value pairs with more flexible pattern
+                                            pairs = re.findall(r'"([^"]+)":\s*"([^"]+)"', json_str)
+                                            if pairs:
+                                                ai_analysis[section] = dict(pairs)
+                                            else:
+                                                # Try alternative pattern for nested structures
+                                                pairs = re.findall(r'"?([^"]+)"?\s*:\s*({[^}]+})', json_str)
+                                                if pairs:
+                                                    nested_dict = {}
+                                                    for key, value in pairs:
+                                                        nested_dict[key.strip()] = value.strip()
+                                                    ai_analysis[section] = nested_dict
+                                                else:
+                                                    ai_analysis[section] = {}
+                                        except Exception as e:
+                                            logger.error(f"Failed to extract key-value pairs for {section}: {e}")
+                                            ai_analysis[section] = {}
+                                except Exception as e:
+                                    logger.error(f"Error processing JSON for {section}: {e}")
+                                    ai_analysis[section] = {}
+                            else:
+                                # Handle non-JSON sections
+                                try:
+                                    # Extract key-value pairs
+                                    pairs = re.findall(r'-?\s*([^:]+):\s*([^\n]+)', content)
+                                    if pairs:
+                                        section_dict = {}
+                                        for key, value in pairs:
+                                            key = key.strip().lower().replace(' ', '_')
+                                            value = value.strip()
+                                            # Try to convert numeric values
+                                            try:
+                                                if '%' in value:
+                                                    value = float(value.replace('%', ''))
+                                                elif value.replace('.', '').isdigit():
+                                                    value = float(value)
+                                            except ValueError:
+                                                pass
+                                            section_dict[key] = value
+                                        ai_analysis[section] = section_dict
+                                    else:
+                                        # Store as text if no key-value pairs found
+                                        ai_analysis[section] = {'text': content}
+                                except Exception as e:
+                                    logger.error(f"Failed to parse {section}: {e}")
+                                    ai_analysis[section] = {'text': content}
                     
-                    # Add the last section
-                    if current_section and section_content:
-                        ai_analysis[current_section] = '\n'.join(section_content)
-                    
-                    # Extract metrics using regex patterns
-                    patterns = {
+                    # Extract specific metrics using enhanced patterns
+                    metric_patterns = {
                         'confidence_score': r'confidence score.*?(\d+\.?\d*)',
                         'fair_value': r'fair value.*?(\d+\.?\d*)',
                         'target_price': r'target price.*?(\d+\.?\d*)',
@@ -2441,29 +2695,27 @@ Format the response in clear sections with specific metrics and recommendations.
                         'dcf_value': r'dcf value.*?(\d+\.?\d*)'
                     }
                     
-                    for metric, pattern in patterns.items():
+                    for metric, pattern in metric_patterns.items():
                         match = re.search(pattern, analysis.lower())
                         if match:
                             if metric == 'entry_range':
-                                ai_analysis[metric] = [float(match.group(1)), float(match.group(2))]
+                                ai_analysis['valuation_analysis'][metric] = [float(match.group(1)), float(match.group(2))]
                             elif metric in ['confidence_score', 'fair_value', 'target_price', 'dcf_value']:
-                                ai_analysis[metric] = float(match.group(1))
+                                ai_analysis['valuation_analysis'][metric] = float(match.group(1))
                             else:
-                                ai_analysis[metric] = match.group(1)
+                                ai_analysis['valuation_analysis'][metric] = match.group(1)
                     
-                    # Extract JSON-formatted sections
-                    json_sections = ['peer_comparison', 'risk_assessment', 'growth_catalysts', 
-                                   'technical_analysis', 'market_sentiment', 'industry_analysis',
-                                   'regulatory_analysis', 'liquidity_analysis', 'volatility_analysis']
-                    
-                    for section in json_sections:
-                        pattern = f"{section.replace('_', ' ')}.*?({{\n.*?\n}})"
-                        match = re.search(pattern, analysis, re.DOTALL | re.IGNORECASE)
-                        if match:
-                            try:
-                                ai_analysis[section] = json.loads(match.group(1))
-                            except json.JSONDecodeError:
-                                logger.warning(f"Failed to parse JSON for {section}")
+                    # Validate and clean the analysis
+                    for key, value in ai_analysis.items():
+                        if isinstance(value, dict):
+                            # Remove empty values
+                            value = {k: v for k, v in value.items() if v is not None and v != ''}
+                            if not value:
+                                ai_analysis[key] = {}
+                        elif isinstance(value, str) and not value.strip():
+                            ai_analysis[key] = {}
+                        elif isinstance(value, list) and not value:
+                            ai_analysis[key] = []
                     
                     logger.info("Successfully parsed AI analysis")
                     return ai_analysis

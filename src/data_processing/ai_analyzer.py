@@ -385,7 +385,9 @@ class AIAnalyzer:
                         'entry_range': r'entry range.*?(\d+\.?\d*)\s*-\s*(\d+\.?\d*)',
                         'investment_horizon': r'investment horizon.*?(\d+\s*(?:months|years))',
                         'position_size': r'position size.*?(\d+\.?\d*%)',
-                        'dcf_value': r'dcf value.*?(\d+\.?\d*)'
+                        'dcf_value': r'dcf value.*?(\d+\.?\d*)',
+                        'ai_pattern_recognition': r'pattern recognition.*?([a-zA-Z0-9_\s]+)',
+                        'ai_signal_strength': r'signal strength.*?([a-zA-Z0-9_\s]+)'
                     }
                     
                     for metric, pattern in patterns.items():
