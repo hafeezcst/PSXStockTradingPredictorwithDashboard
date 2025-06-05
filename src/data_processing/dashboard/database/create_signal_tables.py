@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 from manager import create_signal_tables
+from src.data_processing.dashboard.config.settings import PSX_SIGNALS_DB_PATH
 
 # Configure logging
 logging.basicConfig(
@@ -16,9 +17,8 @@ logger = logging.getLogger(__name__)
 
 def main():
     try:
-        # Get the database path - using absolute path from project root
-        project_root = Path(__file__).parent.parent.parent.parent
-        db_path = project_root / "data" / "psx_data.db"
+        # Use the database path from settings
+        db_path = PSX_SIGNALS_DB_PATH
         
         # Ensure the data directory exists
         os.makedirs(db_path.parent, exist_ok=True)

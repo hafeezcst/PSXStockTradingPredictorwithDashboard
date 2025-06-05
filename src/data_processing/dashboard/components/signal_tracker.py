@@ -49,7 +49,7 @@ from src.data_processing.dashboard.components.shared_styles import (
 )
 
 # Constants
-DEFAULT_DB_PATH = '/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/data/databases/production/PSX_investing_Stocks_KMI30_tracking.db'
+DEFAULT_DB_PATH = 'data/databases/production/fairvalue.db'
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../scripts/config/alert_config.json')
 
 def load_config():
@@ -211,9 +211,6 @@ def get_signal_tracking_data(conn: sqlite3.Connection) -> pd.DataFrame:
         DataFrame with signal tracking data
     """
     try:
-        # Create the signal_tracking table if it doesn't exist
-        create_signal_tracking_table(conn)
-        
         # First, let's see what tables exist in the database
         cursor = conn.cursor()
         cursor.execute("""
@@ -225,124 +222,145 @@ def get_signal_tracking_data(conn: sqlite3.Connection) -> pd.DataFrame:
         if not all_tables:
             st.error("No tables found in the database.")
             return pd.DataFrame()
-            
-        # Now check for our specific signal tables
-        cursor.execute("""
-            SELECT name FROM sqlite_master 
-            WHERE type='table' AND name IN ('buy_stocks', 'sell_stocks', 'neutral_stocks')
-        """)
-        existing_tables = {row[0] for row in cursor.fetchall()}
         
-        if not existing_tables:
-            st.error(f"No signal tables found in the database. Available tables are: {', '.join(all_tables)}")
+        # Check if required tables exist
+        required_tables = ['tradingview_ta', 'tradingview_signals']
+        missing_tables = [table for table in required_tables if table not in all_tables]
+        
+        if missing_tables:
+            st.error(f"Required tables not found: {', '.join(missing_tables)}")
             return pd.DataFrame()
         
-        # Start building the query
-        query_parts = []
-        
-        # Add buy signals if table exists
-        if 'buy_stocks' in existing_tables:
-            query_parts.append("""
-                -- Get latest buy signals
-                SELECT 
-                    Stock,
-                    'Buy' as Current_Signal,
-                    Date as Current_Date,
-                    Close as Current_Close,
-                    Signal_Date as Initial_Date,
-                    Signal_Close as Initial_Close
-                FROM buy_stocks
-                WHERE Date = (SELECT MAX(Date) FROM buy_stocks)
-            """)
-        
-        # Add sell signals if table exists
-        if 'sell_stocks' in existing_tables:
-            query_parts.append("""
-                -- Get latest sell signals
-                SELECT 
-                    Stock,
-                    'Sell' as Current_Signal,
-                    Date as Current_Date,
-                    Close as Current_Close,
-                    Signal_Date as Initial_Date,
-                    Signal_Close as Initial_Close
-                FROM sell_stocks
-                WHERE Date = (SELECT MAX(Date) FROM sell_stocks)
-            """)
-        
-        # Add neutral signals if table exists
-        if 'neutral_stocks' in existing_tables:
-            query_parts.append("""
-                -- Get latest neutral signals
-                SELECT 
-                    Stock,
-                    'Neutral' as Current_Signal,
-                    Date as Current_Date,
-                    Close as Current_Close,
-                    Date as Initial_Date,
-                    Close as Initial_Close
-                FROM neutral_stocks
-                WHERE Date = (SELECT MAX(Date) FROM neutral_stocks)
-            """)
-        
-        # Combine the query parts
-        query = f"""
-        WITH LatestSignals AS (
-            {' UNION ALL '.join(query_parts)}
-        ),
-        SignalMetrics AS (
+        # Query to get the latest signal tracking data by combining both tables
+        query = """
+        WITH LatestTAData AS (
             SELECT 
-                ls.*,
+                symbol as Stock,
+                recommendation as Current_Signal,
+                date as Current_Signal_Date,
+                close as Current_Close,
+                date as Initial_Signal_Date,
+                close as Initial_Close,
+                0 as Days_In_Signal,
+                change_percent as Profit_Loss_Pct,
+                (buy_signals + sell_signals + neutral_signals) as Signal_Changes,
+                0 as Total_Days,
                 CASE 
-                    WHEN Current_Signal = 'Buy' AND Initial_Close > 0 
-                        THEN ((Current_Close - Initial_Close) / Initial_Close * 100)
-                    WHEN Current_Signal = 'Sell' AND Initial_Close > 0 
-                        THEN ((Initial_Close - Current_Close) / Initial_Close * 100)
-                    ELSE 0 
-                END as Profit_Loss_Pct,
-                CAST(julianday(Current_Date) - julianday(Initial_Date) AS INTEGER) as Days_In_Signal
-            FROM LatestSignals ls
+                    WHEN buy_signals > sell_signals AND buy_signals > neutral_signals THEN 'Strong Buy'
+                    WHEN sell_signals > buy_signals AND sell_signals > neutral_signals THEN 'Strong Sell'
+                    WHEN neutral_signals > buy_signals AND neutral_signals > sell_signals THEN 'Neutral'
+                    ELSE 'Mixed Signals'
+                END as TA_Notes,
+                last_updated as Last_Updated,
+                rsi,
+                macd,
+                sma_20,
+                sma_50,
+                sma_200,
+                volume
+            FROM tradingview_ta
+            WHERE date = (
+                SELECT MAX(date) 
+                FROM tradingview_ta
+            )
+        ),
+        LatestSignalsData AS (
+            SELECT 
+                symbol as Stock,
+                signal_type as Signal_Type,
+                signal_strength,
+                confidence_score,
+                technical_score,
+                trend_score,
+                momentum_score,
+                volume_score,
+                volatility_score,
+                support_level,
+                resistance_level,
+                stop_loss,
+                take_profit,
+                risk_reward_ratio,
+                analysis_summary,
+                ai_score,
+                ai_confidence,
+                ai_pattern_recognition,
+                ai_signal_strength,
+                ai_risk_assessment,
+                ai_recommendation,
+                ai_price_targets,
+                ai_entry_points,
+                ai_exit_points
+            FROM tradingview_signals
+            WHERE date = (
+                SELECT MAX(date) 
+                FROM tradingview_signals
+            )
         )
         SELECT 
-            sm.*,
-            COALESCE(st.Signal_Changes, 0) as Signal_Changes,
-            COALESCE(st.Total_Days, 0) as Total_Days,
-            st.Notes,
-            COALESCE(st.Last_Updated, CURRENT_DATE) as Last_Updated
-        FROM SignalMetrics sm
-        LEFT JOIN signal_tracking st ON sm.Stock = st.Stock
-        ORDER BY sm.Stock
+            ta.*,
+            sig.Signal_Type,
+            sig.signal_strength,
+            sig.confidence_score,
+            sig.technical_score,
+            sig.trend_score,
+            sig.momentum_score,
+            sig.volume_score,
+            sig.volatility_score,
+            sig.support_level,
+            sig.resistance_level,
+            sig.stop_loss,
+            sig.take_profit,
+            sig.risk_reward_ratio,
+            sig.analysis_summary,
+            sig.ai_score,
+            sig.ai_confidence,
+            sig.ai_pattern_recognition,
+            sig.ai_signal_strength,
+            sig.ai_risk_assessment,
+            sig.ai_recommendation,
+            sig.ai_price_targets,
+            sig.ai_entry_points,
+            sig.ai_exit_points,
+            CASE 
+                WHEN sig.ai_recommendation IS NOT NULL THEN 
+                    ta.TA_Notes || ' | AI: ' || sig.ai_recommendation
+                ELSE ta.TA_Notes
+            END as Notes
+        FROM LatestTAData ta
+        LEFT JOIN LatestSignalsData sig ON ta.Stock = sig.Stock
+        ORDER BY ta.Stock
         """
         
         df = pd.read_sql_query(query, conn)
         
+        if df.empty:
+            st.warning("No signal data found in the database.")
+            return df
+        
         # Convert date columns to datetime
-        date_columns = ['Current_Date', 'Initial_Date', 'Last_Updated']
+        date_columns = ['Current_Signal_Date', 'Initial_Signal_Date', 'Last_Updated']
         for col in date_columns:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col])
         
-        # Fill NaN values
-        df['Signal_Changes'] = df['Signal_Changes'].fillna(0)
-        df['Total_Days'] = df['Total_Days'].fillna(0)
-        df['Days_In_Signal'] = df['Days_In_Signal'].fillna(0)
-        df['Profit_Loss_Pct'] = df['Profit_Loss_Pct'].fillna(0)
+        # Fill NaN values for all numeric columns
+        numeric_columns = [
+            'Signal_Changes', 'Total_Days', 'Days_In_Signal', 'Profit_Loss_Pct',
+            'rsi', 'macd', 'sma_20', 'sma_50', 'sma_200', 'volume',
+            'signal_strength', 'confidence_score', 'technical_score',
+            'trend_score', 'momentum_score', 'volume_score', 'volatility_score',
+            'support_level', 'resistance_level', 'stop_loss', 'take_profit',
+            'risk_reward_ratio', 'ai_score', 'ai_confidence'
+        ]
         
-        # Track signal transitions
-        for _, row in df.iterrows():
-            track_signal_transition(
-                conn=conn,
-                stock=row['Stock'],
-                current_signal=row['Current_Signal'],
-                current_close=row['Current_Close'],
-                previous_signal=None,  # We don't have previous signal info in this query
-                previous_close=row['Initial_Close'],
-                notes=f"Initial signal tracking for {row['Stock']}"
-            )
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = df[col].fillna(0)
         
         return df
     except Exception as e:
         st.error(f"Error getting signal tracking data: {str(e)}")
+        st.error("Please check if the database has the correct tables and structure.")
         return pd.DataFrame()
 
 def create_signal_transition_history_table(conn: sqlite3.Connection) -> bool:
@@ -505,20 +523,61 @@ def get_signal_performance_metrics(conn: sqlite3.Connection) -> Dict[str, Any]:
         if signal_data.empty:
             return {}
             
-        # Calculate metrics from the signal data
+        # Create a function to categorize signals (same as in display_signal_tracker)
+        def categorize_signal(row):
+            # Convert signals to lowercase and handle NaN values
+            current_signal = str(row['Current_Signal']).lower() if pd.notna(row['Current_Signal']) else ''
+            signal_type = str(row['Signal_Type']).lower() if pd.notna(row['Signal_Type']) else ''
+            
+            # Define signal strength hierarchy
+            signal_strength = {
+                'strong buy': 5,
+                'buy': 4,
+                'neutral': 3,
+                'sell': 2,
+                'strong sell': 1
+            }
+            
+            # Get the strongest signal from both columns
+            current_strength = max([signal_strength.get(s, 0) for s in current_signal.split()])
+            type_strength = max([signal_strength.get(s, 0) for s in signal_type.split()])
+            
+            # Use the stronger signal
+            if current_strength >= type_strength:
+                signal = current_signal
+            else:
+                signal = signal_type
+            
+            # Categorize based on the stronger signal
+            if 'strong buy' in signal:
+                return 'Strong Buy'
+            elif 'buy' in signal:
+                return 'Buy'
+            elif 'strong sell' in signal:
+                return 'Strong Sell'
+            elif 'sell' in signal:
+                return 'Sell'
+            elif 'neutral' in signal:
+                return 'Neutral'
+            return 'Unknown'
+        
+        # Categorize signals
+        signal_data['Signal_Category'] = signal_data.apply(categorize_signal, axis=1)
+        
+        # Calculate metrics for each signal category
         metrics = {}
-        for signal_type in ['Buy', 'Sell', 'Neutral']:
-            signal_data_filtered = signal_data[signal_data['Current_Signal'] == signal_type]
+        for signal_type in ['Strong Buy', 'Buy', 'Sell', 'Strong Sell', 'Neutral']:
+            signal_data_filtered = signal_data[signal_data['Signal_Category'] == signal_type]
             
             if not signal_data_filtered.empty:
-                metrics[signal_type.lower()] = {
+                metrics[signal_type.lower().replace(' ', '_')] = {
                     'count': len(signal_data_filtered),
                     'avg_profit': float(signal_data_filtered['Profit_Loss_Pct'].mean()),
                     'profitable_pct': float((signal_data_filtered['Profit_Loss_Pct'] > 0).mean() * 100),
                     'avg_days': float(signal_data_filtered['Days_In_Signal'].mean())
                 }
             else:
-                metrics[signal_type.lower()] = {
+                metrics[signal_type.lower().replace(' ', '_')] = {
                     'count': 0,
                     'avg_profit': 0.0,
                     'profitable_pct': 0.0,
@@ -544,17 +603,20 @@ def create_signal_distribution_chart(metrics: Dict[str, Any]) -> go.Figure:
     counts = []
     colors = []
     
+    # Define colors for each signal type
+    color_map = {
+        'strong_buy': 'darkgreen',
+        'buy': 'green',
+        'neutral': 'gray',
+        'sell': 'red',
+        'strong_sell': 'darkred'
+    }
+    
     for signal_type, data in metrics.items():
-        signal_types.append(signal_type.capitalize())
-        counts.append(data['count'])
-        
-        # Set colors based on signal type
-        if signal_type == 'buy':
-            colors.append('green')
-        elif signal_type == 'sell':
-            colors.append('red')
-        else:
-            colors.append('gray')
+        if data['count'] > 0:  # Only show non-zero counts
+            signal_types.append(signal_type.replace('_', ' ').title())
+            counts.append(data['count'])
+            colors.append(color_map.get(signal_type, 'gray'))
     
     fig = go.Figure(data=[go.Pie(
         labels=signal_types,
@@ -591,21 +653,25 @@ def create_performance_comparison_chart(metrics: Dict[str, Any]) -> go.Figure:
     profitable_pcts = []
     colors = []
     
+    # Define colors for each signal type
+    color_map = {
+        'strong_buy': 'rgb(0, 100, 0)',  # darkgreen
+        'buy': 'rgb(0, 255, 0)',        # green
+        'neutral': 'rgb(128, 128, 128)', # gray
+        'sell': 'rgb(255, 0, 0)',       # red
+        'strong_sell': 'rgb(139, 0, 0)'  # darkred
+    }
+    
     for signal_type, data in metrics.items():
-        signal_types.append(signal_type.capitalize())
-        avg_profits.append(data['avg_profit'])
-        profitable_pcts.append(data['profitable_pct'])
-        
-        # Set colors based on signal type
-        if signal_type == 'buy':
-            colors.append('green')
-        elif signal_type == 'sell':
-            colors.append('red')
-        else:
-            colors.append('gray')
+        if data['count'] > 0:  # Only show non-zero counts
+            signal_types.append(signal_type.replace('_', ' ').title())
+            avg_profits.append(data['avg_profit'])
+            profitable_pcts.append(data['profitable_pct'])
+            colors.append(color_map.get(signal_type, 'rgb(128, 128, 128)'))
     
     fig = go.Figure()
     
+    # Add profit/loss bars
     fig.add_trace(go.Bar(
         x=signal_types,
         y=avg_profits,
@@ -615,13 +681,14 @@ def create_performance_comparison_chart(metrics: Dict[str, Any]) -> go.Figure:
         marker_color=colors
     ))
     
+    # Add profitability bars with semi-transparent versions of the same colors
     fig.add_trace(go.Bar(
         x=signal_types,
         y=profitable_pcts,
         name='Profitable %',
         text=[f"{p:.1f}%" for p in profitable_pcts],
         textposition='auto',
-        marker_color=['rgba(0,255,0,0.5)', 'rgba(255,0,0,0.5)', 'rgba(128,128,128,0.5)']
+        marker_color=[f'rgba{color[3:-1]},0.5)' for color in colors]  # Convert rgb to rgba with 0.5 opacity
     ))
     
     fig.update_layout(
@@ -951,59 +1018,211 @@ def display_signal_tracker(config: Dict[str, Any]):
             # Add a container for metrics with better styling
             st.markdown('<div style="background-color: #f8f9fa; padding: 1rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);">', unsafe_allow_html=True)
             
-            metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4)
+            # Get the latest date and ensure we have valid dates
+            latest_date = pd.to_datetime(signal_data['Current_Signal_Date'].max())
+            previous_date = pd.to_datetime(signal_data[signal_data['Current_Signal_Date'] < latest_date]['Current_Signal_Date'].max()) if not signal_data[signal_data['Current_Signal_Date'] < latest_date].empty else None
+            
+            # Filter data for latest and previous dates
+            latest_data = signal_data[signal_data['Current_Signal_Date'] == latest_date].copy()
+            previous_data = signal_data[signal_data['Current_Signal_Date'] == previous_date].copy() if previous_date is not None else pd.DataFrame()
+            
+            # Ensure we're not double-counting stocks
+            latest_data = latest_data.drop_duplicates(subset=['Stock'])
+            previous_data = previous_data.drop_duplicates(subset=['Stock']) if not previous_data.empty else pd.DataFrame()
+            
+            # Create a function to categorize signals
+            def categorize_signal(row):
+                # Convert signals to lowercase and handle NaN values
+                current_signal = str(row['Current_Signal']).lower() if pd.notna(row['Current_Signal']) else ''
+                signal_type = str(row['Signal_Type']).lower() if pd.notna(row['Signal_Type']) else ''
+                
+                # Define signal strength hierarchy
+                signal_strength = {
+                    'strong buy': 5,
+                    'buy': 4,
+                    'neutral': 3,
+                    'sell': 2,
+                    'strong sell': 1
+                }
+                
+                # Get the strongest signal from both columns
+                current_strength = max([signal_strength.get(s, 0) for s in current_signal.split()])
+                type_strength = max([signal_strength.get(s, 0) for s in signal_type.split()])
+                
+                # Use the stronger signal
+                if current_strength >= type_strength:
+                    signal = current_signal
+                else:
+                    signal = signal_type
+                
+                # Categorize based on the stronger signal
+                if 'strong buy' in signal:
+                    return 'Strong Buy'
+                elif 'buy' in signal:
+                    return 'Buy'
+                elif 'strong sell' in signal:
+                    return 'Strong Sell'
+                elif 'sell' in signal:
+                    return 'Sell'
+                elif 'neutral' in signal:
+                    return 'Neutral'
+                return 'Unknown'
+            
+            # Categorize signals
+            latest_data['Signal_Category'] = latest_data.apply(categorize_signal, axis=1)
+            if not previous_data.empty:
+                previous_data['Signal_Category'] = previous_data.apply(categorize_signal, axis=1)
+            
+            # Add debug information
+            st.sidebar.markdown("### Signal Distribution")
+            signal_counts = latest_data['Signal_Category'].value_counts()
+            for signal, count in signal_counts.items():
+                st.sidebar.markdown(f"- {signal}: {count}")
+            
+            # Show conflicting signals
+            conflicting_signals = latest_data[
+                (latest_data['Current_Signal'].str.lower() != latest_data['Signal_Type'].str.lower()) &
+                (latest_data['Current_Signal'].notna()) &
+                (latest_data['Signal_Type'].notna())
+            ]
+            
+            if not conflicting_signals.empty:
+                st.sidebar.markdown("### Conflicting Signals")
+                for _, row in conflicting_signals.iterrows():
+                    st.sidebar.markdown(
+                        f"- {row['Stock']}: {row['Current_Signal']} → {row['Signal_Type']} "
+                        f"(Categorized as: {row['Signal_Category']})"
+                    )
+            
+            metrics_col1, metrics_col2, metrics_col3, metrics_col4, metrics_col5 = st.columns(5)
             
             with metrics_col1:
+                total_count = len(latest_data)
+                prev_total = len(previous_data) if not previous_data.empty else 0
+                total_delta = total_count - prev_total if previous_date is not None else None
+                
                 st.metric(
                     "Total Tracked Stocks", 
-                    len(signal_data),
-                    delta=None
+                    total_count,
+                    delta=f"{total_delta:+d}" if total_delta is not None and total_delta != 0 else None,
+                    delta_color="normal" if total_delta is not None and total_delta >= 0 else "inverse"
                 )
             
             with metrics_col2:
-                buy_signals = signal_data[signal_data['Current_Signal'] == 'Buy']
-                buy_count = len(buy_signals)
-                avg_buy_profit = buy_signals['Profit_Loss_Pct'].mean() if not buy_signals.empty else 0
+                # Count Strong Buy signals
+                strong_buy_signals = latest_data[latest_data['Signal_Category'] == 'Strong Buy']
+                strong_buy_count = len(strong_buy_signals)
                 
-                # Format the delta with color
-                delta_color = "normal" if avg_buy_profit >= 0 else "inverse"
+                # Count previous Strong Buy signals
+                prev_strong_buy_signals = previous_data[previous_data['Signal_Category'] == 'Strong Buy'] if not previous_data.empty else pd.DataFrame()
+                prev_strong_buy_count = len(prev_strong_buy_signals)
+                
+                # Calculate change
+                strong_buy_delta = strong_buy_count - prev_strong_buy_count if previous_date is not None else None
+                
+                avg_strong_buy_profit = strong_buy_signals['Profit_Loss_Pct'].mean() if not strong_buy_signals.empty else 0
                 
                 st.metric(
-                    "Buy Signals", 
-                    buy_count,
-                    delta=f"{avg_buy_profit:.2f}% avg",
-                    delta_color=delta_color
+                    "Strong Buy", 
+                    strong_buy_count,
+                    delta=f"{strong_buy_delta:+d} ({avg_strong_buy_profit:.2f}% avg)" if strong_buy_count > 0 and strong_buy_delta is not None else f"{strong_buy_delta:+d}" if strong_buy_delta is not None else None,
+                    delta_color="normal" if strong_buy_delta is not None and strong_buy_delta >= 0 else "inverse"
                 )
             
             with metrics_col3:
-                sell_signals = signal_data[signal_data['Current_Signal'] == 'Sell']
-                sell_count = len(sell_signals)
-                avg_sell_profit = sell_signals['Profit_Loss_Pct'].mean() if not sell_signals.empty else 0
+                # Count Buy signals
+                buy_signals = latest_data[latest_data['Signal_Category'] == 'Buy']
+                buy_count = len(buy_signals)
                 
-                # Format the delta with color
-                delta_color = "normal" if avg_sell_profit >= 0 else "inverse"
+                # Count previous Buy signals
+                prev_buy_signals = previous_data[previous_data['Signal_Category'] == 'Buy'] if not previous_data.empty else pd.DataFrame()
+                prev_buy_count = len(prev_buy_signals)
+                
+                # Calculate change
+                buy_delta = buy_count - prev_buy_count if previous_date is not None else None
+                
+                avg_buy_profit = buy_signals['Profit_Loss_Pct'].mean() if not buy_signals.empty else 0
                 
                 st.metric(
-                    "Sell Signals", 
-                    sell_count,
-                    delta=f"{avg_sell_profit:.2f}% avg",
-                    delta_color=delta_color
+                    "Buy", 
+                    buy_count,
+                    delta=f"{buy_delta:+d} ({avg_buy_profit:.2f}% avg)" if buy_count > 0 and buy_delta is not None else f"{buy_delta:+d}" if buy_delta is not None else None,
+                    delta_color="normal" if buy_delta is not None and buy_delta >= 0 else "inverse"
                 )
             
             with metrics_col4:
-                neutral_signals = signal_data[signal_data['Current_Signal'] == 'Neutral']
-                neutral_count = len(neutral_signals)
-                avg_neutral_profit = neutral_signals['Profit_Loss_Pct'].mean() if not neutral_signals.empty else 0
+                # Count Sell signals
+                sell_signals = latest_data[latest_data['Signal_Category'] == 'Sell']
+                sell_count = len(sell_signals)
                 
-                # Format the delta with color
-                delta_color = "normal" if avg_neutral_profit >= 0 else "inverse"
+                # Count previous Sell signals
+                prev_sell_signals = previous_data[previous_data['Signal_Category'] == 'Sell'] if not previous_data.empty else pd.DataFrame()
+                prev_sell_count = len(prev_sell_signals)
+                
+                # Calculate change
+                sell_delta = sell_count - prev_sell_count if previous_date is not None else None
+                
+                avg_sell_profit = sell_signals['Profit_Loss_Pct'].mean() if not sell_signals.empty else 0
                 
                 st.metric(
-                    "Neutral Signals", 
-                    neutral_count,
-                    delta=f"{avg_neutral_profit:.2f}% avg" if neutral_count > 0 else None,
-                    delta_color=delta_color
+                    "Sell", 
+                    sell_count,
+                    delta=f"{sell_delta:+d} ({avg_sell_profit:.2f}% avg)" if sell_count > 0 and sell_delta is not None else f"{sell_delta:+d}" if sell_delta is not None else None,
+                    delta_color="normal" if sell_delta is not None and sell_delta >= 0 else "inverse"
                 )
+            
+            with metrics_col5:
+                # Count Strong Sell signals
+                strong_sell_signals = latest_data[latest_data['Signal_Category'] == 'Strong Sell']
+                strong_sell_count = len(strong_sell_signals)
+                
+                # Count previous Strong Sell signals
+                prev_strong_sell_signals = previous_data[previous_data['Signal_Category'] == 'Strong Sell'] if not previous_data.empty else pd.DataFrame()
+                prev_strong_sell_count = len(prev_strong_sell_signals)
+                
+                # Calculate change
+                strong_sell_delta = strong_sell_count - prev_strong_sell_count if previous_date is not None else None
+                
+                avg_strong_sell_profit = strong_sell_signals['Profit_Loss_Pct'].mean() if not strong_sell_signals.empty else 0
+                
+                st.metric(
+                    "Strong Sell", 
+                    strong_sell_count,
+                    delta=f"{strong_sell_delta:+d} ({avg_strong_sell_profit:.2f}% avg)" if strong_sell_count > 0 and strong_sell_delta is not None else f"{strong_sell_delta:+d}" if strong_sell_delta is not None else None,
+                    delta_color="normal" if strong_sell_delta is not None and strong_sell_delta >= 0 else "inverse"
+                )
+            
+            # Add a second row for Neutral signals
+            st.markdown('<div style="margin-top: 1rem;">', unsafe_allow_html=True)
+            neutral_col1, neutral_col2, neutral_col3 = st.columns([1, 1, 1])
+            
+            with neutral_col2:
+                # Count Neutral signals
+                neutral_signals = latest_data[latest_data['Signal_Category'] == 'Neutral']
+                neutral_count = len(neutral_signals)
+                
+                # Count previous Neutral signals
+                prev_neutral_signals = previous_data[previous_data['Signal_Category'] == 'Neutral'] if not previous_data.empty else pd.DataFrame()
+                prev_neutral_count = len(prev_neutral_signals)
+                
+                # Calculate change
+                neutral_delta = neutral_count - prev_neutral_count if previous_date is not None else None
+                
+                avg_neutral_profit = neutral_signals['Profit_Loss_Pct'].mean() if not neutral_signals.empty else 0
+                
+                st.metric(
+                    "Neutral", 
+                    neutral_count,
+                    delta=f"{neutral_delta:+d} ({avg_neutral_profit:.2f}% avg)" if neutral_count > 0 and neutral_delta is not None else f"{neutral_delta:+d}" if neutral_delta is not None else None,
+                    delta_color="normal" if neutral_delta is not None and neutral_delta >= 0 else "inverse"
+                )
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Add date information
+            date_info = f'Latest data: {latest_date.strftime("%Y-%m-%d")}'
+            if previous_date is not None:
+                date_info += f' | Previous: {previous_date.strftime("%Y-%m-%d")}'
+            st.markdown(f'<div style="text-align: center; color: #666; font-size: 0.9em; margin-top: 0.5rem;">{date_info}</div>', unsafe_allow_html=True)
             
             # Close the metrics container
             st.markdown('</div>', unsafe_allow_html=True)
@@ -1119,40 +1338,117 @@ def display_signal_tracker(config: Dict[str, Any]):
             display_cols = [
                 'Stock', 
                 'Current_Signal', 
-                'Initial_Date', 
-                'Initial_Close',
-                'Current_Date',
+                'Signal_Type',
+                'Current_Signal_Date', 
                 'Current_Close',
+                'Profit_Loss_Pct',
                 'Days_In_Signal',
-                'Profit_Loss_Pct'
+                # Technical Indicators
+                'rsi',
+                'macd',
+                'sma_20',
+                'sma_50',
+                'sma_200',
+                'volume',
+                # Signal Analysis
+                'signal_strength',
+                'confidence_score',
+                'technical_score',
+                'trend_score',
+                'momentum_score',
+                'volume_score',
+                'volatility_score',
+                # AI Analysis
+                'ai_score',
+                'ai_confidence',
+                'ai_pattern_recognition',
+                'ai_signal_strength',
+                'ai_risk_assessment',
+                'ai_recommendation',
+                # Trading Levels
+                'support_level',
+                'resistance_level',
+                'stop_loss',
+                'take_profit',
+                'risk_reward_ratio',
+                # Additional Info
+                'analysis_summary',
+                'ai_price_targets',
+                'ai_entry_points',
+                'ai_exit_points',
+                'Notes'
             ]
             
             # Create a styled dataframe
             styled_df = filtered_data[display_cols].copy()
             
             # Format numeric columns
-            styled_df['Initial_Close'] = styled_df['Initial_Close'].round(2)
-            styled_df['Current_Close'] = styled_df['Current_Close'].round(2)
-            styled_df['Profit_Loss_Pct'] = styled_df['Profit_Loss_Pct'].round(2)
+            numeric_cols = [
+                'Current_Close', 'Profit_Loss_Pct', 
+                'rsi', 'macd', 'sma_20', 'sma_50', 'sma_200', 'volume',
+                'signal_strength', 'confidence_score', 'technical_score',
+                'trend_score', 'momentum_score', 'volume_score', 'volatility_score',
+                'ai_score', 'ai_confidence', 'ai_signal_strength', 'ai_risk_assessment',
+                'support_level', 'resistance_level', 'stop_loss', 'take_profit',
+                'risk_reward_ratio'
+            ]
+            
+            for col in numeric_cols:
+                if col in styled_df.columns:
+                    styled_df[col] = styled_df[col].round(2)
             
             # Add % symbol to profit/loss
             styled_df['Profit_Loss_Pct'] = styled_df['Profit_Loss_Pct'].apply(lambda x: f"{x}%")
             
             # Format dates
-            styled_df['Initial_Date'] = pd.to_datetime(styled_df['Initial_Date']).dt.strftime('%Y-%m-%d')
-            styled_df['Current_Date'] = pd.to_datetime(styled_df['Current_Date']).dt.strftime('%Y-%m-%d')
+            styled_df['Current_Signal_Date'] = pd.to_datetime(styled_df['Current_Signal_Date']).dt.strftime('%Y-%m-%d')
             
             # Rename columns for display
-            styled_df.columns = [
-                'Stock',
-                'Signal',
-                'Initial Date',
-                'Initial Price',
-                'Current Date',
-                'Current Price',
-                'Days',
-                'P/L %'
-            ]
+            column_rename = {
+                'Stock': 'Stock',
+                'Current_Signal': 'Signal',
+                'Signal_Type': 'Signal Type',
+                'Current_Signal_Date': 'Date',
+                'Current_Close': 'Price',
+                'Profit_Loss_Pct': 'P/L %',
+                'Days_In_Signal': 'Days',
+                # Technical Indicators
+                'rsi': 'RSI',
+                'macd': 'MACD',
+                'sma_20': 'SMA 20',
+                'sma_50': 'SMA 50',
+                'sma_200': 'SMA 200',
+                'volume': 'Volume',
+                # Signal Analysis
+                'signal_strength': 'Signal Strength',
+                'confidence_score': 'Confidence',
+                'technical_score': 'Technical Score',
+                'trend_score': 'Trend Score',
+                'momentum_score': 'Momentum Score',
+                'volume_score': 'Volume Score',
+                'volatility_score': 'Volatility Score',
+                # AI Analysis
+                'ai_score': 'AI Score',
+                'ai_confidence': 'AI Confidence',
+                'ai_pattern_recognition': 'AI Pattern',
+                'ai_signal_strength': 'AI Signal Strength',
+                'ai_risk_assessment': 'AI Risk',
+                'ai_recommendation': 'AI Recommendation',
+                # Trading Levels
+                'support_level': 'Support',
+                'resistance_level': 'Resistance',
+                'stop_loss': 'Stop Loss',
+                'take_profit': 'Take Profit',
+                'risk_reward_ratio': 'Risk/Reward',
+                # Additional Info
+                'analysis_summary': 'Analysis Summary',
+                'ai_price_targets': 'AI Price Targets',
+                'ai_entry_points': 'AI Entry Points',
+                'ai_exit_points': 'AI Exit Points',
+                'Notes': 'Notes'
+            }
+            
+            styled_df.rename(columns=column_rename, inplace=True)
             
             # Display the styled dataframe with conditional formatting
             st.dataframe(
@@ -1168,10 +1464,175 @@ def display_signal_tracker(config: Dict[str, Any]):
                         "Signal",
                         width="small"
                     ),
+                    "Signal Type": st.column_config.TextColumn(
+                        "Signal Type",
+                        width="small"
+                    ),
+                    "Date": st.column_config.DateColumn(
+                        "Date",
+                        format="MMM DD, YYYY"
+                    ),
+                    "Price": st.column_config.NumberColumn(
+                        "Price",
+                        format="%.2f",
+                        width="small"
+                    ),
                     "P/L %": st.column_config.NumberColumn(
                         "P/L %",
                         format="%.2f%%",
                         width="small"
+                    ),
+                    "Days": st.column_config.NumberColumn(
+                        "Days",
+                        width="small"
+                    ),
+                    # Technical Indicators
+                    "RSI": st.column_config.NumberColumn(
+                        "RSI",
+                        format="%.2f",
+                        width="small",
+                        help="Relative Strength Index"
+                    ),
+                    "MACD": st.column_config.NumberColumn(
+                        "MACD",
+                        format="%.2f",
+                        width="small",
+                        help="Moving Average Convergence Divergence"
+                    ),
+                    "SMA 20": st.column_config.NumberColumn(
+                        "SMA 20",
+                        format="%.2f",
+                        width="small",
+                        help="20-day Simple Moving Average"
+                    ),
+                    "SMA 50": st.column_config.NumberColumn(
+                        "SMA 50",
+                        format="%.2f",
+                        width="small",
+                        help="50-day Simple Moving Average"
+                    ),
+                    "SMA 200": st.column_config.NumberColumn(
+                        "SMA 200",
+                        format="%.2f",
+                        width="small",
+                        help="200-day Simple Moving Average"
+                    ),
+                    "Volume": st.column_config.NumberColumn(
+                        "Volume",
+                        format="%.0f",
+                        width="small"
+                    ),
+                    # Signal Analysis
+                    "Signal Strength": st.column_config.NumberColumn(
+                        "Signal Strength",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "Confidence": st.column_config.NumberColumn(
+                        "Confidence",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "Technical Score": st.column_config.NumberColumn(
+                        "Technical Score",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "Trend Score": st.column_config.NumberColumn(
+                        "Trend Score",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "Momentum Score": st.column_config.NumberColumn(
+                        "Momentum Score",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "Volume Score": st.column_config.NumberColumn(
+                        "Volume Score",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "Volatility Score": st.column_config.NumberColumn(
+                        "Volatility Score",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    # AI Analysis
+                    "AI Score": st.column_config.NumberColumn(
+                        "AI Score",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "AI Confidence": st.column_config.NumberColumn(
+                        "AI Confidence",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "AI Pattern": st.column_config.TextColumn(
+                        "AI Pattern",
+                        width="medium"
+                    ),
+                    "AI Signal Strength": st.column_config.NumberColumn(
+                        "AI Signal Strength",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "AI Risk": st.column_config.NumberColumn(
+                        "AI Risk",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "AI Recommendation": st.column_config.TextColumn(
+                        "AI Recommendation",
+                        width="medium"
+                    ),
+                    # Trading Levels
+                    "Support": st.column_config.NumberColumn(
+                        "Support",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "Resistance": st.column_config.NumberColumn(
+                        "Resistance",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "Stop Loss": st.column_config.NumberColumn(
+                        "Stop Loss",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "Take Profit": st.column_config.NumberColumn(
+                        "Take Profit",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    "Risk/Reward": st.column_config.NumberColumn(
+                        "Risk/Reward",
+                        format="%.2f",
+                        width="small"
+                    ),
+                    # Additional Info
+                    "Analysis Summary": st.column_config.TextColumn(
+                        "Analysis Summary",
+                        width="large"
+                    ),
+                    "AI Price Targets": st.column_config.TextColumn(
+                        "AI Price Targets",
+                        width="medium"
+                    ),
+                    "AI Entry Points": st.column_config.TextColumn(
+                        "AI Entry Points",
+                        width="medium"
+                    ),
+                    "AI Exit Points": st.column_config.TextColumn(
+                        "AI Exit Points",
+                        width="medium"
+                    ),
+                    "Notes": st.column_config.TextColumn(
+                        "Notes",
+                        width="large"
                     )
                 },
                 hide_index=True

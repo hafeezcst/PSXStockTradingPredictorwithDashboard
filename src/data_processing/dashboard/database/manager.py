@@ -15,7 +15,26 @@ class DatabaseManager:
         self.db_path = PSX_SIGNALS_DB_PATH
         self.conn = None
         self.cursor = None
+        
+        # Create database directory if it doesn't exist
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Create database file if it doesn't exist
+        if not self.db_path.exists():
+            self._create_database()
+        
         self._create_signal_tables()
+
+    def _create_database(self):
+        """Create a new database file."""
+        try:
+            # Create an empty database file
+            conn = sqlite3.connect(self.db_path)
+            conn.close()
+            logging.info(f"Created new database file at {self.db_path}")
+        except Exception as e:
+            logging.error(f"Error creating database file: {str(e)}")
+            raise
 
     def _create_signal_tables(self):
         """Create signal tables if they don't exist."""
@@ -83,6 +102,15 @@ def get_db_connection(db_path: str):
     """Get a database connection with automatic closing."""
     conn = None
     try:
+        # Create database directory if it doesn't exist
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Create database file if it doesn't exist
+        if not Path(db_path).exists():
+            conn = sqlite3.connect(db_path)
+            conn.close()
+            logging.info(f"Created new database file at {db_path}")
+        
         conn = sqlite3.connect(db_path)
         yield conn
     except Exception as e:
