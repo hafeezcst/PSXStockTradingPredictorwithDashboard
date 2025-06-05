@@ -22,10 +22,12 @@ Example Usage:
 """
 import logging
 import pandas as pd
-import pandas_ta as ta
 import os
 from sqlalchemy import create_engine, inspect
 from tqdm import tqdm
+
+# Import the fix before pandas_ta
+from src.data_processing.fix_pandas_ta import ta
 
 # Configure logging
 logging.basicConfig(filename='data_reader.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

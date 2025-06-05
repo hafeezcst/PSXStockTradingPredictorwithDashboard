@@ -1,0 +1,27 @@
+analysis:
+  ao_fast_period: 5
+  ao_slow_period: 34
+  lookback_years: 10
+  ma_periods:
+  - 10
+  - 30
+  - 50
+  rsi_thresholds:
+  - 40
+  - 60
+  volume_ma_period: 20
+database:
+  main_db: data\databases\production\psx_consolidated_data_indicators_PSX.db
+  signals_db: data\databases\production\PSX_investing_Stocks_KMI30.db
+logging:
+  file: logs\psx_analysis.log
+  format: '%(asctime)s - %(levelname)s - %(message)s'
+  level: INFO
+output:
+  charts_folder: outputs\charts\RSI_AO_CHARTS
+  dashboards_folder: outputs\dashboards\PSX_DASHBOARDS
+telegram:
+  enabled: true
+  max_images_per_message: 10
+  bot_token: "6860197701:AAESTzERZLYbqyU6gFKfAwJQL8jJ_HNKLbM"
+  chat_id: "-4152327824"

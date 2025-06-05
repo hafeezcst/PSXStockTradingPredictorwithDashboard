@@ -1,1 +1,0 @@
-../scripts/run_stock_signal_tracker.py

@@ -27,8 +27,11 @@ import matplotlib
 import sys
 from pathlib import Path
 
-# Add parent directory to path to allow importing from config
-sys.path.append(str(Path(__file__).parent.parent.parent))
+# Add project root to Python path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# Now import the config module
 from config.config import get_config, config
 
 # Configure logging
@@ -943,62 +946,13 @@ def analyze_ao_trend(analysis_df):
         logging.error(f"Error analyzing AO trend: {e}")
         return 0, {'error': str(e)}
 
-def analyze_ao_trend(analysis_df):
-    """Analyze Awesome Oscillator trends to detect momentum shifts"""
-    try:
-        # Get recent AO values
-        recent_ao = analysis_df['AO_weekly_AVG'].tail(30).values
-        
-        # Current AO value and trend
-        current_ao = recent_ao[-1] if len(recent_ao) > 0 else 0
-        ao_trend = np.polyfit(range(len(recent_ao)), recent_ao, 1)[0] if len(recent_ao) > 1 else 0
-        
-        # Check for recent crosses in last ~3 days (15 trading days)
-        recent_crosses = recent_ao[-15:] if len(recent_ao) >= 15 else recent_ao
-        ao_crosses_up = False
-        ao_crosses_down = False
-        
-        for i in range(1, len(recent_crosses)):
-            if recent_crosses[i-1] < 0 and recent_crosses[i] >= 0:
-                ao_crosses_up = True
-            if recent_crosses[i-1] > 0 and recent_crosses[i] <= 0:
-                ao_crosses_down = True
-        
-        # Assign score
-        ao_score = 0
-        
-        if ao_crosses_up:  # Recent bullish zero-line cross
-            ao_score = 2.5
-        elif ao_crosses_down:  # Recent bearish zero-line cross
-            ao_score = -2.5
-        elif current_ao > 0 and ao_trend > 0.02:  # Strong positive momentum above zero
-            ao_score = 2
-        elif current_ao < 0 and ao_trend < -0.02:  # Strong negative momentum below zero
-            ao_score = -2
-        elif current_ao > 0:  # Positive but not increasing strongly
-            ao_score = 1
-        elif current_ao < 0:  # Negative but not decreasing strongly
-            ao_score = -1
-            
-        details = {
-            'current_ao': round(current_ao, 2),
-            'ao_trend': round(ao_trend, 4),
-            'crosses_up': ao_crosses_up,
-            'crosses_down': ao_crosses_down
-        }
-            
-        return ao_score, details
-        
-    except Exception as e:
-        logging.error(f"Error analyzing AO trend: {e}")
-        return 0, {'error': str(e)}
-
 def analyze_volume_pattern(analysis_df):
     """Analyze volume patterns for distribution/accumulation signs"""
     try:
         # Get recent volume and price data
         recent_volume = analysis_df['Volume'].tail(60)
-        recent_returns = analysis_df['pct_change'].tail(60)
+        # Calculate percentage change of price
+        recent_returns = analysis_df['Close'].pct_change().tail(60)
         
         volume_score = 0
         details = {}
@@ -2701,6 +2655,14 @@ if __name__ == "__main__":
     if not check_database_files():
         exit(1)
     
+    # Check Telegram configuration
+    telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+    telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    
+    if not telegram_token or not telegram_chat_id:
+        logging.warning("Telegram configuration not found in environment variables. Some features may be limited.")
+        logging.warning("To enable Telegram notifications, set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables.")
+    
     # database path
     database_path = DATABASE_MAIN
     # Create a connection to the database
@@ -2830,10 +2792,28 @@ if __name__ == "__main__":
         # Generate portfolio recommendations
         portfolio_recommendations = generate_portfolio_recommendations(dashboard_df)
 
-        # Save recommendations to file
-        rec_file = os.path.join(dashboards_folder, f'portfolio_recommendations_{current_date}.txt')
-        with open(rec_file, 'w') as f:
-            f.write(portfolio_recommendations)
+        # When writing portfolio recommendations, use UTF-8 encoding
+        try:
+            # Create the output directory if it doesn't exist
+            output_dir = Path('outputs/recommendations')
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Write the file with UTF-8 encoding
+            output_file = output_dir / f'portfolio_recommendations_{datetime.now().strftime("%Y%m%d")}.txt'
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(portfolio_recommendations)
+            logging.info(f"Portfolio recommendations saved to {output_file}")
+        except Exception as e:
+            logging.error(f"Error writing portfolio recommendations: {e}")
+            # Fallback to ASCII-safe version if UTF-8 fails
+            try:
+                safe_recommendations = portfolio_recommendations.encode('ascii', 'ignore').decode('ascii')
+                output_file = output_dir / f'portfolio_recommendations_{datetime.now().strftime("%Y%m%d")}_ascii.txt'
+                with open(output_file, 'w', encoding='ascii') as f:
+                    f.write(safe_recommendations)
+                logging.info(f"ASCII-safe portfolio recommendations saved to {output_file}")
+            except Exception as e:
+                logging.error(f"Error writing ASCII-safe portfolio recommendations: {e}")
 
         # Send recommendations via Telegram
         send_telegram_message(portfolio_recommendations)

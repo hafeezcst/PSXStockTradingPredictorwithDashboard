@@ -2335,7 +2335,7 @@ def create_enhanced_category_tables(df, folder, date):
         </html>
         '''
         
-        with open(enhanced_buy_html, 'w') as f:
+        with open(enhanced_buy_html, 'w', encoding='utf-8') as f:
             f.write(styled_html)
 
 def add_decision_matrix(df, fig, pos):
@@ -2660,7 +2660,7 @@ if __name__ == "__main__":
 
         # Save recommendations to file
         rec_file = os.path.join(dashboards_folder, f'portfolio_recommendations_{current_date}.txt')
-        with open(rec_file, 'w') as f:
+        with open(rec_file, 'w', encoding='utf-8') as f:
             f.write(portfolio_recommendations)
 
         # Send recommendations via Telegram

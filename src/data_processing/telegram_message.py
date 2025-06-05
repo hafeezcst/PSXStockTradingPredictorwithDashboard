@@ -2,6 +2,16 @@ import requests
 import logging
 import os
 from datetime import datetime
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -13,7 +23,8 @@ def get_telegram_config():
         chat_id = os.getenv('TELEGRAM_CHAT_ID')
         
         if not bot_token or not chat_id:
-            logging.error("Telegram configuration not found in environment variables")
+            logging.error("Telegram configuration not found in .env file")
+            logging.error("Please ensure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set in your .env file")
             return None, None
             
         return bot_token, chat_id
