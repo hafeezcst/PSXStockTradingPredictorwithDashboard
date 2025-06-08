@@ -313,55 +313,35 @@ def check_database_files():
         logging.error(f"Error checking database files: {str(e)}")
         return False
 
-def create_default_symbols_file():
-    """Create a default KMI30 symbols file if it doesn't exist"""
-    try:
-        file_path = os.path.join(os.getcwd(), 'data/databases/production/psxsymbols.xlsx')
-        if os.path.exists(file_path):
-            logging.info(f"Symbols file already exists at {file_path}")
-            return True
-            
-        # Default KMI30 symbols if file doesn't exist
-        kmi30_symbols = [
-            'AICL', 'ATRL', 'BAFL', 'BAHL', 'CNERGY', 'EFERT', 'ENGRO', 
-            'FFBL', 'FFC', 'FCCL', 'HUBC', 'HBL', 'ISL', 'ILP', 'LUCK', 
-            'MCB', 'MARI', 'MEBL', 'MLCF', 'MTL', 'NBP', 'NML', 'OGDC', 
-            'PAKT', 'PPL', 'PIOC', 'PSO', 'SNGP', 'SSGC', 'UBL'
-        ]
-        symbols_df = pd.DataFrame(kmi30_symbols, columns=['Symbol'])
-        with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
-            symbols_df.to_excel(writer, sheet_name='KMI30', index=False)
-        logging.info(f"Created default symbols file at {file_path}")
-        return True
-    except Exception as e:
-        logging.error(f"Error creating symbols file: {e}")
-        return False
 
-def get_kmi30_symbols():
-    """Read KMI30 symbols from Excel file"""
+def get_kmi100_symbols():
+    """Read KMI100 symbols from Excel file"""
     try:
         file_path = os.path.join(os.getcwd(), 'data/databases/production/psxsymbols.xlsx')
-        print(f"Attempting to read KMI30 symbols from: {file_path}")
+        print(f"Attempting to read KMI100 symbols from: {file_path}")
         if not os.path.exists(file_path):
-            logging.warning(f"KMI30 symbols file not found at {file_path}")
-            print(f"KMI30 symbols file not found at {file_path}")
+            logging.warning(f"KMI100 symbols file not found at {file_path}")
+            print(f"KMI100 symbols file not found at {file_path}")
             return []
             
         # Read symbols from Excel file
         try:
-            df = pd.read_excel(file_path, sheet_name='KMI30')
+            df = pd.read_excel(file_path, sheet_name='KMI100')
             print(f"Successfully read Excel file, found {len(df)} rows")
-            if 'Symbol' not in df.columns:
-                logging.error("'Symbol' column not found in KMI30 sheet")
-                print("Error: 'Symbol' column not found in KMI30 sheet")
+            # Make column name search case-insensitive
+            symbol_col = next((col for col in df.columns if col.strip().lower() == 'symbol'), None)
+            if not symbol_col:
+                logging.error("'Symbol' column not found in KMI100 sheet (case-insensitive search)")
+                print("Error: 'Symbol' column not found in KMI100 sheet (case-insensitive search)")
                 # Fall back to default symbols
                 default_symbols = ['AICL', 'ATRL', 'BAFL', 'BAHL', 'CNERGY', 'EFERT', 'ENGRO', 'FFBL', 'FFC', 'FCCL', 'HUBC', 'HBL', 'ISL', 'ILP', 'LUCK', 'MCB', 'MARI', 'MEBL', 'MLCF', 'MTL', 'NBP', 'NML', 'OGDC', 'PAKT', 'PPL', 'PIOC', 'PSO', 'SNGP', 'SSGC', 'UBL']
                 print(f"Falling back to default list of {len(default_symbols)} symbols")
                 return default_symbols
-                
-            symbols = df['Symbol'].str.strip().str.upper().tolist()
-            logging.info(f"Successfully read {len(symbols)} KMI30 symbols from Excel file")
-            print(f"Successfully read {len(symbols)} KMI30 symbols: {symbols[:5]}...")
+            symbols = df[symbol_col].str.strip().str.upper().tolist()
+            # Only return the top 100 symbols
+            symbols = symbols[:100]
+            logging.info(f"Successfully read {len(symbols)} KMI100 symbols from Excel file (top 100)")
+            print(f"Successfully read {len(symbols)} KMI100 symbols: {symbols[:5]}...")
             return symbols
         except Exception as e:
             logging.error(f"Error reading Excel file: {str(e)}")
@@ -371,8 +351,8 @@ def get_kmi30_symbols():
             print(f"Falling back to default list of {len(default_symbols)} symbols")
             return default_symbols
     except Exception as e:
-        logging.error(f"Error reading KMI30 symbols: {e}")
-        print(f"Error reading KMI30 symbols: {str(e)}")
+        logging.error(f"Error reading KMI100 symbols: {e}")
+        print(f"Error reading KMI100 symbols: {str(e)}")
         return []
 
 def parse_args():
@@ -412,9 +392,9 @@ def get_available_symbols(cursor):
     """Get a list of available stock symbols"""
     try:
         print("Getting available symbols from database")
-        # First get KMI30 symbols from Excel
-        kmi30_symbols = set(get_kmi30_symbols())
-        print(f"Retrieved {len(kmi30_symbols)} KMI30 symbols")
+        # First get KMI100 symbols from Excel
+        KMI100_symbols = set(get_kmi100_symbols())
+        print(f"Retrieved {len(KMI100_symbols)} KMI100 symbols")
         
         # Then get available tables from database
         table_names = fetch_table_names(cursor)
@@ -427,13 +407,13 @@ def get_available_symbols(cursor):
             if symbol in excluded_terms or len(symbol) > 10 or '_' in symbol:
                 logging.info(f"Skipping non-stock table: {table_name}")
                 continue
-            # Only include symbols that are in KMI30
-            if symbol in kmi30_symbols:
+            # Only include symbols that are in KMI100
+            if symbol in KMI100_symbols:
                 available_symbols.append(symbol)
                 print(f"Added symbol {symbol} to available symbols")
                 
-        logging.info(f"Found {len(available_symbols)} available KMI30 symbols")
-        print(f"Found {len(available_symbols)} available KMI30 symbols")
+        logging.info(f"Found {len(available_symbols)} available KMI100 symbols")
+        print(f"Found {len(available_symbols)} available KMI100 symbols")
         return available_symbols
     except Exception as e:
         logging.error(f"Error getting available symbols: {e}")
@@ -1299,6 +1279,41 @@ def draw_indicator_trend_lines_with_signals(df, symbol, output_folder, entry_dat
         # Plot Price on first axis
         ax1.plot(df['Date'], df['Close'], label=f'{symbol} Close', color='#1f77b4', linewidth=2.5)
 
+        # --- Add crossovers between timeframes ---
+        crossover_caption = ""
+        try:
+            cross_df = df[['Date', 'Open', 'Close']].copy() if 'Date' in df.columns else df.reset_index()[['Date', 'Open', 'Close']]
+            weekly, monthly, three_monthly, cross_wk_mo_dates, cross_mo_3mo_dates = calculate_timeframe_crosses(cross_df, print_crosses=False)
+            # Plot vertical lines for weekly/monthly crossovers
+            crossover_plotted = set()
+            for dt in cross_wk_mo_dates:
+                if 'wk_mo' not in crossover_plotted:
+                    ax1.axvline(dt, color='magenta', linestyle='--', alpha=0.7, linewidth=1.5, label='Weekly/Monthly Close Crossover')
+                    crossover_plotted.add('wk_mo')
+                else:
+                    ax1.axvline(dt, color='magenta', linestyle='--', alpha=0.7, linewidth=1.5)
+            for dt in cross_mo_3mo_dates:
+                if 'mo_3mo' not in crossover_plotted:
+                    ax1.axvline(dt, color='cyan', linestyle=':', alpha=0.7, linewidth=1.5, label='Monthly/3M Close Crossover')
+                    crossover_plotted.add('mo_3mo')
+                else:
+                    ax1.axvline(dt, color='cyan', linestyle=':', alpha=0.7, linewidth=1.5)
+            # Prepare caption info for the most recent 3 cross dates of each type
+            if len(cross_wk_mo_dates) > 0:
+                crossover_caption += "\nWeekly/Monthly Close Crosses (latest):\n"
+                for dt in list(cross_wk_mo_dates)[-3:]:
+                    w = weekly.loc[weekly.index <= dt].iloc[-1]['Close'] if not weekly.loc[weekly.index <= dt].empty else None
+                    m = monthly.loc[monthly.index <= dt].iloc[-1]['Close'] if not monthly.loc[monthly.index <= dt].empty else None
+                    crossover_caption += f"{dt.date()}: W={w:.2f} M={m:.2f}\n"
+            if len(cross_mo_3mo_dates) > 0:
+                crossover_caption += "Monthly/3M Close Crosses (latest):\n"
+                for dt in list(cross_mo_3mo_dates)[-3:]:
+                    m = monthly.loc[monthly.index <= dt].iloc[-1]['Close'] if not monthly.loc[monthly.index <= dt].empty else None
+                    q = three_monthly.loc[three_monthly.index <= dt].iloc[-1]['Close'] if not three_monthly.loc[three_monthly.index <= dt].empty else None
+                    crossover_caption += f"{dt.date()}: M={m:.2f} 3M={q:.2f}\n"
+        except Exception as e:
+            logging.warning(f"Could not plot crossovers: {e}")
+
         buy_signals = get_buy_signals(symbol)
         sell_signals = get_sell_signals(symbol)
         
@@ -1569,7 +1584,9 @@ def draw_indicator_trend_lines_with_signals(df, symbol, output_folder, entry_dat
         if stop_loss:
             caption += f"Stop Loss: {stop_loss:.2f}\n"
             print(f"Added stop loss to caption: {stop_loss:.2f}")
-        
+        # Add crossover info to caption
+        if crossover_caption:
+            caption += "\n" + crossover_caption
         print(f"Final caption for {symbol}:\n{caption}")
         
         # Send the chart with caption if Telegram is enabled
@@ -2454,8 +2471,8 @@ def generate_chart_for_symbol(symbol, database_path, available_symbols):
             return False, None
             
         with sqlite3.connect(database_path) as connection:
-            table_name = f"KMI100_{symbol}"  # Changed from KMI30 to KMI100
-            query = f"SELECT Date, Close, RSI_monthly, RSI_3months_Avg, RSI_weekly_Avg, AO_weekly_AVG, MA_30 FROM {table_name} ORDER BY Date DESC LIMIT 180"
+            table_name = f"KMI100_{symbol}"  # Changed from KMI100 to KMI100
+            query = f"SELECT Date, Open, Close, RSI_monthly, RSI_3months_Avg, RSI_weekly_Avg, AO_weekly_AVG, MA_30 FROM {table_name} ORDER BY Date DESC LIMIT 180"
             df = pd.read_sql(query, connection)
             if df.empty:
                 logging.warning(f"No data found for {symbol}")
@@ -2627,8 +2644,8 @@ def generate_chart_for_symbol(symbol, database_path, available_symbols):
             return False, None
             
         with sqlite3.connect(database_path) as connection:
-            table_name = f"KMI100_{symbol}"  # Changed from KMI30 to KMI100
-            query = f"SELECT Date, Close, RSI_monthly, RSI_3months_Avg, RSI_weekly_Avg, AO_weekly_AVG, MA_30 FROM {table_name} ORDER BY Date DESC LIMIT 180"
+            table_name = f"KMI100_{symbol}"  # Changed from KMI100 to KMI100
+            query = f"SELECT Date, Open, Close, RSI_monthly, RSI_3months_Avg, RSI_weekly_Avg, AO_weekly_AVG, MA_30 FROM {table_name} ORDER BY Date DESC LIMIT 180"
             df = pd.read_sql(query, connection)
             if df.empty:
                 logging.warning(f"No data found for {symbol}")
@@ -2657,6 +2674,56 @@ def generate_chart_for_symbol(symbol, database_path, available_symbols):
         logging.error(f"Error generating chart for {symbol}: {e}")
         print(f"Error generating chart for {symbol}: {str(e)}")
         return False, None
+def calculate_timeframe_crosses(df, print_crosses=False):
+    """
+    Calculate weekly, monthly, and 3-monthly open/close prices.
+    Show the dates when:
+      - weekly close crosses monthly close
+      - monthly close crosses 3-monthly close
+    If print_crosses is True, print the cross info to the console.
+    """
+    import pandas as pd
+    import numpy as np
+    
+    # Ensure Date is datetime and set as index
+    df = df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df['Date']):
+        df['Date'] = pd.to_datetime(df['Date'])
+    df = df.sort_values('Date')
+    df = df.set_index('Date')
+    
+    # Resample to weekly, monthly, 3-monthly
+    weekly = df.resample('W-FRI').agg({'Open': 'first', 'Close': 'last'})
+    monthly = df.resample('M').agg({'Open': 'first', 'Close': 'last'})
+    three_monthly = df.resample('Q').agg({'Open': 'first', 'Close': 'last'})
+    
+    # Align all to the same index for comparison (forward fill for missing)
+    combined = pd.DataFrame(index=df.index)
+    combined['Weekly_Close'] = weekly['Close'].reindex(df.index, method='ffill')
+    combined['Monthly_Close'] = monthly['Close'].reindex(df.index, method='ffill')
+    combined['3M_Close'] = three_monthly['Close'].reindex(df.index, method='ffill')
+    
+    # Find where weekly close crosses monthly close
+    cross_wk_mo = (np.sign(combined['Weekly_Close'] - combined['Monthly_Close']).diff() != 0)
+    cross_wk_mo_dates = combined.index[cross_wk_mo & combined['Weekly_Close'].notna() & combined['Monthly_Close'].notna()]
+    
+    # Find where monthly close crosses 3-monthly close
+    cross_mo_3mo = (np.sign(combined['Monthly_Close'] - combined['3M_Close']).diff() != 0)
+    cross_mo_3mo_dates = combined.index[cross_mo_3mo & combined['Monthly_Close'].notna() & combined['3M_Close'].notna()]
+    
+    if print_crosses:
+        print("\n--- Weekly Close crosses Monthly Close ---")
+        for dt in cross_wk_mo_dates:
+            print(f"{dt.date()}: Weekly Close = {combined.loc[dt, 'Weekly_Close']:.2f}, Monthly Close = {combined.loc[dt, 'Monthly_Close']:.2f}")
+        print(f"Total crosses: {len(cross_wk_mo_dates)}")
+        print("\n--- Monthly Close crosses 3-Monthly Close ---")
+        for dt in cross_mo_3mo_dates:
+            print(f"{dt.date()}: Monthly Close = {combined.loc[dt, 'Monthly_Close']:.2f}, 3M Close = {combined.loc[dt, '3M_Close']:.2f}")
+        print(f"Total crosses: {len(cross_mo_3mo_dates)}")
+    
+    # Optionally return the calculated data
+    return weekly, monthly, three_monthly, cross_wk_mo_dates, cross_mo_3mo_dates
+
 
 def main():
     try:
@@ -2697,6 +2764,14 @@ def main():
             # Process symbols
             total_processed = 0
             for symbol in symbols:
+                try:
+                    table_name = f"PSX_{symbol}_stock_data"
+                    df = pd.read_sql(f"SELECT Date, Open, Close FROM {table_name} ORDER BY Date", connection)
+                    if not df.empty:
+                        print(f"\n=== Timeframe Crosses for {symbol} ===")
+                        calculate_timeframe_crosses(df, print_crosses=True)
+                except Exception as e:
+                    print(f"Error calculating crosses for {symbol}: {e}")
                 success = process_symbol(symbol, config['database']['main_db'])
                 if success:
                     total_processed += 1

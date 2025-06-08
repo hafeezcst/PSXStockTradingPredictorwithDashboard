@@ -592,6 +592,50 @@ def main():
     elif selected_page == "Analysis Tool":
         create_analysis_tool_dashboard()
 
+    apply_shared_styles()
+    st.title("PSX Stock Trading Predictor Dashboard")
+    
+    # Existing tabs
+    tabs = st.tabs([
+        "Market Overview", "Portfolio", "Charts", "Signals", "Analysis Tool", "Signal Tracker",
+        "ML Predictions", "Sentiment Analysis", "Risk Metrics", "Portfolio Optimization", "Auto Trading", "Custom Alerts", "Historical Data"
+    ])
+    
+    with tabs[0]:
+        display_market()
+    with tabs[1]:
+        display_portfolio_analysis()
+    with tabs[2]:
+        display_charts({})
+    with tabs[3]:
+        display_trading_signals()
+    with tabs[4]:
+        create_analysis_tool_dashboard()
+    with tabs[5]:
+        display_signal_tracker({})
+    # New advanced features
+    from src.data_processing.dashboard.components.ml_predictions import display_ml_predictions
+    from src.data_processing.dashboard.components.sentiment import display_sentiment_analysis
+    from src.data_processing.dashboard.components.risk import display_risk_metrics
+    from src.data_processing.dashboard.components.portfolio_optimization import display_portfolio_optimization
+    from src.data_processing.dashboard.components.auto_trading import display_auto_trading
+    from src.data_processing.dashboard.components.custom_alerts import display_custom_alerts
+    from src.data_processing.dashboard.components.historical_data import display_historical_data
+    with tabs[6]:
+        display_ml_predictions()
+    with tabs[7]:
+        display_sentiment_analysis()
+    with tabs[8]:
+        display_risk_metrics()
+    with tabs[9]:
+        display_portfolio_optimization()
+    with tabs[10]:
+        display_auto_trading()
+    with tabs[11]:
+        display_custom_alerts()
+    with tabs[12]:
+        display_historical_data()
+
 def initialize_config():
     """Initialize dashboard configuration"""
     config = {
