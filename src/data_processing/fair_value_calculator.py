@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional, Callable, Any, Union
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -11,152 +11,339 @@ import time
 import pandas as pd
 import json
 from dotenv import load_dotenv
-from contextlib import closing
+from contextlib import closing, contextmanager
+import sys
+import numpy as np
+from scipy import stats
+import concurrent.futures
+from functools import wraps
+import traceback
+
+# Add the project root directory to the Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 # Load environment variables
 load_dotenv()
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
+def retry(max_retries: int = 3, initial_delay: float = 1.0):
+    """Decorator for retrying operations with exponential backoff"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = initial_delay
+            last_exception = None
+            
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        time.sleep(delay)
+                        delay *= 2
+                        logger.warning(f"Retry {attempt + 1}/{max_retries} for {func.__name__}: {str(e)}")
+            
+            logger.error(f"Operation failed after {max_retries} attempts: {last_exception}")
+            raise last_exception
+        return wrapper
+    return decorator
+
+@contextmanager
+def db_connection(db_path: str):
+    """Context manager for database connections"""
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA foreign_keys = ON")
+        yield conn
+    except Exception as e:
+        logger.error(f"Database error: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+def safe_convert(value: Any, target_type: type, default: Any = None) -> Any:
+    """Safely convert a value to the target type"""
+    try:
+        if value is None:
+            return default
+        return target_type(value)
+    except (ValueError, TypeError):
+        return default
+
+def validate_required_fields(data: Dict, required_fields: List[str]) -> Dict:
+    """Validate required fields in a dictionary"""
+    validation = {
+        'is_valid': True,
+        'missing_fields': [],
+        'issues': []
+    }
+    
+    for field in required_fields:
+        if field not in data or data[field] is None:
+            validation['is_valid'] = False
+            validation['missing_fields'].append(field)
+            validation['issues'].append(f"Missing required field: {field}")
+    
+    return validation
+
+def detect_outliers(data: List[float], threshold: float = 3.0) -> List[int]:
+    """Detect outliers in a list of numbers using z-score"""
+    if not data:
+        return []
+    
+    z_scores = np.abs(stats.zscore(data))
+    return [i for i, z in enumerate(z_scores) if z > threshold]
+
+def calculate_moving_average(data: List[float], window: int) -> List[float]:
+    """Calculate moving average for a list of numbers"""
+    if not data or window <= 0:
+        return []
+    
+    return pd.Series(data).rolling(window=window).mean().fillna(0).tolist()
+
+def format_number(value: float, places: int = 2) -> float:
+    """Format a number to specified decimal places"""
+    try:
+        return round(float(value), places)
+    except (ValueError, TypeError):
+        return 0.0
+
+def calculate_percentage_change(current: float, previous: float) -> float:
+    """Calculate percentage change between two numbers"""
+    try:
+        if previous == 0:
+            return 0.0
+        return ((current - previous) / previous) * 100
+    except (ValueError, TypeError, ZeroDivisionError):
+        return 0.0
+
+def safe_json_dumps(data: Any) -> str:
+    """Safely convert data to JSON string"""
+    try:
+        return json.dumps(data, default=str)
+    except Exception:
+        return "{}"
+
+def get_indicator_safely(indicators: Dict, key: str, default: Any = None) -> Any:
+    """Safely get an indicator value from a dictionary"""
+    try:
+        return indicators.get(key, default)
+    except (KeyError, AttributeError):
+        return default
+
 class FairValueCalculator:
-    def __init__(self):
-        """Initialize the FairValueCalculator with database path and headers"""
-        self.db_path = 'data/databases/production/fairvalue.db'
-        self.dividend_db_path = 'data/databases/production/PSX_Dividend_Schedule.db'
+    def __init__(self, db_path: str):
+        """Initialize the FairValueCalculator with database path"""
+        self.db_path = db_path
+        self.dividend_db_path = os.path.join(os.path.dirname(db_path), 'PSX_Dividend_Schedule.db')
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        # Initialize cache for AI analysis
-        self._ai_analysis_cache = {}
-        self._last_ai_call_time = {}
-        self._ai_call_cooldown = 300  # 5 minutes cooldown between calls for same symbol
-        # Initialize database
+        self.cache_ttl = 3600  # 1 hour cache TTL
+        self.max_workers = 4  # Maximum number of parallel workers
+        self.batch_size = 100  # Batch size for database operations
         self._init_database()
+        
+        # Initialize analysis cache
+        self.analysis_cache = {}
+        self._last_analysis_time = {}
+        self._analysis_cooldown = 3600  # 1 hour cooldown between analyses
+        
+        # Initialize logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
 
     def _init_database(self):
-        """Initialize the SQLite database and create necessary tables with optimized connection handling"""
+        """Initialize database with optimized settings"""
         try:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-            
-            with closing(sqlite3.connect(self.db_path)) as conn:
-                with conn:
-                    cursor = conn.cursor()
-                    
-                    # Create tradingview_ta table with updated schema
-                    cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS tradingview_ta (
-                        symbol TEXT,
-                        date TEXT,
-                        recommendation TEXT,
-                        buy_signals INTEGER,
-                        sell_signals INTEGER,
-                        neutral_signals INTEGER,
-                        rsi REAL,
-                        stoch_k REAL,
-                        stoch_d REAL,
-                        macd REAL,
-                        macd_signal REAL,
-                        macd_hist REAL,
-                        sma_20 REAL,
-                        sma_50 REAL,
-                        sma_200 REAL,
-                        ema_20 REAL,
-                        ema_50 REAL,
-                        ema_200 REAL,
-                        close REAL,
-                        open REAL,
-                        high REAL,
-                        low REAL,
-                        volume REAL,
-                        change REAL,
-                        change_percent REAL,
-                        bb_upper REAL,
-                        bb_lower REAL,
-                        ao REAL,
-                        psar REAL,
-                        vwma REAL,
-                        hull_ma9 REAL,
-                        source TEXT,
-                        last_updated TEXT,
-                        PRIMARY KEY (symbol, date)
-                    )
-                    ''')
-                    
-                    # Create tradingview_signals table with enhanced schema
-                    cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS tradingview_signals (
-                        symbol TEXT,
-                        date TEXT,
-                        signal_type TEXT,
-                        signal_strength REAL,
-                        confidence_score REAL,
-                        technical_score REAL,
-                        trend_score REAL,
-                        momentum_score REAL,
-                        volume_score REAL,
-                        volatility_score REAL,
-                        support_level REAL,
-                        resistance_level REAL,
-                        stop_loss REAL,
-                        take_profit REAL,
-                        risk_reward_ratio REAL,
-                        analysis_summary TEXT,
-                        indicators_used TEXT,
-                        last_updated TEXT,
-                        ai_score REAL,
-                        ai_confidence REAL,
-                        ai_pattern_recognition TEXT,
-                        ai_signal_strength TEXT,
-                        ai_risk_assessment TEXT,
-                        ai_recommendation TEXT,
-                        ai_price_targets TEXT,
-                        ai_entry_points TEXT,
-                        ai_exit_points TEXT,
-                        ai_analysis_date TEXT,
-                        PRIMARY KEY (symbol, date)
-                    )
-                    ''')
-                    
-                    # Create financial_reports table with enhanced schema
-                    cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS financial_reports (
-                        symbol TEXT,
-                        report_date TEXT,
-                        eps_growth REAL,
-                        revenue_growth REAL,
-                        profit_margin REAL,
-                        debt_to_equity REAL,
-                        current_ratio REAL,
-                        roe REAL,
-                        last_updated TEXT,
-                        PRIMARY KEY (symbol, report_date)
-                    )
-                    ''')
-                    
-                    # Create indices for better query performance
-                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tradingview_ta_symbol ON tradingview_ta(symbol)')
-                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tradingview_ta_date ON tradingview_ta(date)')
-                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tradingview_signals_symbol ON tradingview_signals(symbol)')
-                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tradingview_signals_date ON tradingview_signals(date)')
-                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_financial_reports_symbol ON financial_reports(symbol)')
-                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_financial_reports_date ON financial_reports(report_date)')
-                    
-                    # Verify tables exist and have correct structure
-                    cursor.execute("SELECT COUNT(*) FROM tradingview_ta")
-                    logger.info(f"tradingview_ta table initialized with {cursor.fetchone()[0]} records")
-                    
-                    cursor.execute("SELECT COUNT(*) FROM tradingview_signals")
-                    logger.info(f"tradingview_signals table initialized with {cursor.fetchone()[0]} records")
-                    
-                    cursor.execute("SELECT COUNT(*) FROM financial_reports")
-                    logger.info(f"financial_reports table initialized with {cursor.fetchone()[0]} records")
-                    
-                    logger.info(f"Database initialized successfully at {self.db_path}")
-                    
+            with db_connection(self.db_path) as conn:
+                conn.executescript("""
+                    PRAGMA journal_mode=WAL;
+                    PRAGMA synchronous=NORMAL;
+                    PRAGMA cache_size=10000;
+                    PRAGMA temp_store=MEMORY;
+                    PRAGMA foreign_keys=ON;
+                """)
+                self._create_tables()
+            logger.info("Database initialized successfully")
         except Exception as e:
-            logger.error(f"Error initializing database: {str(e)}")
+            logger.error(f"Error initializing database: {e}")
             raise
+    
+    @retry(max_retries=3)
+    def _fetch_data_from_tradingview(self, symbol: str) -> Dict:
+        """Fetch technical analysis data from TradingView"""
+        try:
+            handler = TA_Handler(
+                symbol=symbol,
+                exchange="PSX",
+                screener="pakistan",
+                interval=Interval.INTERVAL_1_DAY
+            )
+            
+            analysis = handler.get_analysis()
+            
+            data = {
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                'open': get_indicator_safely(analysis.indicators, 'open'),
+                'high': get_indicator_safely(analysis.indicators, 'high'),
+                'low': get_indicator_safely(analysis.indicators, 'low'),
+                'close': get_indicator_safely(analysis.indicators, 'close'),
+                'volume': get_indicator_safely(analysis.indicators, 'volume'),
+                'rsi': get_indicator_safely(analysis.indicators, 'RSI'),
+                'macd': get_indicator_safely(analysis.indicators, 'MACD.macd'),
+                'macd_signal': get_indicator_safely(analysis.indicators, 'MACD.signal'),
+                'macd_hist': get_indicator_safely(analysis.indicators, 'MACD.hist'),
+                'sma_20': get_indicator_safely(analysis.indicators, 'SMA20'),
+                'sma_50': get_indicator_safely(analysis.indicators, 'SMA50'),
+                'sma_200': get_indicator_safely(analysis.indicators, 'SMA200'),
+                'ema_20': get_indicator_safely(analysis.indicators, 'EMA20'),
+                'ema_50': get_indicator_safely(analysis.indicators, 'EMA50'),
+                'ema_200': get_indicator_safely(analysis.indicators, 'EMA200'),
+                'bollinger_upper': get_indicator_safely(analysis.indicators, 'BB.upperband'),
+                'bollinger_middle': get_indicator_safely(analysis.indicators, 'BB.middleband'),
+                'bollinger_lower': get_indicator_safely(analysis.indicators, 'BB.lowerband'),
+                'stoch_k': get_indicator_safely(analysis.indicators, 'Stoch.K'),
+                'stoch_d': get_indicator_safely(analysis.indicators, 'Stoch.D'),
+                'ichimoku_tenkan': get_indicator_safely(analysis.indicators, 'Ichimoku.Tenkan-sen'),
+                'ichimoku_kijun': get_indicator_safely(analysis.indicators, 'Ichimoku.Kijun-sen'),
+                'ichimoku_senkou_span_a': get_indicator_safely(analysis.indicators, 'Ichimoku.Senkou Span A'),
+                'ichimoku_senkou_span_b': get_indicator_safely(analysis.indicators, 'Ichimoku.Senkou Span B'),
+                'ichimoku_cloud_green': 1 if get_indicator_safely(analysis.indicators, 'Ichimoku.Senkou Span A', 0) > get_indicator_safely(analysis.indicators, 'Ichimoku.Senkou Span B', 0) else 0,
+                'ichimoku_cloud_red': 1 if get_indicator_safely(analysis.indicators, 'Ichimoku.Senkou Span A', 0) < get_indicator_safely(analysis.indicators, 'Ichimoku.Senkou Span B', 0) else 0,
+                'support_level': get_indicator_safely(analysis.indicators, 'Pivot.M.Classic.S3'),
+                'resistance_level': get_indicator_safely(analysis.indicators, 'Pivot.M.Classic.R3'),
+                'trend': analysis.summary.get('RECOMMENDATION', 'NEUTRAL'),
+                'momentum': analysis.summary.get('RECOMMENDATION', 'NEUTRAL'),
+                'volume_profile': 'HIGH' if get_indicator_safely(analysis.indicators, 'volume', 0) > get_indicator_safely(analysis.indicators, 'SMA20', 0) else 'LOW',
+                'pattern': None,
+                'signal': analysis.summary.get('RECOMMENDATION', 'NEUTRAL'),
+                'target_price': None,
+                'stop_loss': None,
+                'position_size': None,
+                'risk_score': None,
+                'confidence_score': None
+            }
+            
+            # Validate required fields
+            validation = validate_required_fields(data, ['open', 'high', 'low', 'close', 'volume'])
+            if not validation['is_valid']:
+                logger.warning(f"Missing required fields for {symbol}: {validation['missing_fields']}")
+                return None
+            
+            return data
+            
+        except Exception as e:
+            logger.error(f"Error fetching data from TradingView for {symbol}: {e}")
+            return None
+    
+    def save_tradingview_ta_data_to_db(self, symbol: str, data: Dict, conn: sqlite3.Connection):
+        """Save TradingView TA data to database"""
+        try:
+            cursor = conn.cursor()
+            
+            # Check if data already exists
+            cursor.execute("""
+                SELECT * FROM tradingview_signals
+                WHERE symbol = ? AND date = ?
+            """, (symbol, data['date']))
+            
+            if cursor.fetchone():
+                # Update existing data
+                cursor.execute("""
+                    UPDATE tradingview_signals
+                    SET open = ?, high = ?, low = ?, close = ?, volume = ?,
+                        rsi = ?, macd = ?, macd_signal = ?, macd_hist = ?,
+                        sma_20 = ?, sma_50 = ?, sma_200 = ?,
+                        ema_20 = ?, ema_50 = ?, ema_200 = ?,
+                        bollinger_upper = ?, bollinger_middle = ?, bollinger_lower = ?,
+                        stoch_k = ?, stoch_d = ?,
+                        ichimoku_tenkan = ?, ichimoku_kijun = ?,
+                        ichimoku_senkou_span_a = ?, ichimoku_senkou_span_b = ?,
+                        ichimoku_cloud_green = ?, ichimoku_cloud_red = ?,
+                        support_level = ?, resistance_level = ?,
+                        trend = ?, momentum = ?, volume_profile = ?, pattern = ?,
+                        signal = ?, target_price = ?, stop_loss = ?, position_size = ?,
+                        risk_score = ?, confidence_score = ?
+                    WHERE symbol = ? AND date = ?
+                """, (
+                    data['open'], data['high'], data['low'], data['close'], data['volume'],
+                    data['rsi'], data['macd'], data['macd_signal'], data['macd_hist'],
+                    data['sma_20'], data['sma_50'], data['sma_200'],
+                    data['ema_20'], data['ema_50'], data['ema_200'],
+                    data['bollinger_upper'], data['bollinger_middle'], data['bollinger_lower'],
+                    data['stoch_k'], data['stoch_d'],
+                    data['ichimoku_tenkan'], data['ichimoku_kijun'],
+                    data['ichimoku_senkou_span_a'], data['ichimoku_senkou_span_b'],
+                    data['ichimoku_cloud_green'], data['ichimoku_cloud_red'],
+                    data['support_level'], data['resistance_level'],
+                    data['trend'], data['momentum'], data['volume_profile'], data['pattern'],
+                    data['signal'], data['target_price'], data['stop_loss'], data['position_size'],
+                    data['risk_score'], data['confidence_score'],
+                    symbol, data['date']
+                ))
+            else:
+                # Insert new data
+                values = (
+                    symbol, data['date'], data['open'], data['high'], data['low'], data['close'], data['volume'],
+                    data['rsi'], data['macd'], data['macd_signal'], data['macd_hist'],
+                    data['sma_20'], data['sma_50'], data['sma_200'],
+                    data['ema_20'], data['ema_50'], data['ema_200'],
+                    data['bollinger_upper'], data['bollinger_middle'], data['bollinger_lower'],
+                    data['stoch_k'], data['stoch_d'],
+                    data['ichimoku_tenkan'], data['ichimoku_kijun'],
+                    data['ichimoku_senkou_span_a'], data['ichimoku_senkou_span_b'],
+                    data['ichimoku_cloud_green'], data['ichimoku_cloud_red'],
+                    data['support_level'], data['resistance_level'],
+                    data['trend'], data['momentum'], data['volume_profile'], data['pattern'],
+                    data['signal'], data['target_price'], data['stop_loss'], data['position_size'],
+                    data['risk_score'], data['confidence_score']
+                )
+                
+                # Debug: Print values and SQL
+                logger.info(f"Number of values: {len(values)}")
+                logger.info(f"Values: {values}")
+                
+                sql = """
+                    INSERT INTO tradingview_signals (
+                        symbol, date, open, high, low, close, volume,
+                        rsi, macd, macd_signal, macd_hist,
+                        sma_20, sma_50, sma_200,
+                        ema_20, ema_50, ema_200,
+                        bollinger_upper, bollinger_middle, bollinger_lower,
+                        stoch_k, stoch_d,
+                        ichimoku_tenkan, ichimoku_kijun,
+                        ichimoku_senkou_span_a, ichimoku_senkou_span_b,
+                        ichimoku_cloud_green, ichimoku_cloud_red,
+                        support_level, resistance_level,
+                        trend, momentum, volume_profile, pattern,
+                        signal, target_price, stop_loss, position_size,
+                        risk_score, confidence_score
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                logger.info(f"SQL placeholders: {sql.count('?')}")
+                cursor.execute(sql, values)
+            
+            conn.commit()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving TradingView TA data for {symbol} to database: {e}")
+            return False
 
     def fetch_psx_symbols(self) -> List[str]:
         """Fetch list of PSX symbols from Excel file"""
@@ -363,160 +550,62 @@ class FairValueCalculator:
             return 0.0
 
     def analyze_financial_data(self, symbol: str) -> Dict:
-        """Analyze financial reports and news for the symbol"""
+        """Analyze financial data for a given symbol"""
         try:
             # Get financial data from database
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Get the latest financial data
+            # Get latest financial data
             cursor.execute("""
                 SELECT * FROM financial_reports 
                 WHERE symbol = ? 
                 ORDER BY report_date DESC 
-                LIMIT 1
+                LIMIT 2
             """, (symbol,))
             
-            financial_data = cursor.fetchone()
+            financial_reports = cursor.fetchall()
+            columns = [description[0] for description in cursor.description]
             
-            # Get recent announcements
-            announcements = self.read_psx_announcements()
-            symbol_announcements = announcements.get(symbol, [])
+            # Convert to list of dictionaries
+            latest_reports = []
+            for report in financial_reports:
+                latest_reports.append(dict(zip(columns, report)))
             
-            # Initialize analysis
-            analysis = {
-                'financial_score': 0,
-                'financial_signal': 'NEUTRAL',
-                'analysis': [],
-                'confidence': 0.0,
-                'recent_announcements': []
+            conn.close()
+            
+            # Calculate financial metrics
+            financial_analysis = {
+                'symbol': symbol,
+                'reports': latest_reports,
+                'metrics': {}
             }
             
-            # Process financial data if available
-            if financial_data:
-                # Extract financial metrics
-                metrics = {
-                    'eps_growth': financial_data['eps_growth'],
-                    'revenue_growth': financial_data['revenue_growth'],
-                    'profit_margin': financial_data['profit_margin'],
-                    'debt_to_equity': financial_data['debt_to_equity'],
-                    'current_ratio': financial_data['current_ratio'],
-                    'roe': financial_data['roe']
+            if len(latest_reports) >= 2:
+                current = latest_reports[0]
+                previous = latest_reports[1]
+                
+                # Calculate growth rates and ratios
+                financial_analysis['metrics'] = {
+                    'eps_growth': self._calculate_percentage_change(
+                        current.get('eps', 0),
+                        previous.get('eps', 0)
+                    ),
+                    'revenue_growth': self._calculate_percentage_change(
+                        current.get('revenue', 0),
+                        previous.get('revenue', 0)
+                    ),
+                    'profit_margin': (current.get('net_income', 0) / current.get('revenue', 1)) * 100 if current.get('revenue', 0) != 0 else 0,
+                    'debt_to_equity': current.get('total_debt', 0) / current.get('total_equity', 1) if current.get('total_equity', 0) != 0 else 0,
+                    'current_ratio': current.get('current_assets', 0) / current.get('current_liabilities', 1) if current.get('current_liabilities', 0) != 0 else 0,
+                    'roe': (current.get('net_income', 0) / current.get('total_equity', 1)) * 100 if current.get('total_equity', 0) != 0 else 0
                 }
-                
-                # Score each metric
-                if metrics['eps_growth'] is not None:
-                    if metrics['eps_growth'] > 20:
-                        analysis['financial_score'] += 20
-                        analysis['analysis'].append(f"Strong EPS growth: {metrics['eps_growth']:.2f}%")
-                    elif metrics['eps_growth'] > 10:
-                        analysis['financial_score'] += 10
-                        analysis['analysis'].append(f"Moderate EPS growth: {metrics['eps_growth']:.2f}%")
-                    elif metrics['eps_growth'] < -20:
-                        analysis['financial_score'] -= 20
-                        analysis['analysis'].append(f"Poor EPS growth: {metrics['eps_growth']:.2f}%")
-                    elif metrics['eps_growth'] < -10:
-                        analysis['financial_score'] -= 10
-                        analysis['analysis'].append(f"Negative EPS growth: {metrics['eps_growth']:.2f}%")
-                
-                if metrics['revenue_growth'] is not None:
-                    if metrics['revenue_growth'] > 15:
-                        analysis['financial_score'] += 15
-                        analysis['analysis'].append(f"Strong revenue growth: {metrics['revenue_growth']:.2f}%")
-                    elif metrics['revenue_growth'] > 5:
-                        analysis['financial_score'] += 7
-                        analysis['analysis'].append(f"Moderate revenue growth: {metrics['revenue_growth']:.2f}%")
-                    elif metrics['revenue_growth'] < -15:
-                        analysis['financial_score'] -= 15
-                        analysis['analysis'].append(f"Poor revenue growth: {metrics['revenue_growth']:.2f}%")
-                    elif metrics['revenue_growth'] < -5:
-                        analysis['financial_score'] -= 7
-                        analysis['analysis'].append(f"Negative revenue growth: {metrics['revenue_growth']:.2f}%")
-                
-                if metrics['profit_margin'] is not None:
-                    if metrics['profit_margin'] > 20:
-                        analysis['financial_score'] += 15
-                        analysis['analysis'].append(f"Strong profit margin: {metrics['profit_margin']:.2f}%")
-                    elif metrics['profit_margin'] > 10:
-                        analysis['financial_score'] += 7
-                        analysis['analysis'].append(f"Good profit margin: {metrics['profit_margin']:.2f}%")
-                    elif metrics['profit_margin'] < 5:
-                        analysis['financial_score'] -= 15
-                        analysis['analysis'].append(f"Low profit margin: {metrics['profit_margin']:.2f}%")
-                
-                if metrics['debt_to_equity'] is not None:
-                    if metrics['debt_to_equity'] < 0.5:
-                        analysis['financial_score'] += 10
-                        analysis['analysis'].append(f"Low debt-to-equity: {metrics['debt_to_equity']:.2f}")
-                    elif metrics['debt_to_equity'] > 2:
-                        analysis['financial_score'] -= 10
-                        analysis['analysis'].append(f"High debt-to-equity: {metrics['debt_to_equity']:.2f}")
-                
-                if metrics['current_ratio'] is not None:
-                    if metrics['current_ratio'] > 2:
-                        analysis['financial_score'] += 10
-                        analysis['analysis'].append(f"Strong current ratio: {metrics['current_ratio']:.2f}")
-                    elif metrics['current_ratio'] < 1:
-                        analysis['financial_score'] -= 10
-                        analysis['analysis'].append(f"Poor current ratio: {metrics['current_ratio']:.2f}")
-                
-                if metrics['roe'] is not None:
-                    if metrics['roe'] > 20:
-                        analysis['financial_score'] += 15
-                        analysis['analysis'].append(f"Strong ROE: {metrics['roe']:.2f}%")
-                    elif metrics['roe'] > 10:
-                        analysis['financial_score'] += 7
-                        analysis['analysis'].append(f"Good ROE: {metrics['roe']:.2f}%")
-                    elif metrics['roe'] < 5:
-                        analysis['financial_score'] -= 15
-                        analysis['analysis'].append(f"Poor ROE: {metrics['roe']:.2f}%")
-                
-                # Add recent announcements impact
-                if symbol_announcements:
-                    announcement_impact = 0.0
-                    for announcement in symbol_announcements:
-                        announcement_impact += announcement['impact']
-                        analysis['recent_announcements'].append({
-                            'date': announcement['date'],
-                            'title': announcement['title'],
-                            'impact': announcement['impact']
-                        })
-                    
-                    # Adjust financial score based on announcements
-                    analysis['financial_score'] += (announcement_impact * 10)  # Scale impact to match financial metrics
-                    
-                    # Add announcement summary to analysis
-                    if announcement_impact > 0:
-                        analysis['analysis'].append(f"Positive recent announcements: {announcement_impact:.2f} impact")
-                    elif announcement_impact < 0:
-                        analysis['analysis'].append(f"Negative recent announcements: {abs(announcement_impact):.2f} impact")
             
-            # Determine financial signal with announcement consideration
-            if analysis['financial_score'] >= 50:
-                analysis['financial_signal'] = 'STRONG_BUY'
-            elif analysis['financial_score'] >= 25:
-                analysis['financial_signal'] = 'BUY'
-            elif analysis['financial_score'] <= -50:
-                analysis['financial_signal'] = 'STRONG_SELL'
-            elif analysis['financial_score'] <= -25:
-                analysis['financial_signal'] = 'SELL'
-            
-            # Calculate confidence based on available data
-            available_metrics = sum(1 for v in metrics.values() if v is not None) if 'metrics' in locals() else 0
-            announcement_factor = 1.0 if symbol_announcements else 0.5
-            analysis['confidence'] = (available_metrics / len(metrics) if 'metrics' in locals() else 0) * announcement_factor
-            
-            return analysis
+            return financial_analysis
             
         except Exception as e:
             logger.error(f"Error analyzing financial data for {symbol}: {e}")
-            return {
-                'financial_score': 0,
-                'financial_signal': 'NEUTRAL',
-                'analysis': [],
-                'confidence': 0.0,
-                'recent_announcements': []
-            }
+            return {'symbol': symbol, 'reports': [], 'metrics': {}}
 
     def analyze_with_ai(self, symbol: str, technical_data: Dict, financial_data: Dict) -> Dict:
         """Analyze stock data using AI to enhance signal generation with focus on investment perspective"""
@@ -524,11 +613,11 @@ class FairValueCalculator:
             current_time = time.time()
             
             # Check cache first
-            if symbol in self._ai_analysis_cache:
+            if symbol in self.ai_analysis_cache:
                 cache_time = self._last_ai_call_time.get(symbol, 0)
                 if current_time - cache_time < self._ai_call_cooldown:
                     logger.info(f"Using cached AI analysis for {symbol}")
-                    return self._ai_analysis_cache[symbol]
+                    return self.ai_analysis_cache[symbol]
             
             logger.info(f"Starting AI analysis for symbol: {symbol}")
             
@@ -676,7 +765,7 @@ Format the response in clear sections with specific metrics and recommendations.
             
             if ai_analysis:
                 # Cache the analysis
-                self._ai_analysis_cache[symbol] = ai_analysis
+                self.ai_analysis_cache[symbol] = ai_analysis
                 self._last_ai_call_time[symbol] = current_time
                 logger.info(f"Successfully integrated AI analysis for {symbol}")
                 return ai_analysis
@@ -876,57 +965,243 @@ Format the response in clear sections with specific metrics and recommendations.
             return None
 
     def _perform_technical_analysis(self, stock_data: Dict, previous_analysis: Dict = None) -> Dict:
-        """Perform technical analysis on stock data"""
+        """Perform comprehensive technical analysis on stock data"""
         try:
+            # Convert stock data to pandas Series for easier calculations
+            close = pd.Series(stock_data['close'])
+            high = pd.Series(stock_data['high'])
+            low = pd.Series(stock_data['low'])
+            volume = pd.Series(stock_data['volume'])
+            
+            # Calculate 52-week high
+            high_52 = high.tail(252).max()
+            
+            # Initialize analysis dictionary with all required keys
             analysis = {
-                'signal_type': 'NEUTRAL',
-                'signal_strength': 0.0,
-                'confidence_score': 0.0,
-                'technical_score': 0.0,
-                'trend_score': 0.0,
-                'momentum_score': 0.0,
-                'volume_score': 0.0,
-                'volatility_score': 0.0,
-                'support_level': None,
-                'resistance_level': None,
-                'stop_loss': None,
-                'take_profit': None,
-                'risk_reward_ratio': None,
-                'analysis_summary': [],
-                'indicators_used': []
+                'indicators': {},
+                'patterns': {},
+                'signals': {},
+                'analyses': {},
+                'indicators_used': [],  # Initialize this key
+                'trend_score': 0,       # Initialize this key
+                'momentum_score': 0,    # Initialize this key
+                'volume_score': 0,      # Initialize this key
+                'volatility_score': 0   # Initialize this key
             }
             
-            # Add symbol to analysis
-            analysis['symbol'] = stock_data['symbol']
+            # Calculate moving averages
+            analysis['indicators']['sma_20'] = close.rolling(window=20).mean().iloc[-1]
+            analysis['indicators']['sma_50'] = close.rolling(window=50).mean().iloc[-1]
+            analysis['indicators']['sma_200'] = close.rolling(window=200).mean().iloc[-1]
+            analysis['indicators']['ema_20'] = close.ewm(span=20, adjust=False).mean().iloc[-1]
+            analysis['indicators']['ema_50'] = close.ewm(span=50, adjust=False).mean().iloc[-1]
+            analysis['indicators']['ema_200'] = close.ewm(span=200, adjust=False).mean().iloc[-1]
             
-            # Copy price and indicator data from stock_data to analysis
-            price_fields = ['close', 'open', 'high', 'low', 'volume', 'change', 'change_percent']
-            indicator_fields = ['rsi', 'macd', 'macd_signal', 'sma_20', 'sma_50', 'sma_200', 'bb_upper', 'bb_lower']
+            # Calculate Bollinger Bands
+            analysis['indicators']['bollinger_middle'] = close.rolling(window=20).mean().iloc[-1]
+            std = close.rolling(window=20).std().iloc[-1]
+            analysis['indicators']['bollinger_upper'] = analysis['indicators']['bollinger_middle'] + (std * 2)
+            analysis['indicators']['bollinger_lower'] = analysis['indicators']['bollinger_middle'] - (std * 2)
             
-            for field in price_fields + indicator_fields:
-                if field in stock_data:
-                    analysis[field] = stock_data[field]
+            # Calculate RSI
+            delta = close.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            analysis['indicators']['rsi'] = 100 - (100 / (1 + rs.iloc[-1]))
             
-            # Perform trend analysis
+            # Calculate MACD
+            exp1 = close.ewm(span=12, adjust=False).mean()
+            exp2 = close.ewm(span=26, adjust=False).mean()
+            analysis['indicators']['macd'] = exp1.iloc[-1] - exp2.iloc[-1]
+            analysis['indicators']['macd_signal'] = pd.Series(analysis['indicators']['macd']).ewm(span=9, adjust=False).mean().iloc[-1]
+            analysis['indicators']['macd_hist'] = analysis['indicators']['macd'] - analysis['indicators']['macd_signal']
+            
+            # Calculate Stochastic Oscillator
+            low_14 = low.rolling(window=14).min()
+            high_14 = high.rolling(window=14).max()
+            analysis['indicators']['stoch_k'] = 100 * ((close.iloc[-1] - low_14.iloc[-1]) / (high_14.iloc[-1] - low_14.iloc[-1]))
+            analysis['indicators']['stoch_d'] = pd.Series(analysis['indicators']['stoch_k']).rolling(window=3).mean().iloc[-1]
+            
+            # Calculate Ichimoku Cloud
+            analysis['indicators']['ichimoku_tenkan'] = (high.rolling(window=9).max().iloc[-1] + low.rolling(window=9).min().iloc[-1]) / 2
+            analysis['indicators']['ichimoku_kijun'] = (high.rolling(window=26).max().iloc[-1] + low.rolling(window=26).min().iloc[-1]) / 2
+            analysis['indicators']['ichimoku_senkou_span_a'] = ((analysis['indicators']['ichimoku_tenkan'] + analysis['indicators']['ichimoku_kijun']) / 2)
+            analysis['indicators']['ichimoku_senkou_span_b'] = ((high.rolling(window=52).max().iloc[-1] + low.rolling(window=52).min().iloc[-1]) / 2)
+            analysis['indicators']['ichimoku_cloud_green'] = 1 if analysis['indicators']['ichimoku_senkou_span_a'] > analysis['indicators']['ichimoku_senkou_span_b'] else 0
+            analysis['indicators']['ichimoku_cloud_red'] = 1 if analysis['indicators']['ichimoku_senkou_span_a'] < analysis['indicators']['ichimoku_senkou_span_b'] else 0
+            
+            # Calculate volume profile
+            analysis['indicators']['volume_profile'] = volume.rolling(window=20).mean().iloc[-1]
+            
+            # Calculate support and resistance levels
+            analysis['patterns']['support_resistance'] = self._calculate_support_resistance(close, high, low)
+            
+            # Identify patterns
+            analysis['patterns']['chart_patterns'] = self._identify_patterns(close, high, low, volume)
+            
+            # Analyze trend
             self._analyze_trend(stock_data, analysis, previous_analysis)
             
-            # Perform momentum analysis
+            # Analyze momentum
             self._analyze_momentum(stock_data, analysis, previous_analysis)
             
-            # Perform volume analysis
+            # Analyze volume
             self._analyze_volume(stock_data, analysis, previous_analysis)
             
-            # Perform volatility analysis
+            # Analyze volatility
             self._analyze_volatility(stock_data, analysis, previous_analysis)
             
-            # Calculate final scores and determine signal
+            # Calculate final scores
             self._calculate_final_scores(analysis)
             
             return analysis
             
         except Exception as e:
-            logger.error(f"Error performing technical analysis: {e}")
-            return None
+            logger.error(f"Error in technical analysis: {e}")
+            raise
+
+    def _calculate_support_resistance(self, close_prices: pd.Series, high_prices: pd.Series, low_prices: pd.Series) -> Dict:
+        """Calculate support and resistance levels using multiple methods"""
+        try:
+            levels = {
+                'support': [],
+                'resistance': [],
+                'pivot_points': {}
+            }
+            
+            # Pivot Points
+            high = high_prices.iloc[-1]
+            low = low_prices.iloc[-1]
+            close = close_prices.iloc[-1]
+            
+            # Classic Pivot Points
+            pp = (high + low + close) / 3
+            r1 = 2 * pp - low
+            s1 = 2 * pp - high
+            r2 = pp + (high - low)
+            s2 = pp - (high - low)
+            
+            levels['pivot_points'] = {
+                'pp': pp,
+                'r1': r1,
+                'r2': r2,
+                's1': s1,
+                's2': s2
+            }
+            
+            # Fibonacci Retracement Levels
+            price_range = high - low
+            levels['fibonacci'] = {
+                '0.236': high - price_range * 0.236,
+                '0.382': high - price_range * 0.382,
+                '0.5': high - price_range * 0.5,
+                '0.618': high - price_range * 0.618,
+                '0.786': high - price_range * 0.786
+            }
+            
+            # Recent Highs and Lows
+            recent_highs = high_prices.rolling(window=20).max().dropna()
+            recent_lows = low_prices.rolling(window=20).min().dropna()
+            
+            # Cluster similar levels
+            def cluster_levels(levels, threshold=0.02):
+                if not levels:
+                    return []
+                levels = sorted(levels)
+                clusters = []
+                current_cluster = [levels[0]]
+                
+                for level in levels[1:]:
+                    if (level - current_cluster[-1]) / current_cluster[-1] < threshold:
+                        current_cluster.append(level)
+                    else:
+                        clusters.append(sum(current_cluster) / len(current_cluster))
+                        current_cluster = [level]
+                
+                clusters.append(sum(current_cluster) / len(current_cluster))
+                return clusters
+            
+            levels['support'] = cluster_levels(recent_lows.tolist())
+            levels['resistance'] = cluster_levels(recent_highs.tolist())
+            
+            return levels
+            
+        except Exception as e:
+            logger.error(f"Error calculating support and resistance: {e}")
+            return {}
+
+    def _identify_patterns(self, close_prices: pd.Series, high_prices: pd.Series, low_prices: pd.Series, volume: pd.Series) -> Dict:
+        """Identify common chart patterns"""
+        try:
+            patterns = {
+                'candlestick': [],
+                'chart': [],
+                'volume': []
+            }
+            
+            # Candlestick Patterns
+            def is_doji(open_price, close_price, high, low):
+                body = abs(close_price - open_price)
+                total_range = high - low
+                return body <= total_range * 0.1
+            
+            def is_hammer(open_price, close_price, high, low):
+                body = abs(close_price - open_price)
+                lower_shadow = min(open_price, close_price) - low
+                upper_shadow = high - max(open_price, close_price)
+                return lower_shadow > body * 2 and upper_shadow < body * 0.1
+            
+            def is_engulfing(open1, close1, open2, close2):
+                return (close1 > open1 and close2 < open2 and close1 < open2 and open1 > close2) or \
+                       (close1 < open1 and close2 > open2 and close1 > open2 and open1 < close2)
+            
+            # Check last few candles
+            for i in range(len(close_prices) - 1):
+                if is_doji(close_prices.iloc[i], close_prices.iloc[i+1], high_prices.iloc[i+1], low_prices.iloc[i+1]):
+                    patterns['candlestick'].append('doji')
+                if is_hammer(close_prices.iloc[i], close_prices.iloc[i+1], high_prices.iloc[i+1], low_prices.iloc[i+1]):
+                    patterns['candlestick'].append('hammer')
+                if is_engulfing(close_prices.iloc[i], close_prices.iloc[i+1], close_prices.iloc[i+2], close_prices.iloc[i+3]):
+                    patterns['candlestick'].append('engulfing')
+            
+            # Chart Patterns
+            def is_double_top(prices, threshold=0.02):
+                peaks = []
+                for i in range(1, len(prices) - 1):
+                    if prices.iloc[i] > prices.iloc[i-1] and prices.iloc[i] > prices.iloc[i+1]:
+                        peaks.append(prices.iloc[i])
+                if len(peaks) >= 2:
+                    return abs(peaks[-1] - peaks[-2]) / peaks[-2] < threshold
+                return False
+            
+            def is_double_bottom(prices, threshold=0.02):
+                troughs = []
+                for i in range(1, len(prices) - 1):
+                    if prices.iloc[i] < prices.iloc[i-1] and prices.iloc[i] < prices.iloc[i+1]:
+                        troughs.append(prices.iloc[i])
+                if len(troughs) >= 2:
+                    return abs(troughs[-1] - troughs[-2]) / troughs[-2] < threshold
+                return False
+            
+            if is_double_top(close_prices):
+                patterns['chart'].append('double_top')
+            if is_double_bottom(close_prices):
+                patterns['chart'].append('double_bottom')
+            
+            # Volume Patterns
+            def is_volume_spike(volumes, threshold=2):
+                avg_volume = volumes.rolling(window=20).mean()
+                return volumes.iloc[-1] > avg_volume.iloc[-1] * threshold
+            
+            if is_volume_spike(volume):
+                patterns['volume'].append('volume_spike')
+            
+            return patterns
+            
+        except Exception as e:
+            logger.error(f"Error identifying patterns: {e}")
+            return {}
 
     def _analyze_trend(self, stock_data: Dict, analysis: Dict, previous_analysis: Dict = None):
         """Analyze trend indicators"""
@@ -1489,7 +1764,7 @@ Format the response in clear sections with specific metrics and recommendations.
              last_updated, ai_score, ai_confidence, ai_pattern_recognition,
              ai_signal_strength, ai_risk_assessment, ai_recommendation,
              ai_price_targets, ai_entry_points, ai_exit_points, ai_analysis_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 symbol,
                 datetime.now().strftime('%Y-%m-%d'),
@@ -1533,354 +1808,25 @@ Format the response in clear sections with specific metrics and recommendations.
     def fetch_tradingview_ta_data(self, symbol: str) -> Dict:
         """Fetch data using tradingview_ta library with weekly timeframe and optimized database operations"""
         try:
-            # First check if we have valid cached data
-            cached_data = self.get_latest_data(symbol)
-            if cached_data:
-                cache_date = datetime.strptime(cached_data.get('date', ''), '%Y-%m-%d')
-                current_date = datetime.now()
-                
-                # If cached data is from current week, use it
-                if cache_date.isocalendar()[1] == current_date.isocalendar()[1]:
-                    logger.info(f"Using current week's cached data for {symbol}")
-                    return cached_data
-                
-                # If cached data is less than 24 hours old, use it
-                if (current_date - cache_date).total_seconds() < 86400:  # 24 hours
-                    logger.info(f"Using recent cached data for {symbol} (less than 24 hours old)")
-                    return cached_data
+            # Fetch data from tradingview_ta
+            data = self._fetch_data_from_tradingview(symbol)
+            if not data:
+                return None
             
-            # Check if we need to update the data
-            if not self.should_update_data(symbol):
-                logger.info(f"Using existing data for {symbol}")
-                return cached_data
-            
-            # Try different symbol formats with retry mechanism
-            # Start with the most common format first
-            symbol_formats = [
-                symbol,           # Just the symbol (most common)
-                f"{symbol}.PSX",  # PSX suffix (second most common)
-                f"PSX:{symbol}",  # PSX prefix with colon (third most common)
-                f"PSX-{symbol}"   # PSX prefix with hyphen (fourth most common)
-            ]
-            
-            data = {}
-            success = False
-            max_retries = 2
-            retry_delay = 1
-            
-            for symbol_format in symbol_formats:
-                for attempt in range(max_retries):
-                    try:
-                        logger.info(f"Attempting to fetch data for {symbol} using format: {symbol_format} (Attempt {attempt + 1}/{max_retries})")
-                        
-                        handler = TA_Handler(
-                            symbol=symbol_format,
-                            screener="pakistan",
-                            exchange="PSX",
-                            interval=Interval.INTERVAL_1_WEEK
-                        )
-                        
-                        analysis = handler.get_analysis()
-                        
-                        # Validate the analysis data
-                        if not analysis or not analysis.summary or not analysis.indicators:
-                            logger.warning(f"Invalid analysis data received for {symbol} using format {symbol_format}")
-                            continue
-                        
-                        # Debug logging for raw data
-                        logger.info(f"Raw analysis for {symbol} ({symbol_format}):")
-                        logger.info(f"Summary: {analysis.summary}")
-                        logger.info(f"Oscillators: {analysis.oscillators}")
-                        logger.info(f"Moving Averages: {analysis.moving_averages}")
-                        logger.info(f"Indicators: {analysis.indicators}")
-                        
-                        # Extract summary data
-                        if analysis.summary:
-                            data.update({
-                                'recommendation': analysis.summary.get('RECOMMENDATION'),
-                                'buy_signals': analysis.summary.get('BUY'),
-                                'sell_signals': analysis.summary.get('SELL'),
-                                'neutral_signals': analysis.summary.get('NEUTRAL')
-                            })
-                            logger.info(f"Extracted summary data for {symbol}: {data}")
-                        
-                        # Extract all indicators from the indicators dictionary
-                        if analysis.indicators:
-                            # Calculate price changes and metrics
-                            close = analysis.indicators.get('close')
-                            open_price = analysis.indicators.get('open')
-                            high = analysis.indicators.get('high')
-                            low = analysis.indicators.get('low')
-                            
-                            # Initialize price change metrics
-                            price_metrics = {
-                                'change': None,
-                                'change_percent': None,
-                                'high_low_range': None,
-                                'high_low_range_percent': None,
-                                'volatility': None
-                            }
-                            
-                            # Calculate daily change if we have both close and open
-                            if close is not None and open_price is not None:
-                                # Calculate absolute change
-                                price_metrics['change'] = close - open_price
-                                
-                                # Calculate percentage change
-                                if open_price != 0:
-                                    price_metrics['change_percent'] = (price_metrics['change'] / open_price) * 100
-                                    logger.info(f"Calculated change: {price_metrics['change']:.2f} ({price_metrics['change_percent']:.2f}%)")
-                                else:
-                                    logger.warning(f"Open price is zero for {symbol}, cannot calculate percentage change")
-                            
-                            # Calculate high-low range if we have both high and low
-                            if high is not None and low is not None:
-                                price_metrics['high_low_range'] = high - low
-                                if low != 0:
-                                    price_metrics['high_low_range_percent'] = (price_metrics['high_low_range'] / low) * 100
-                                    logger.info(f"High-Low range: {price_metrics['high_low_range']:.2f} ({price_metrics['high_low_range_percent']:.2f}%)")
-                            
-                            # Calculate volatility (standard deviation of price changes)
-                            if all(x is not None for x in [close, open_price, high, low]):
-                                # Simple volatility calculation based on high-low range
-                                price_metrics['volatility'] = price_metrics['high_low_range_percent'] / 2
-                                logger.info(f"Calculated volatility: {price_metrics['volatility']:.2f}%")
-                            
-                            indicator_data = {
-                                # Oscillators
-                                'rsi': analysis.indicators.get('RSI[1]'),
-                                'stoch_k': analysis.indicators.get('Stoch.K[1]'),
-                                'stoch_d': analysis.indicators.get('Stoch.D[1]'),
-                                'macd': analysis.indicators.get('MACD.macd'),
-                                'macd_signal': analysis.indicators.get('MACD.signal'),
-                                'macd_hist': analysis.indicators.get('MACD.macd') - analysis.indicators.get('MACD.signal') if analysis.indicators.get('MACD.macd') is not None and analysis.indicators.get('MACD.signal') is not None else None,
-                                
-                                # Moving Averages
-                                'sma_20': analysis.indicators.get('SMA20'),
-                                'sma_50': analysis.indicators.get('SMA50'),
-                                'sma_200': analysis.indicators.get('SMA200'),
-                                'ema_20': analysis.indicators.get('EMA20'),
-                                'ema_50': analysis.indicators.get('EMA50'),
-                                'ema_200': analysis.indicators.get('EMA200'),
-                                
-                                # Price and Volume
-                                'close': close,
-                                'open': open_price,
-                                'high': high,
-                                'low': low,
-                                'volume': analysis.indicators.get('volume'),
-                                'change': price_metrics['change'],
-                                'change_percent': price_metrics['change_percent'],
-                                'high_low_range': price_metrics['high_low_range'],
-                                'high_low_range_percent': price_metrics['high_low_range_percent'],
-                                'volatility': price_metrics['volatility'],
-                                
-                                # Additional Indicators
-                                'bb_upper': analysis.indicators.get('BB.upper'),
-                                'bb_lower': analysis.indicators.get('BB.lower'),
-                                'ao': analysis.indicators.get('AO[2]'),
-                                'psar': analysis.indicators.get('P.SAR'),
-                                'vwma': analysis.indicators.get('VWMA'),
-                                'hull_ma9': analysis.indicators.get('HullMA9')
-                            }
-                            
-                            # Validate required fields
-                            required_fields = ['close', 'open', 'high', 'low', 'volume']
-                            if all(indicator_data.get(field) is not None for field in required_fields):
-                                data.update(indicator_data)
-                                logger.info(f"Extracted all indicators for {symbol}: {indicator_data}")
-                                success = True
-                                break
-                            else:
-                                missing_fields = [field for field in required_fields if indicator_data.get(field) is None]
-                                logger.warning(f"Missing required fields for {symbol} using format {symbol_format}: {missing_fields}")
-                                continue
-                        
-                        if success:
-                            break
-                            
-                    except Exception as e:
-                        error_msg = str(e)
-                        if "Exchange or symbol not found" in error_msg:
-                            logger.warning(f"Symbol format {symbol_format} not found for {symbol}")
-                        else:
-                            logger.error(f"Attempt {attempt + 1} failed for {symbol} using format {symbol_format}: {error_msg}")
-                        
-                        if attempt < max_retries - 1:
-                            time.sleep(retry_delay)
-                        continue
-                
-                if success:
-                    break
-            
-            if success and data:
-                # Add timestamp for caching
-                data['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                # Ensure symbol is present in data
-                data['symbol'] = symbol
-                # Add current date
-                data['date'] = datetime.now().strftime('%Y-%m-%d')
-                
-                # Save data to database
-                with closing(sqlite3.connect(self.db_path)) as conn:
-                    with conn:
-                        save_result = self.save_tradingview_ta_data_to_db(symbol, data, conn)
-                        if save_result:
-                            logger.info(f"Successfully saved data for {symbol} to database")
-                        else:
-                            logger.error(f"Failed to save data for {symbol} to database")
-                
-                # Analyze and save signals
-                analysis_result = self.analyze_stock_indicators(data)
-                if analysis_result:
-                    with closing(sqlite3.connect(self.db_path)) as conn:
-                        with conn:
-                            self.save_analysis_to_db(symbol, analysis_result)
-                            logger.info(f"Successfully saved analysis for {symbol} to database")
-                else:
-                    logger.error(f"Failed to save analysis for {symbol} to database")
-                
-                return data
-            else:
-                logger.warning(f"Could not fetch valid data for {symbol} using any symbol format")
-                # Return cached data if available, even if it's old
-                if cached_data:
-                    logger.info(f"Returning cached data for {symbol} as fallback")
-                    return cached_data
-                return {}
-            
-        except Exception as e:
-            logger.error(f"Error fetching TradingView TA data for {symbol}: {str(e)}")
-            # Return cached data if available, even if it's old
-            cached_data = self.get_latest_data(symbol)
-            if cached_data:
-                logger.info(f"Returning cached data for {symbol} after error")
-                return cached_data
-            return {}
-
-    def get_latest_data(self, symbol: str) -> Dict:
-        """Get the latest data for a symbol from the database with enhanced validation"""
-        try:
+            # Save data to database
             conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Get the latest data with validation
-            cursor.execute("""
-                SELECT * FROM tradingview_ta 
-                WHERE symbol = ? 
-                AND close IS NOT NULL 
-                AND volume IS NOT NULL 
-                AND date IS NOT NULL 
-                ORDER BY date DESC 
-                LIMIT 1
-            """, (symbol,))
-            
-            columns = [description[0] for description in cursor.description]
-            row = cursor.fetchone()
-            
+            save_result = self.save_tradingview_ta_data_to_db(symbol, data, conn)
             conn.close()
             
-            if row:
-                data = dict(zip(columns, row))
-                # Validate the data
-                required_fields = ['close', 'open', 'high', 'low', 'volume', 'date']
-                if all(data.get(field) is not None for field in required_fields):
-                    logger.info(f"Found valid cached data for {symbol} from {data['date']}")
-                    return data
-                else:
-                    logger.warning(f"Found incomplete cached data for {symbol}")
-                    return {}
+            if not save_result:
+                logger.error(f"Failed to save data for {symbol} to database")
+                return None
             
-            logger.info(f"No valid cached data found for {symbol}")
-            return {}
+            return data
             
         except Exception as e:
-            logger.error(f"Error getting latest data for {symbol}: {str(e)}")
-            return {}
-
-    def save_tradingview_ta_data_to_db(self, symbol: str, data: Dict, conn: sqlite3.Connection):
-        """Save TradingView TA data to the database with duplicate validation and optimized connection handling"""
-        try:
-            current_date = data.get('date', datetime.now().strftime('%Y-%m-%d'))
-            
-            # Check if record exists for this symbol and date
-            with conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT * FROM tradingview_ta 
-                    WHERE symbol = ? AND date = ?
-                """, (symbol, current_date))
-                
-                existing_record = cursor.fetchone()
-                
-                if existing_record:
-                    # Get column names
-                    columns = [description[0] for description in cursor.description]
-                    existing_data = dict(zip(columns, existing_record))
-                    
-                    # Compare values and build update query only for changed fields
-                    update_fields = []
-                    update_values = []
-                    
-                    for key, new_value in data.items():
-                        if key in columns and key not in ['symbol', 'date']:  # Skip primary key fields
-                            old_value = existing_data.get(key)
-                            if new_value != old_value and new_value is not None:
-                                update_fields.append(f"{key} = ?")
-                                update_values.append(new_value)
-                    
-                    if update_fields:  # Only update if there are changes
-                        update_query = f"""
-                        UPDATE tradingview_ta 
-                        SET {', '.join(update_fields)}, last_updated = ?
-                        WHERE symbol = ? AND date = ?
-                        """
-                        update_values.extend([datetime.now().strftime('%Y-%m-%d %H:%M:%S'), symbol, current_date])
-                        
-                        cursor.execute(update_query, update_values)
-                        logger.info(f"Updated {len(update_fields)} fields for {symbol} on {current_date}")
-                    else:
-                        logger.info(f"No changes detected for {symbol} on {current_date}")
-                else:
-                    # Insert new record
-                    # Get all column names from the table
-                    cursor.execute("PRAGMA table_info(tradingview_ta)")
-                    columns = [column[1] for column in cursor.fetchall()]
-                    
-                    # Prepare values list with None for missing columns
-                    values = []
-                    for column in columns:
-                        if column == 'symbol':
-                            values.append(symbol)
-                        elif column == 'date':
-                            values.append(current_date)
-                        elif column == 'last_updated':
-                            values.append(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-                        elif column == 'source':
-                            values.append('tradingview_ta')
-                        else:
-                            values.append(data.get(column))
-                    
-                    # Create placeholders for the SQL query
-                    placeholders = ','.join(['?' for _ in columns])
-                    
-                    # Insert new record
-                    cursor.execute(f'''
-                    INSERT INTO tradingview_ta 
-                    ({', '.join(columns)})
-                    VALUES ({placeholders})
-                    ''', values)
-                    
-                    logger.info(f"Inserted new record for {symbol} on {current_date}")
-                
-                conn.commit()
-                return True
-                
-        except Exception as e:
-            logger.error(f"Error saving TradingView TA data for {symbol} to database: {str(e)}")
-            if 'conn' in locals():
-                conn.close()
-            return False
+            logger.error(f"Error fetching TradingView TA data for {symbol}: {e}")
+            return None
 
     def analyze_database(self):
         """Analyze the database for null values and data quality"""
@@ -1889,7 +1835,7 @@ Format the response in clear sections with specific metrics and recommendations.
             cursor = conn.cursor()
             
             # Get total number of records
-            cursor.execute("SELECT COUNT(*) FROM tradingview_ta")
+            cursor.execute("SELECT COUNT(*) FROM tradingview_signals")
             total_records = cursor.fetchone()[0]
             
             logger.info(f"Total records in database: {total_records}")
@@ -1911,11 +1857,11 @@ Format the response in clear sections with specific metrics and recommendations.
             cursor.execute("""
                 WITH latest_dates AS (
                     SELECT symbol, MAX(date) as max_date
-                    FROM tradingview_ta
+                    FROM tradingview_signals
                     GROUP BY symbol
                 )
                 SELECT t.*
-                FROM tradingview_ta t
+                FROM tradingview_signals t
                 JOIN latest_dates ld ON t.symbol = ld.symbol AND t.date = ld.max_date
                 ORDER BY t.symbol
             """)
@@ -1950,126 +1896,183 @@ Format the response in clear sections with specific metrics and recommendations.
             return []
 
     def _generate_stock_signal(self, stock):
-        """Generate AI-based signal for a single stock"""
+        """Generate trading signal for a stock based on technical and financial analysis"""
         try:
-            # Initialize signal dictionary
+            symbol = stock['symbol']
+            
+            # Get technical analysis
+            technical_analysis = self.analyze_stock_indicators(stock)
+            
+            # Get financial analysis
+            financial_analysis = self.analyze_financial_data(symbol)
+            
+            # Calculate final signal
             signal = {
-                'symbol': stock['symbol'],
-                'date': stock['date'],
-                'signal': 'NEUTRAL',
-                'confidence': 0.0,
-                'reasons': []
+                'symbol': symbol,
+                'timestamp': datetime.now().isoformat(),
+                'technical_score': technical_analysis.get('final_score', 0),
+                'financial_score': self._calculate_financial_score(financial_analysis),
+                'recommendation': self._generate_recommendation(
+                    technical_analysis.get('final_score', 0),
+                    self._calculate_financial_score(financial_analysis)
+                ),
+                'confidence': self._calculate_confidence(
+                    technical_analysis,
+                    financial_analysis
+                ),
+                'analysis': {
+                    'technical': technical_analysis,
+                    'financial': financial_analysis
+                }
             }
-            
-            # Technical Analysis Score (0-100)
-            ta_score = 0
-            reasons = []
-            
-            # 1. Trend Analysis (30 points)
-            trend_score = 0
-            if stock['sma_20'] is not None and stock['sma_50'] is not None:
-                if stock['close'] > stock['sma_20'] > stock['sma_50']:
-                    trend_score += 15
-                    reasons.append("Strong uptrend: Price above both SMAs")
-                elif stock['close'] > stock['sma_20']:
-                    trend_score += 10
-                    reasons.append("Moderate uptrend: Price above SMA20")
-                elif stock['close'] < stock['sma_20'] < stock['sma_50']:
-                    trend_score -= 15
-                    reasons.append("Strong downtrend: Price below both SMAs")
-                elif stock['close'] < stock['sma_20']:
-                    trend_score -= 10
-                    reasons.append("Moderate downtrend: Price below SMA20")
-            
-            # 2. Momentum Analysis (30 points)
-            momentum_score = 0
-            if stock['rsi'] is not None:
-                if stock['rsi'] > 70:
-                    momentum_score -= 10
-                    reasons.append("Overbought: RSI above 70")
-                elif stock['rsi'] < 30:
-                    momentum_score += 10
-                    reasons.append("Oversold: RSI below 30")
-            
-            if stock['macd'] is not None and stock['macd_signal'] is not None:
-                if stock['macd'] > stock['macd_signal']:
-                    momentum_score += 10
-                    reasons.append("Positive MACD crossover")
-                else:
-                    momentum_score -= 10
-                    reasons.append("Negative MACD crossover")
-            
-            # 3. Volume Analysis (20 points)
-            volume_score = 0
-            if stock['volume'] is not None and stock['change'] is not None:
-                if stock['change'] > 0 and stock['volume'] > 1000000:  # High volume with price increase
-                    volume_score += 10
-                    reasons.append("High volume with price increase")
-                elif stock['change'] < 0 and stock['volume'] > 1000000:  # High volume with price decrease
-                    volume_score -= 10
-                    reasons.append("High volume with price decrease")
-            
-            # 4. Volatility Analysis (20 points)
-            volatility_score = 0
-            if stock['bb_upper'] is not None and stock['bb_lower'] is not None:
-                bb_range = stock['bb_upper'] - stock['bb_lower']
-                volatility = bb_range / stock['close'] * 100
-                price_position = (stock['close'] - stock['bb_lower']) / bb_range * 100
-                
-                # Volatility score based on BB range
-                if volatility > 15:
-                    volatility_score = -20
-                    reasons.append("Very high volatility: BB range > 15%")
-                elif volatility > 10:
-                    volatility_score = -15
-                    reasons.append("High volatility: BB range > 10%")
-                elif volatility < 5:
-                    volatility_score = 15
-                    reasons.append("Low volatility: BB range < 5%")
-                elif volatility < 8:
-                    volatility_score = 10
-                    reasons.append("Moderate volatility: BB range < 8%")
-                
-                # Calculate support and resistance levels
-                signal['support_level'] = stock['bb_lower']
-                signal['resistance_level'] = stock['bb_upper']
-                
-                # Add price position relative to BB
-                if price_position > 80:
-                    reasons.append("Price near upper BB: 80% of range")
-                    volatility_score -= 5
-                elif price_position < 20:
-                    reasons.append("Price near lower BB: 20% of range")
-                    volatility_score += 5
-            
-            # Calculate final score
-            final_score = trend_score + momentum_score + volume_score + volatility_score
-            
-            # Determine signal and confidence
-            if final_score >= 30:
-                signal['signal'] = 'STRONG_BUY'
-                signal['confidence'] = min(final_score / 50, 1.0)
-            elif final_score >= 15:
-                signal['signal'] = 'BUY'
-                signal['confidence'] = min(final_score / 40, 0.8)
-            elif final_score <= -30:
-                signal['signal'] = 'STRONG_SELL'
-                signal['confidence'] = min(abs(final_score) / 50, 1.0)
-            elif final_score <= -15:
-                signal['signal'] = 'SELL'
-                signal['confidence'] = min(abs(final_score) / 40, 0.8)
-            else:
-                signal['signal'] = 'NEUTRAL'
-                signal['confidence'] = 0.5
-            
-            signal['reasons'] = reasons
-            signal['score'] = final_score
             
             return signal
             
         except Exception as e:
-            logger.error(f"Error generating signal for {stock['symbol']}: {e}")
+            logger.error(f"Error generating signal for {stock.get('symbol', 'unknown')}: {e}")
             return None
+
+    def _calculate_financial_score(self, financial_analysis: Dict) -> float:
+        """Calculate financial score based on financial metrics"""
+        try:
+            metrics = financial_analysis.get('metrics', {})
+            score = 0.0
+            weights = {
+                'eps_growth': 0.2,
+                'revenue_growth': 0.2,
+                'profit_margin': 0.2,
+                'debt_to_equity': 0.15,
+                'current_ratio': 0.15,
+                'roe': 0.1
+            }
+            
+            # EPS Growth
+            if metrics.get('eps_growth') is not None:
+                eps_growth = metrics['eps_growth']
+                if eps_growth > 20:
+                    score += weights['eps_growth']
+                elif eps_growth > 10:
+                    score += weights['eps_growth'] * 0.8
+                elif eps_growth > 0:
+                    score += weights['eps_growth'] * 0.5
+                else:
+                    score += weights['eps_growth'] * 0.2
+            
+            # Revenue Growth
+            if metrics.get('revenue_growth') is not None:
+                revenue_growth = metrics['revenue_growth']
+                if revenue_growth > 15:
+                    score += weights['revenue_growth']
+                elif revenue_growth > 10:
+                    score += weights['revenue_growth'] * 0.8
+                elif revenue_growth > 5:
+                    score += weights['revenue_growth'] * 0.5
+                else:
+                    score += weights['revenue_growth'] * 0.2
+            
+            # Profit Margin
+            if metrics.get('profit_margin') is not None:
+                profit_margin = metrics['profit_margin']
+                if profit_margin > 20:
+                    score += weights['profit_margin']
+                elif profit_margin > 15:
+                    score += weights['profit_margin'] * 0.8
+                elif profit_margin > 10:
+                    score += weights['profit_margin'] * 0.5
+                else:
+                    score += weights['profit_margin'] * 0.2
+            
+            # Debt to Equity
+            if metrics.get('debt_to_equity') is not None:
+                debt_to_equity = metrics['debt_to_equity']
+                if debt_to_equity < 0.5:
+                    score += weights['debt_to_equity']
+                elif debt_to_equity < 1:
+                    score += weights['debt_to_equity'] * 0.8
+                elif debt_to_equity < 1.5:
+                    score += weights['debt_to_equity'] * 0.5
+                else:
+                    score += weights['debt_to_equity'] * 0.2
+            
+            # Current Ratio
+            if metrics.get('current_ratio') is not None:
+                current_ratio = metrics['current_ratio']
+                if current_ratio > 2:
+                    score += weights['current_ratio']
+                elif current_ratio > 1.5:
+                    score += weights['current_ratio'] * 0.8
+                elif current_ratio > 1:
+                    score += weights['current_ratio'] * 0.5
+                else:
+                    score += weights['current_ratio'] * 0.2
+            
+            # ROE
+            if metrics.get('roe') is not None:
+                roe = metrics['roe']
+                if roe > 20:
+                    score += weights['roe']
+                elif roe > 15:
+                    score += weights['roe'] * 0.8
+                elif roe > 10:
+                    score += weights['roe'] * 0.5
+                else:
+                    score += weights['roe'] * 0.2
+            
+            return min(score, 1.0)  # Normalize to 0-1 range
+            
+        except Exception as e:
+            logger.error(f"Error calculating financial score: {e}")
+            return 0.5  # Return neutral score on error
+
+    def _generate_recommendation(self, technical_score: float, financial_score: float) -> str:
+        """Generate trading recommendation based on technical and financial scores"""
+        try:
+            # Calculate weighted average score
+            weighted_score = (technical_score * 0.6) + (financial_score * 0.4)
+            
+            # Generate recommendation based on weighted score
+            if weighted_score >= 0.8:
+                return "STRONG_BUY"
+            elif weighted_score >= 0.6:
+                return "BUY"
+            elif weighted_score >= 0.4:
+                return "HOLD"
+            elif weighted_score >= 0.2:
+                return "SELL"
+            else:
+                return "STRONG_SELL"
+                
+        except Exception as e:
+            logger.error(f"Error generating recommendation: {e}")
+            return "HOLD"  # Return neutral recommendation on error
+
+    def _calculate_confidence(self, technical_analysis: Dict, financial_analysis: Dict) -> float:
+        """Calculate confidence score for the analysis"""
+        try:
+            # Calculate confidence based on data quality and completeness
+            technical_confidence = 0.0
+            financial_confidence = 0.0
+            
+            # Technical confidence
+            if technical_analysis:
+                required_indicators = ['rsi', 'macd', 'sma_20', 'sma_50', 'sma_200']
+                available_indicators = sum(1 for ind in required_indicators if technical_analysis.get(ind) is not None)
+                technical_confidence = available_indicators / len(required_indicators)
+            
+            # Financial confidence
+            if financial_analysis:
+                required_metrics = ['eps_growth', 'revenue_growth', 'profit_margin', 'debt_to_equity', 'current_ratio', 'roe']
+                available_metrics = sum(1 for metric in required_metrics if financial_analysis.get('metrics', {}).get(metric) is not None)
+                financial_confidence = available_metrics / len(required_metrics)
+            
+            # Calculate weighted average confidence
+            confidence = (technical_confidence * 0.6) + (financial_confidence * 0.4)
+            
+            return min(confidence, 1.0)  # Normalize to 0-1 range
+            
+        except Exception as e:
+            logger.error(f"Error calculating confidence: {e}")
+            return 0.5  # Return neutral confidence on error
 
     def _save_signals_to_db(self, signals):
         """Save generated signals to database"""
@@ -2122,12 +2125,12 @@ Format the response in clear sections with specific metrics and recommendations.
             cursor = conn.cursor()
             
             # Get total number of records
-            cursor.execute("SELECT COUNT(*) FROM tradingview_ta")
+            cursor.execute("SELECT COUNT(*) FROM tradingview_signals")
             total_records = cursor.fetchone()[0]
             
             # Get count of records with complete data
             cursor.execute("""
-                SELECT COUNT(*) FROM tradingview_ta 
+                SELECT COUNT(*) FROM tradingview_signals 
                 WHERE rsi IS NOT NULL 
                 AND macd IS NOT NULL 
                 AND sma_20 IS NOT NULL 
@@ -2861,172 +2864,1141 @@ Please ensure all sections are filled with specific data points and metrics wher
             return None
         return self._round_decimal(((current - previous) / previous) * 100)
 
-def main():
-    """Main function to create and initialize the database"""
-    try:
-        # Configure logging with debug level
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('fair_value_calculator.log'),
-                logging.StreamHandler()
-            ]
-        )
-        
-        # Create calculator instance which will initialize the database
-        calculator = FairValueCalculator()
-        print("Database initialized successfully!")
-        
-        # Verify existing data
-        print("\nVerifying existing data...")
-        verification = calculator.verify_database_data()
-        if verification:
-            print(f"\nData Verification Results:")
-            print(f"Total records: {verification['total_records']}")
-            print(f"Complete records: {verification['complete_records']} ({verification['completeness']:.2f}%)")
-            print(f"Latest data date: {verification['latest_date']}")
-            print(f"Unique symbols: {verification['unique_symbols']}")
-            if verification['incomplete_symbols'] > 0:
-                print(f"Warning: Found {verification['incomplete_symbols']} symbols with incomplete data")
-        
-        # Check market status
-        if not calculator.get_market_status():
-            print("\nMarket is currently closed. Using cached data.")
-        
-        # Fetch all PSX symbols
-        symbols = calculator.fetch_psx_symbols()
-        print(f"Found {len(symbols)} PSX symbols")
-        
-        # Track success and failure
-        successful = 0
-        failed = 0
-        skipped = 0
-        
-        # Fetch data for each symbol with rate limiting
-        for i, symbol in enumerate(symbols, 1):
-            print(f"Processing {symbol} ({i}/{len(symbols)})...")
+    def _calculate_fair_value(self, symbol: str) -> Dict:
+        """Calculate fair value using multiple valuation methods with risk adjustment"""
+        try:
+            # Get required data
+            technical_data = self.get_latest_data(symbol)
+            financial_data = self.analyze_financial_data(symbol)
+            dividend_data = self.analyze_dividend_data(symbol)
             
-            # Check if we need to update
-            if not calculator.should_update_data(symbol):
-                print(f"Skipping data update for {symbol} - current data available")
-                skipped += 1
-            else:
-                data = calculator.fetch_tradingview_ta_data(symbol)
-                if data:
-                    print(f"Successfully fetched data for {symbol}")
-                    successful += 1
-                else:
-                    print(f"Failed to fetch data for {symbol}")
-                    failed += 1
+            # Initialize valuation results
+            valuations = {
+                'dcf_value': None,
+                'pe_based': None,
+                'pb_based': None,
+                'dividend_discount': None,
+                'industry_comparison': None,
+                'risk_adjusted': None
+            }
             
-            # Always perform analysis regardless of data update
-            print(f"Performing analysis for {symbol}...")
+            # DCF Valuation
             try:
-                # Get the latest data for analysis
-                latest_data = calculator.get_latest_data(symbol)
-                if latest_data:
-                    # Get financial analysis
-                    financial_analysis = calculator.analyze_financial_data(symbol)
+                growth_rate = financial_data.get('eps_growth', 0) / 100
+                discount_rate = 0.15  # Base discount rate
+                terminal_growth = 0.03  # Terminal growth rate
+                
+                # Calculate DCF value
+                current_eps = financial_data.get('eps', 0)
+                if current_eps > 0:
+                    # Project cash flows
+                    projected_cash_flows = []
+                    for year in range(1, 6):
+                        projected_cash_flows.append(current_eps * (1 + growth_rate) ** year)
                     
-                    # Perform technical analysis
-                    technical_analysis = calculator._perform_technical_analysis(latest_data)
+                    # Calculate terminal value
+                    terminal_value = projected_cash_flows[-1] * (1 + terminal_growth) / (discount_rate - terminal_growth)
                     
-                    # Get AI analysis
-                    ai_analysis = calculator.analyze_with_ai(symbol, technical_analysis, financial_analysis)
+                    # Calculate present value
+                    present_value = sum(cf / (1 + discount_rate) ** year for year, cf in enumerate(projected_cash_flows, 1))
+                    present_value += terminal_value / (1 + discount_rate) ** 5
                     
-                    if ai_analysis:
-                        # Integrate AI analysis
-                        technical_analysis['ai_analysis'] = ai_analysis
-                        
-                        # Adjust signal based on AI insights
-                        final_analysis = calculator.adjust_signal_with_ai(technical_analysis, financial_analysis)
-                        
-                        # Save the analysis
-                        calculator.save_analysis_to_db(symbol, final_analysis)
-                        print(f"Successfully completed analysis for {symbol}")
-                    else:
-                        print(f"Warning: No AI analysis available for {symbol}")
-                else:
-                    print(f"Warning: No data available for analysis of {symbol}")
+                    valuations['dcf_value'] = present_value
             except Exception as e:
-                print(f"Error performing analysis for {symbol}: {e}")
-                logger.error(f"Error performing analysis for {symbol}: {e}")
+                logger.error(f"Error in DCF calculation for {symbol}: {e}")
             
-            # Add delay to avoid rate limiting
-            time.sleep(2)
-        
-        print(f"\nData collection completed:")
-        print(f"Successfully fetched: {successful} symbols")
-        print(f"Failed to fetch: {failed} symbols")
-        print(f"Skipped (current data): {skipped} symbols")
-        
-        # Get symbols with missing data and requery them
-        print("\nChecking for symbols with missing data...")
-        symbols_with_missing_data = calculator.get_symbols_with_missing_data()
-        
-        if symbols_with_missing_data:
-            print(f"\nFound {len(symbols_with_missing_data)} symbols with missing data. Attempting to requery...")
-            requery_results = calculator.requery_missing_data(symbols_with_missing_data)
+            # PE-based Valuation
+            try:
+                industry_pe = self._get_industry_pe_ratio(symbol)
+                if industry_pe and financial_data.get('eps'):
+                    valuations['pe_based'] = industry_pe * financial_data['eps']
+            except Exception as e:
+                logger.error(f"Error in PE-based valuation for {symbol}: {e}")
             
-            # Print requery results
-            successful_requeries = sum(1 for success in requery_results.values() if success)
-            print(f"\nRequery Results:")
-            print(f"Successfully requeried: {successful_requeries} symbols")
-            print(f"Failed to requery: {len(requery_results) - successful_requeries} symbols")
+            # PB-based Valuation
+            try:
+                industry_pb = self._get_industry_pb_ratio(symbol)
+                if industry_pb and financial_data.get('book_value'):
+                    valuations['pb_based'] = industry_pb * financial_data['book_value']
+            except Exception as e:
+                logger.error(f"Error in PB-based valuation for {symbol}: {e}")
             
-            # Print details for failed requeries
-            failed_symbols = [symbol for symbol, success in requery_results.items() if not success]
-            if failed_symbols:
-                print("\nFailed to requery data for the following symbols:")
-                for symbol in failed_symbols:
-                    print(f"- {symbol}")
-        
-        # Verify data after fetching and requerying
-        print("\nVerifying updated data...")
-        verification = calculator.verify_database_data()
-        if verification:
-            print(f"\nUpdated Data Verification Results:")
-            print(f"Total records: {verification['total_records']}")
-            print(f"Complete records: {verification['complete_records']} ({verification['completeness']:.2f}%)")
-            print(f"Latest data date: {verification['latest_date']}")
-            print(f"Unique symbols: {verification['unique_symbols']}")
-            if verification['incomplete_symbols'] > 0:
-                print(f"Warning: Found {verification['incomplete_symbols']} symbols with incomplete data")
-        
-        # Check for signal transitions
-        print("\nChecking for signal transitions...")
-        conn = sqlite3.connect(calculator.db_path)
-        cursor = conn.cursor()
-        
-        # Get all symbols
-        cursor.execute("SELECT DISTINCT symbol FROM tradingview_signals")
-        symbols = [row[0] for row in cursor.fetchall()]
-        
-        for symbol in symbols:
-            # Get current and previous signals
+            # Dividend Discount Model
+            try:
+                if dividend_data.get('dividend_yield') and dividend_data.get('dividend_growth_rate'):
+                    required_return = 0.12  # Required rate of return
+                    current_price = technical_data.get('close', 0)
+                    current_dividend = current_price * dividend_data['dividend_yield'] / 100
+                    growth_rate = dividend_data['dividend_growth_rate'] / 100
+                    
+                    if required_return > growth_rate:
+                        valuations['dividend_discount'] = current_dividend * (1 + growth_rate) / (required_return - growth_rate)
+            except Exception as e:
+                logger.error(f"Error in dividend discount model for {symbol}: {e}")
+            
+            # Industry Comparison
+            try:
+                peer_valuations = self._get_peer_valuations(symbol)
+                if peer_valuations:
+                    valuations['industry_comparison'] = sum(peer_valuations) / len(peer_valuations)
+            except Exception as e:
+                logger.error(f"Error in industry comparison for {symbol}: {e}")
+            
+            # Risk Adjustment
+            try:
+                # Calculate risk factors
+                market_risk = self._calculate_market_risk(symbol)
+                financial_risk = self._calculate_financial_risk(financial_data)
+                liquidity_risk = self._calculate_liquidity_risk(technical_data)
+                
+                # Calculate weighted risk score
+                risk_score = (
+                    market_risk * 0.4 +
+                    financial_risk * 0.4 +
+                    liquidity_risk * 0.2
+                )
+                
+                # Adjust valuations based on risk
+                risk_adjusted_valuations = {}
+                for method, value in valuations.items():
+                    if value is not None:
+                        # Higher risk score leads to lower valuation
+                        risk_adjusted_valuations[method] = value * (1 - risk_score)
+                
+                valuations['risk_adjusted'] = risk_adjusted_valuations
+            except Exception as e:
+                logger.error(f"Error in risk adjustment for {symbol}: {e}")
+            
+            # Calculate final fair value
+            valid_valuations = [v for v in valuations.values() if v is not None]
+            if valid_valuations:
+                if isinstance(valid_valuations[0], dict):  # Risk-adjusted valuations
+                    final_fair_value = sum(valid_valuations[0].values()) / len(valid_valuations[0]) if valid_valuations else None
+                else:
+                    final_fair_value = sum(valid_valuations) / len(valid_valuations)
+            else:
+                final_fair_value = None
+            
+            return {
+                'symbol': symbol,
+                'valuations': valuations,
+                'fair_value': final_fair_value,
+                'risk_score': risk_score if 'risk_score' in locals() else None,
+                'calculation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating fair value for {symbol}: {e}")
+            return None
+
+    def _calculate_market_risk(self, symbol: str) -> float:
+        """Calculate market risk based on beta and market volatility"""
+        try:
+            # Get historical data
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Calculate beta
             cursor.execute("""
-                SELECT * FROM tradingview_signals 
+                SELECT close, date 
+                FROM tradingview_ta 
                 WHERE symbol = ? 
                 ORDER BY date DESC 
-                LIMIT 2
+                LIMIT 252
             """, (symbol,))
             
-            results = cursor.fetchall()
-            if len(results) >= 2:
-                columns = [description[0] for description in cursor.description]
-                current_analysis = dict(zip(columns, results[0]))
-                previous_analysis = dict(zip(columns, results[1]))
+            stock_returns = []
+            market_returns = []
+            
+            for row in cursor.fetchall():
+                stock_returns.append(row[0])
+            
+            # Calculate volatility
+            if len(stock_returns) > 1:
+                returns = pd.Series(stock_returns).pct_change().dropna()
+                volatility = returns.std()
                 
-                # Check for transitions
-                calculator.check_signal_transitions(symbol, current_analysis, previous_analysis)
+                # Normalize risk score between 0 and 1
+                risk_score = min(volatility * 2, 1)  # Assuming 50% volatility is maximum risk
+                return risk_score
+            
+            return 0.5  # Default risk score if not enough data
+            
+        except Exception as e:
+            logger.error(f"Error calculating market risk for {symbol}: {e}")
+            return 0.5
+
+    def _calculate_financial_risk(self, financial_data: Dict) -> float:
+        """Calculate financial risk based on financial metrics"""
+        try:
+            risk_factors = []
+            
+            # Debt to Equity
+            if financial_data.get('debt_to_equity'):
+                de_ratio = financial_data['debt_to_equity']
+                if de_ratio > 2:
+                    risk_factors.append(1.0)
+                elif de_ratio > 1:
+                    risk_factors.append(0.7)
+                else:
+                    risk_factors.append(0.3)
+            
+            # Current Ratio
+            if financial_data.get('current_ratio'):
+                cr = financial_data['current_ratio']
+                if cr < 1:
+                    risk_factors.append(1.0)
+                elif cr < 1.5:
+                    risk_factors.append(0.7)
+                else:
+                    risk_factors.append(0.3)
+            
+            # Profit Margin
+            if financial_data.get('profit_margin'):
+                pm = financial_data['profit_margin']
+                if pm < 0:
+                    risk_factors.append(1.0)
+                elif pm < 5:
+                    risk_factors.append(0.7)
+                else:
+                    risk_factors.append(0.3)
+            
+            return sum(risk_factors) / len(risk_factors) if risk_factors else 0.5
+            
+        except Exception as e:
+            logger.error(f"Error calculating financial risk: {e}")
+            return 0.5
+
+    def _calculate_liquidity_risk(self, technical_data: Dict) -> float:
+        """Calculate liquidity risk based on trading volume and bid-ask spread"""
+        try:
+            risk_factors = []
+            
+            # Volume Analysis
+            if technical_data.get('volume'):
+                avg_volume = technical_data['volume']
+                if avg_volume < 10000:
+                    risk_factors.append(1.0)
+                elif avg_volume < 50000:
+                    risk_factors.append(0.7)
+                else:
+                    risk_factors.append(0.3)
+            
+            # Price Volatility
+            if technical_data.get('volatility_score'):
+                vol_score = technical_data['volatility_score']
+                risk_factors.append(vol_score)
+            
+            return sum(risk_factors) / len(risk_factors) if risk_factors else 0.5
+            
+        except Exception as e:
+            logger.error(f"Error calculating liquidity risk: {e}")
+            return 0.5
+
+    def _get_industry_pe_ratio(self, symbol: str) -> float:
+        """Get industry average PE ratio"""
+        try:
+            # This would typically come from a market data provider
+            # For now, return a default value
+            return 15.0
+        except Exception as e:
+            logger.error(f"Error getting industry PE ratio for {symbol}: {e}")
+            return None
+
+    def _get_industry_pb_ratio(self, symbol: str) -> float:
+        """Get industry average PB ratio"""
+        try:
+            # This would typically come from a market data provider
+            # For now, return a default value
+            return 2.0
+        except Exception as e:
+            logger.error(f"Error getting industry PB ratio for {symbol}: {e}")
+            return None
+
+    def _get_peer_valuations(self, symbol: str) -> List[float]:
+        """Get valuations of peer companies"""
+        try:
+            # This would typically come from a market data provider
+            # For now, return empty list
+            return []
+        except Exception as e:
+            logger.error(f"Error getting peer valuations for {symbol}: {e}")
+            return []
+
+    def _calculate_position_size(self, stock_data: Dict, portfolio_value: float, risk_per_trade: float = 0.02) -> Dict:
+        """Calculate optimal position size based on risk management"""
+        try:
+            position = {
+                'symbol': stock_data['symbol'],
+                'current_price': stock_data['close'][-1],
+                'position_size': 0,
+                'shares': 0,
+                'risk_amount': 0,
+                'stop_loss': None,
+                'take_profit': None,
+                'risk_reward_ratio': None
+            }
+            
+            # Calculate volatility-based stop loss
+            volatility = self._calculate_volatility(stock_data)
+            atr = self._calculate_atr(stock_data)
+            
+            # Set stop loss at 2 ATR below current price
+            stop_loss = position['current_price'] - (2 * atr)
+            position['stop_loss'] = stop_loss
+            
+            # Calculate risk per share
+            risk_per_share = position['current_price'] - stop_loss
+            
+            # Calculate maximum position size based on risk
+            max_risk_amount = portfolio_value * risk_per_trade
+            max_shares = int(max_risk_amount / risk_per_share)
+            
+            # Calculate position size
+            position['shares'] = max_shares
+            position['position_size'] = max_shares * position['current_price']
+            position['risk_amount'] = max_shares * risk_per_share
+            
+            # Set take profit at 2x risk (1:2 risk-reward ratio)
+            position['take_profit'] = position['current_price'] + (2 * (position['current_price'] - stop_loss))
+            position['risk_reward_ratio'] = 2.0
+            
+            return position
+            
+        except Exception as e:
+            logger.error(f"Error calculating position size: {e}")
+            return None
+    
+    def _calculate_portfolio_risk(self, positions: List[Dict], portfolio_value: float) -> Dict:
+        """Calculate portfolio-level risk metrics"""
+        try:
+            risk_metrics = {
+                'total_risk': 0.0,
+                'diversification_score': 0.0,
+                'correlation_matrix': {},
+                'var_95': 0.0,
+                'max_drawdown': 0.0,
+                'sharpe_ratio': 0.0,
+                'beta': 0.0,
+                'sector_exposure': {},
+                'risk_decomposition': {}
+            }
+            
+            # Calculate portfolio weights
+            weights = [pos['position_size'] / portfolio_value for pos in positions]
+            
+            # Calculate returns for each position
+            returns = []
+            for pos in positions:
+                if 'returns' in pos:
+                    returns.append(pos['returns'])
+            
+            if returns:
+                returns_df = pd.DataFrame(returns)
+                
+                # Calculate Value at Risk (VaR)
+                portfolio_returns = returns_df.dot(weights)
+                risk_metrics['var_95'] = np.percentile(portfolio_returns, 5)
+                
+                # Calculate Maximum Drawdown
+                cumulative_returns = (1 + portfolio_returns).cumprod()
+                rolling_max = cumulative_returns.expanding().max()
+                drawdowns = cumulative_returns / rolling_max - 1
+                risk_metrics['max_drawdown'] = drawdowns.min()
+                
+                # Calculate Sharpe Ratio
+                risk_free_rate = 0.02  # Assuming 2% risk-free rate
+                excess_returns = portfolio_returns - risk_free_rate/252
+                risk_metrics['sharpe_ratio'] = np.sqrt(252) * excess_returns.mean() / excess_returns.std()
+                
+                # Calculate Beta
+                market_returns = self._get_market_returns()  # Implement this method
+                if market_returns is not None:
+                    covariance = np.cov(portfolio_returns, market_returns)[0,1]
+                    market_variance = np.var(market_returns)
+                    risk_metrics['beta'] = covariance / market_variance
+                
+                # Calculate correlation matrix
+                risk_metrics['correlation_matrix'] = returns_df.corr().to_dict()
+                
+                # Calculate diversification score
+                avg_correlation = np.mean(np.abs(returns_df.corr().values - np.eye(len(returns_df))))
+                risk_metrics['diversification_score'] = 1 - avg_correlation
+            
+            # Calculate sector exposure
+            sector_exposure = {}
+            for pos in positions:
+                if 'sector' in pos:
+                    sector = pos['sector']
+                    if sector not in sector_exposure:
+                        sector_exposure[sector] = 0
+                    sector_exposure[sector] += pos['position_size'] / portfolio_value
+            risk_metrics['sector_exposure'] = sector_exposure
+            
+            # Calculate risk decomposition
+            for pos in positions:
+                if 'volatility' in pos:
+                    risk_metrics['risk_decomposition'][pos['symbol']] = {
+                        'volatility': pos['volatility'],
+                        'weight': pos['position_size'] / portfolio_value,
+                        'marginal_risk': pos['volatility'] * (pos['position_size'] / portfolio_value)
+                    }
+            
+            return risk_metrics
+            
+        except Exception as e:
+            logger.error(f"Error calculating portfolio risk: {e}")
+            return None
+    
+    def _calculate_volatility(self, stock_data: Dict) -> float:
+        """Calculate historical volatility"""
+        try:
+            if 'close' in stock_data and len(stock_data['close']) > 0:
+                returns = pd.Series(stock_data['close']).pct_change().dropna()
+                return returns.std() * np.sqrt(252)  # Annualized volatility
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error calculating volatility: {e}")
+            return 0.0
+    
+    def _calculate_atr(self, stock_data: Dict, period: int = 14) -> float:
+        """Calculate Average True Range"""
+        try:
+            if all(field in stock_data for field in ['high', 'low', 'close']):
+                high = pd.Series(stock_data['high'])
+                low = pd.Series(stock_data['low'])
+                close = pd.Series(stock_data['close'])
+                
+                tr1 = high - low
+                tr2 = abs(high - close.shift())
+                tr3 = abs(low - close.shift())
+                
+                tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                atr = tr.rolling(window=period).mean().iloc[-1]
+                
+                return atr
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error calculating ATR: {e}")
+            return 0.0
+    
+    def _get_market_returns(self) -> Optional[pd.Series]:
+        """Get market returns for beta calculation"""
+        try:
+            # Implement market returns calculation
+            # This could be from an index like KSE-100
+            return None
+        except Exception as e:
+            logger.error(f"Error getting market returns: {e}")
+            return None
+    
+    def _calculate_risk_adjusted_return(self, stock_data: Dict) -> Dict:
+        """Calculate risk-adjusted return metrics"""
+        try:
+            metrics = {
+                'sharpe_ratio': 0.0,
+                'sortino_ratio': 0.0,
+                'calmar_ratio': 0.0,
+                'information_ratio': 0.0,
+                'treynor_ratio': 0.0
+            }
+            
+            if 'close' in stock_data and len(stock_data['close']) > 0:
+                returns = pd.Series(stock_data['close']).pct_change().dropna()
+                
+                # Calculate Sharpe Ratio
+                risk_free_rate = 0.02  # Assuming 2% risk-free rate
+                excess_returns = returns - risk_free_rate/252
+                metrics['sharpe_ratio'] = np.sqrt(252) * excess_returns.mean() / excess_returns.std()
+                
+                # Calculate Sortino Ratio
+                downside_returns = returns[returns < 0]
+                if len(downside_returns) > 0:
+                    downside_std = downside_returns.std()
+                    metrics['sortino_ratio'] = np.sqrt(252) * excess_returns.mean() / downside_std
+                
+                # Calculate Calmar Ratio
+                cumulative_returns = (1 + returns).cumprod()
+                max_drawdown = (cumulative_returns / cumulative_returns.expanding().max() - 1).min()
+                if max_drawdown != 0:
+                    metrics['calmar_ratio'] = returns.mean() * 252 / abs(max_drawdown)
+                
+                # Calculate Information Ratio
+                market_returns = self._get_market_returns()
+                if market_returns is not None:
+                    tracking_error = (returns - market_returns).std()
+                    if tracking_error != 0:
+                        metrics['information_ratio'] = (returns.mean() - market_returns.mean()) / tracking_error
+                
+                # Calculate Treynor Ratio
+                beta = self._calculate_beta(returns, market_returns)
+                if beta != 0:
+                    metrics['treynor_ratio'] = excess_returns.mean() / beta
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Error calculating risk-adjusted returns: {e}")
+            return {}
+    
+    def _calculate_beta(self, returns: pd.Series, market_returns: pd.Series) -> float:
+        """Calculate beta coefficient"""
+        try:
+            if market_returns is not None and len(returns) == len(market_returns):
+                covariance = np.cov(returns, market_returns)[0,1]
+                market_variance = np.var(market_returns)
+                return covariance / market_variance
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error calculating beta: {e}")
+            return 0.0
+
+    def _analyze_market_conditions(self, stock_data: Dict) -> Dict:
+        """Analyze overall market conditions and sector rotation"""
+        try:
+            market_analysis = {
+                'market_trend': None,
+                'sector_rotation': {},
+                'market_breadth': {},
+                'correlation_analysis': {},
+                'macro_impact': {},
+                'sentiment_analysis': {}
+            }
+            
+            # Analyze market trend
+            if 'close' in stock_data and len(stock_data['close']) > 0:
+                prices = pd.Series(stock_data['close'])
+                sma_20 = prices.rolling(window=20).mean()
+                sma_50 = prices.rolling(window=50).mean()
+                sma_200 = prices.rolling(window=200).mean()
+                
+                current_price = prices.iloc[-1]
+                market_analysis['market_trend'] = {
+                    'trend': 'bullish' if current_price > sma_20.iloc[-1] > sma_50.iloc[-1] > sma_200.iloc[-1] else
+                            'bearish' if current_price < sma_20.iloc[-1] < sma_50.iloc[-1] < sma_200.iloc[-1] else
+                            'neutral',
+                    'strength': abs((current_price - sma_200.iloc[-1]) / sma_200.iloc[-1]) * 100
+                }
+            
+            # Analyze sector rotation
+            sectors = self._get_sector_data()  # Implement this method
+            if sectors:
+                for sector, data in sectors.items():
+                    returns = pd.Series(data['close']).pct_change()
+                    momentum = returns.rolling(window=20).mean().iloc[-1]
+                    volatility = returns.std() * np.sqrt(252)
+                    market_analysis['sector_rotation'][sector] = {
+                        'momentum': momentum,
+                        'volatility': volatility,
+                        'relative_strength': momentum / volatility if volatility != 0 else 0
+                    }
+            
+            # Calculate market breadth
+            if 'advances' in stock_data and 'declines' in stock_data:
+                advances = stock_data['advances']
+                declines = stock_data['declines']
+                market_analysis['market_breadth'] = {
+                    'adv_dec_ratio': advances / declines if declines != 0 else float('inf'),
+                    'new_highs_lows_ratio': stock_data.get('new_highs', 0) / stock_data.get('new_lows', 1),
+                    'put_call_ratio': stock_data.get('put_volume', 0) / stock_data.get('call_volume', 1)
+                }
+            
+            # Analyze correlations
+            market_analysis['correlation_analysis'] = self._analyze_correlations(stock_data)
+            
+            # Analyze macroeconomic impact
+            market_analysis['macro_impact'] = self._analyze_macro_impact(stock_data)
+            
+            # Analyze market sentiment
+            market_analysis['sentiment_analysis'] = self._analyze_market_sentiment(stock_data)
+            
+            return market_analysis
+            
+        except Exception as e:
+            logger.error(f"Error analyzing market conditions: {e}")
+            return {}
+    
+    def _analyze_correlations(self, stock_data: Dict) -> Dict:
+        """Analyze correlations with market indices and sectors"""
+        try:
+            correlations = {
+                'market_correlation': 0.0,
+                'sector_correlations': {},
+                'peer_correlations': {},
+                'factor_correlations': {}
+            }
+            
+            # Calculate market correlation
+            market_returns = self._get_market_returns()
+            if market_returns is not None and 'close' in stock_data:
+                stock_returns = pd.Series(stock_data['close']).pct_change()
+                correlations['market_correlation'] = stock_returns.corr(market_returns)
+            
+            # Calculate sector correlations
+            sectors = self._get_sector_data()
+            if sectors:
+                for sector, data in sectors.items():
+                    sector_returns = pd.Series(data['close']).pct_change()
+                    if 'close' in stock_data:
+                        stock_returns = pd.Series(stock_data['close']).pct_change()
+                        correlations['sector_correlations'][sector] = stock_returns.corr(sector_returns)
+            
+            # Calculate peer correlations
+            peers = self._get_peer_data()  # Implement this method
+            if peers:
+                for peer, data in peers.items():
+                    peer_returns = pd.Series(data['close']).pct_change()
+                    if 'close' in stock_data:
+                        stock_returns = pd.Series(stock_data['close']).pct_change()
+                        correlations['peer_correlations'][peer] = stock_returns.corr(peer_returns)
+            
+            # Calculate factor correlations
+            factors = self._get_factor_data()  # Implement this method
+            if factors:
+                for factor, data in factors.items():
+                    factor_returns = pd.Series(data['returns'])
+                    if 'close' in stock_data:
+                        stock_returns = pd.Series(stock_data['close']).pct_change()
+                        correlations['factor_correlations'][factor] = stock_returns.corr(factor_returns)
+            
+            return correlations
+            
+        except Exception as e:
+            logger.error(f"Error analyzing correlations: {e}")
+            return {}
+    
+    def _analyze_macro_impact(self, stock_data: Dict) -> Dict:
+        """Analyze impact of macroeconomic factors"""
+        try:
+            macro_impact = {
+                'interest_rate_impact': 0.0,
+                'inflation_impact': 0.0,
+                'gdp_impact': 0.0,
+                'currency_impact': 0.0,
+                'commodity_impact': 0.0
+            }
+            
+            # Get macroeconomic data
+            macro_data = self._get_macro_data()  # Implement this method
+            if macro_data:
+                # Calculate interest rate impact
+                if 'interest_rates' in macro_data and 'close' in stock_data:
+                    rate_changes = pd.Series(macro_data['interest_rates']).pct_change()
+                    stock_returns = pd.Series(stock_data['close']).pct_change()
+                    macro_impact['interest_rate_impact'] = stock_returns.corr(rate_changes)
+                
+                # Calculate inflation impact
+                if 'inflation' in macro_data and 'close' in stock_data:
+                    inflation_changes = pd.Series(macro_data['inflation']).pct_change()
+                    stock_returns = pd.Series(stock_data['close']).pct_change()
+                    macro_impact['inflation_impact'] = stock_returns.corr(inflation_changes)
+                
+                # Calculate GDP impact
+                if 'gdp' in macro_data and 'close' in stock_data:
+                    gdp_changes = pd.Series(macro_data['gdp']).pct_change()
+                    stock_returns = pd.Series(stock_data['close']).pct_change()
+                    macro_impact['gdp_impact'] = stock_returns.corr(gdp_changes)
+                
+                # Calculate currency impact
+                if 'exchange_rates' in macro_data and 'close' in stock_data:
+                    currency_changes = pd.Series(macro_data['exchange_rates']).pct_change()
+                    stock_returns = pd.Series(stock_data['close']).pct_change()
+                    macro_impact['currency_impact'] = stock_returns.corr(currency_changes)
+                
+                # Calculate commodity impact
+                if 'commodity_prices' in macro_data and 'close' in stock_data:
+                    commodity_changes = pd.Series(macro_data['commodity_prices']).pct_change()
+                    stock_returns = pd.Series(stock_data['close']).pct_change()
+                    macro_impact['commodity_impact'] = stock_returns.corr(commodity_changes)
+            
+            return macro_impact
+            
+        except Exception as e:
+            logger.error(f"Error analyzing macro impact: {e}")
+            return {}
+    
+    def _analyze_market_sentiment(self, stock_data: Dict) -> Dict:
+        """Analyze market sentiment indicators"""
+        try:
+            sentiment = {
+                'technical_sentiment': 0.0,
+                'fundamental_sentiment': 0.0,
+                'news_sentiment': 0.0,
+                'social_sentiment': 0.0,
+                'overall_sentiment': 0.0
+            }
+            
+            # Calculate technical sentiment
+            if 'close' in stock_data and len(stock_data['close']) > 0:
+                prices = pd.Series(stock_data['close'])
+                rsi = self._calculate_rsi(prices)
+                macd = self._calculate_macd(prices)
+                sentiment['technical_sentiment'] = (
+                    (rsi - 50) / 50 +  # RSI contribution
+                    (macd['histogram'] / prices.iloc[-1])  # MACD contribution
+                ) / 2
+            
+            # Calculate fundamental sentiment
+            if 'pe_ratio' in stock_data and 'pb_ratio' in stock_data:
+                pe_sentiment = (stock_data['pe_ratio'] - 15) / 15  # Assuming 15 as neutral PE
+                pb_sentiment = (stock_data['pb_ratio'] - 1.5) / 1.5  # Assuming 1.5 as neutral PB
+                sentiment['fundamental_sentiment'] = (pe_sentiment + pb_sentiment) / 2
+            
+            # Calculate news sentiment
+            news_data = self._get_news_data()  # Implement this method
+            if news_data:
+                sentiment['news_sentiment'] = np.mean([article['sentiment'] for article in news_data])
+            
+            # Calculate social sentiment
+            social_data = self._get_social_data()  # Implement this method
+            if social_data:
+                sentiment['social_sentiment'] = np.mean([post['sentiment'] for post in social_data])
+            
+            # Calculate overall sentiment
+            sentiment['overall_sentiment'] = np.mean([
+                sentiment['technical_sentiment'],
+                sentiment['fundamental_sentiment'],
+                sentiment['news_sentiment'],
+                sentiment['social_sentiment']
+            ])
+            
+            return sentiment
+            
+        except Exception as e:
+            logger.error(f"Error analyzing market sentiment: {e}")
+            return {}
+    
+    def _generate_analysis_report(self, stock_data: Dict, analysis_results: Dict) -> str:
+        """Generate a comprehensive analysis report"""
+        try:
+            report = []
+            
+            # Add header
+            report.append(f"Analysis Report for {stock_data['symbol']}")
+            report.append("=" * 50)
+            
+            # Add technical analysis
+            report.append("\nTechnical Analysis:")
+            report.append("-" * 20)
+            if 'technical_analysis' in analysis_results:
+                tech = analysis_results['technical_analysis']
+                report.append(f"Trend: {tech.get('trend', 'N/A')}")
+                report.append(f"Support Level: {tech.get('support_level', 'N/A')}")
+                report.append(f"Resistance Level: {tech.get('resistance_level', 'N/A')}")
+                report.append(f"RSI: {tech.get('rsi', 'N/A')}")
+                report.append(f"MACD: {tech.get('macd', 'N/A')}")
+            
+            # Add fundamental analysis
+            report.append("\nFundamental Analysis:")
+            report.append("-" * 20)
+            if 'fundamental_analysis' in analysis_results:
+                fund = analysis_results['fundamental_analysis']
+                report.append(f"PE Ratio: {fund.get('pe_ratio', 'N/A')}")
+                report.append(f"PB Ratio: {fund.get('pb_ratio', 'N/A')}")
+                report.append(f"Dividend Yield: {fund.get('dividend_yield', 'N/A')}")
+                report.append(f"ROE: {fund.get('roe', 'N/A')}")
+            
+            # Add risk analysis
+            report.append("\nRisk Analysis:")
+            report.append("-" * 20)
+            if 'risk_analysis' in analysis_results:
+                risk = analysis_results['risk_analysis']
+                report.append(f"Volatility: {risk.get('volatility', 'N/A')}")
+                report.append(f"Beta: {risk.get('beta', 'N/A')}")
+                report.append(f"Value at Risk (95%): {risk.get('var_95', 'N/A')}")
+                report.append(f"Maximum Drawdown: {risk.get('max_drawdown', 'N/A')}")
+            
+            # Add market analysis
+            report.append("\nMarket Analysis:")
+            report.append("-" * 20)
+            if 'market_analysis' in analysis_results:
+                market = analysis_results['market_analysis']
+                report.append(f"Market Trend: {market.get('market_trend', 'N/A')}")
+                report.append(f"Market Breadth: {market.get('market_breadth', 'N/A')}")
+                report.append(f"Sector Rotation: {market.get('sector_rotation', 'N/A')}")
+            
+            # Add recommendations
+            report.append("\nRecommendations:")
+            report.append("-" * 20)
+            if 'recommendations' in analysis_results:
+                recs = analysis_results['recommendations']
+                report.append(f"Signal: {recs.get('signal', 'N/A')}")
+                report.append(f"Target Price: {recs.get('target_price', 'N/A')}")
+                report.append(f"Stop Loss: {recs.get('stop_loss', 'N/A')}")
+                report.append(f"Position Size: {recs.get('position_size', 'N/A')}")
+            
+            return "\n".join(report)
+            
+        except Exception as e:
+            logger.error(f"Error generating analysis report: {e}")
+            return "Error generating report"
+
+    def _create_tables(self):
+        """Create necessary database tables if they don't exist"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Create tradingview_signals table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tradingview_signals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    open REAL,
+                    high REAL,
+                    low REAL,
+                    close REAL,
+                    volume INTEGER,
+                    rsi REAL,
+                    macd REAL,
+                    macd_signal REAL,
+                    macd_hist REAL,
+                    sma_20 REAL,
+                    sma_50 REAL,
+                    sma_200 REAL,
+                    ema_20 REAL,
+                    ema_50 REAL,
+                    ema_200 REAL,
+                    bollinger_upper REAL,
+                    bollinger_middle REAL,
+                    bollinger_lower REAL,
+                    stoch_k REAL,
+                    stoch_d REAL,
+                    ichimoku_tenkan REAL,
+                    ichimoku_kijun REAL,
+                    ichimoku_senkou_span_a REAL,
+                    ichimoku_senkou_span_b REAL,
+                    ichimoku_cloud_green INTEGER,
+                    ichimoku_cloud_red INTEGER,
+                    support_level REAL,
+                    resistance_level REAL,
+                    trend TEXT,
+                    momentum TEXT,
+                    volume_profile TEXT,
+                    pattern TEXT,
+                    signal TEXT,
+                    target_price REAL,
+                    stop_loss REAL,
+                    position_size INTEGER,
+                    risk_score REAL,
+                    confidence_score REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(symbol, date)
+                )
+            """)
+            
+            # Create indexes for better query performance
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tradingview_signals_symbol ON tradingview_signals(symbol)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tradingview_signals_date ON tradingview_signals(date)')
+            
+            # Create dividend_data table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS dividend_data (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    announcement_date TEXT NOT NULL,
+                    ex_date TEXT NOT NULL,
+                    payment_date TEXT NOT NULL,
+                    dividend_amount REAL NOT NULL,
+                    dividend_type TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(symbol, ex_date)
+                )
+            """)
+            
+            # Create market_analysis table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS market_analysis (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    market_trend TEXT,
+                    market_breadth TEXT,
+                    sector_rotation TEXT,
+                    correlation_matrix TEXT,
+                    macro_impact TEXT,
+                    market_sentiment TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(date)
+                )
+            """)
+            
+            # Create signal_transitions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS signal_transitions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    previous_signal TEXT,
+                    current_signal TEXT,
+                    transition_type TEXT,
+                    confidence_score REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(symbol, date)
+                )
+            """)
+            
+            # Create indexes for better query performance
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_dividend_data_symbol_ex_date ON dividend_data(symbol, ex_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_market_analysis_date ON market_analysis(date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_signal_transitions_symbol_date ON signal_transitions(symbol, date)")
+            
+            conn.commit()
+            conn.close()
+            logger.info("Database tables created successfully")
+            
+        except Exception as e:
+            logger.error(f"Error creating database tables: {e}")
+            raise
+
+    def get_latest_data(self, symbol: str) -> Dict:
+        """Get the latest data for a symbol from the database"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT * FROM tradingview_signals
+                WHERE symbol = ?
+                ORDER BY date DESC
+                LIMIT 1
+            """, (symbol,))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                columns = [description[0] for description in cursor.description]
+                return dict(zip(columns, row))
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting latest data for {symbol}: {e}")
+            return None
+
+    def get_data_for_date_range(self, symbol: str, start_date: str, end_date: str) -> List[Dict]:
+        """Get data for a symbol within a date range"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT * FROM tradingview_signals
+                WHERE symbol = ? AND date BETWEEN ? AND ?
+                ORDER BY date ASC
+            """, (symbol, start_date, end_date))
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            if rows:
+                columns = [description[0] for description in cursor.description]
+                return [dict(zip(columns, row)) for row in rows]
+            return []
+            
+        except Exception as e:
+            logger.error(f"Error getting data for {symbol} between {start_date} and {end_date}: {e}")
+            return []
+
+    def get_all_symbols(self) -> List[str]:
+        """Get list of all symbols in the database"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT DISTINCT symbol FROM tradingview_signals
+                ORDER BY symbol
+            """)
+            
+            symbols = [row[0] for row in cursor.fetchall()]
+            conn.close()
+            
+            return symbols
+            
+        except Exception as e:
+            logger.error(f"Error getting all symbols: {e}")
+            return []
+
+    def get_latest_date(self) -> str:
+        """Get the latest date in the database"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT MAX(date) FROM tradingview_signals")
+            latest_date = cursor.fetchone()[0]
+            conn.close()
+            
+            return latest_date
+            
+        except Exception as e:
+            logger.error(f"Error getting latest date: {e}")
+            return None
+
+    def get_symbol_count(self) -> int:
+        """Get the number of unique symbols in the database"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT COUNT(DISTINCT symbol) FROM tradingview_signals")
+            count = cursor.fetchone()[0]
+            conn.close()
+            
+            return count
+            
+        except Exception as e:
+            logger.error(f"Error getting symbol count: {e}")
+            return 0
+
+    def _fetch_data_from_tradingview(self, symbol: str) -> Dict:
+        """Fetch technical analysis data from TradingView"""
+        try:
+            from tradingview_ta import TA_Handler, Interval
+            
+            # Initialize TA Handler for PSX symbol
+            handler = TA_Handler(
+                symbol=symbol,
+                exchange="PSX",
+                screener="pakistan",
+                interval=Interval.INTERVAL_1_DAY
+            )
+            
+            # Get analysis
+            analysis = handler.get_analysis()
+            
+            # Helper function to safely get indicator value
+            def get_indicator(key, default=None):
+                try:
+                    return analysis.indicators.get(key, default)
+                except (KeyError, AttributeError):
+                    return default
+            
+            # Extract required data with safe fallbacks
+            data = {
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                'open': get_indicator('open'),
+                'high': get_indicator('high'),
+                'low': get_indicator('low'),
+                'close': get_indicator('close'),
+                'volume': get_indicator('volume'),
+                'rsi': get_indicator('RSI'),
+                'macd': get_indicator('MACD.macd'),
+                'macd_signal': get_indicator('MACD.signal'),
+                'macd_hist': get_indicator('MACD.hist'),
+                'sma_20': get_indicator('SMA20'),
+                'sma_50': get_indicator('SMA50'),
+                'sma_200': get_indicator('SMA200'),
+                'ema_20': get_indicator('EMA20'),
+                'ema_50': get_indicator('EMA50'),
+                'ema_200': get_indicator('EMA200'),
+                'bollinger_upper': get_indicator('BB.upperband'),
+                'bollinger_middle': get_indicator('BB.middleband'),
+                'bollinger_lower': get_indicator('BB.lowerband'),
+                'stoch_k': get_indicator('Stoch.K'),
+                'stoch_d': get_indicator('Stoch.D'),
+                'ichimoku_tenkan': get_indicator('Ichimoku.Tenkan-sen'),
+                'ichimoku_kijun': get_indicator('Ichimoku.Kijun-sen'),
+                'ichimoku_senkou_span_a': get_indicator('Ichimoku.Senkou Span A'),
+                'ichimoku_senkou_span_b': get_indicator('Ichimoku.Senkou Span B'),
+                'ichimoku_cloud_green': 1 if get_indicator('Ichimoku.Senkou Span A', 0) > get_indicator('Ichimoku.Senkou Span B', 0) else 0,
+                'ichimoku_cloud_red': 1 if get_indicator('Ichimoku.Senkou Span A', 0) < get_indicator('Ichimoku.Senkou Span B', 0) else 0,
+                'support_level': get_indicator('Pivot.M.Classic.S3'),
+                'resistance_level': get_indicator('Pivot.M.Classic.R3'),
+                'trend': analysis.summary.get('RECOMMENDATION', 'NEUTRAL'),
+                'momentum': analysis.summary.get('RECOMMENDATION', 'NEUTRAL'),
+                'volume_profile': 'HIGH' if get_indicator('volume', 0) > get_indicator('SMA20', 0) else 'LOW',
+                'pattern': None,  # Will be calculated separately
+                'signal': analysis.summary.get('RECOMMENDATION', 'NEUTRAL'),
+                'target_price': None,  # Will be calculated separately
+                'stop_loss': None,  # Will be calculated separately
+                'position_size': None,  # Will be calculated separately
+                'risk_score': None,  # Will be calculated separately
+                'confidence_score': None  # Will be calculated separately
+            }
+            print(f"DEBUG: Data fetched from TradingView: {data}")
+            
+            # Validate required fields
+            required_fields = ['open', 'high', 'low', 'close', 'volume']
+            missing_fields = [field for field in required_fields if data[field] is None]
+            
+            if missing_fields:
+                logger.warning(f"Missing required fields for {symbol}: {missing_fields}")
+                return None
+            
+            return data
+            
+        except Exception as e:
+            logger.error(f"Error fetching data from TradingView for {symbol}: {e}")
+            return None
+
+def test_tradingview_integration():
+    """Test the TradingView integration"""
+    try:
+        # Initialize calculator
+        print("\n1. Initializing FairValueCalculator...")
+        calculator = FairValueCalculator("PSX_Stock_Data.db")
+        
+        # Test symbol
+        test_symbol = "LUCK"
+        print(f"\n2. Testing with symbol: {test_symbol}")
+        
+        # Fetch data
+        print("   Fetching data from TradingView...")
+        data = calculator._fetch_data_from_tradingview(test_symbol)
+        
+        if not data:
+            print("✗ Failed to fetch data from TradingView")
+            return
+        
+        print("✓ Successfully fetched data from TradingView")
+        print(f"  - Date: {data['date']}")
+        print(f"  - Close: {data['close']}")
+        print(f"  - RSI: {data['rsi']}")
+        print(f"  - MACD: {data['macd']}")
+        
+        # Save to database
+        print("\n   Saving data to database...")
+        conn = sqlite3.connect("PSX_Stock_Data.db")
+        save_result = calculator.save_tradingview_ta_data_to_db(test_symbol, data, conn)
+        
+        if save_result:
+            print("✓ Successfully saved data to database")
+        else:
+            print("✗ Failed to save data to database")
+            return
+        
+        # Verify data in database
+        print("\n3. Verifying data in database...")
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM tradingview_signals 
+            WHERE symbol = ? 
+            ORDER BY date DESC 
+            LIMIT 1
+        """, (test_symbol,))
+        
+        row = cursor.fetchone()
+        if row:
+            print("✓ Successfully retrieved data from database")
+            columns = [description[0] for description in cursor.description]
+            db_data = dict(zip(columns, row))
+            print(f"  - Date: {db_data['date']}")
+            print(f"  - Close: {db_data['close']}")
+            print(f"  - RSI: {db_data['rsi']}")
+            print(f"  - MACD: {db_data['macd']}")
+        else:
+            print("✗ Failed to retrieve data from database")
         
         conn.close()
+        print("\nTest completed successfully!")
         
     except Exception as e:
-        print(f"Error: {e}")
-        logging.error(f"Error in main execution: {e}")
+        print(f"\n✗ Test failed with error: {e}")
+        logging.error(f"Test failed: {e}")
 
 if __name__ == "__main__":
-    main()
+    # Run the test
+    test_tradingview_integration()
 

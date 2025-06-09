@@ -300,8 +300,8 @@ if __name__ == "__main__":
     current_dir = os.getcwd()
     symbols_file_path = os.path.join(current_dir, 'data/databases/production/psxsymbols.xlsx')
     
-    # Load valid symbols from the 'KMI100' sheet
-    symbols_df = pd.read_excel(symbols_file_path, sheet_name='KMI100')
+    # Load valid symbols from the 'KSEALL' sheet
+    symbols_df = pd.read_excel(symbols_file_path, sheet_name='KSEALL')
     valid_symbols = symbols_df.iloc[:, 0].tolist()  # Get list of valid symbols from the first column
     print (f'total symbols are: {len(valid_symbols)}')
     # Delete any tables in the database that do not correspond to the valid symbols

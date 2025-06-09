@@ -89,29 +89,21 @@ def fetch_table_names(cursor):
         return []
 
 
-# Function to fetch stock data for the last two dates
-def fetch_stock_data(cursor, table_name):
-    """Fetch stock data for the last two dates"""
+# Function to fetch stock data for the last N dates (default 30 for breakout detection)
+def fetch_stock_data(cursor, table_name, limit=30):
+    """Fetch stock data for the last N dates (default 30 for breakout detection)"""
     try:
         query = f"""
             SELECT Date, Close, Volume, RSI_Weekly_Avg, RSI_Monthly, RSI_3Months_Avg, RSI_Monthly_Avg, AO_weekly, MA_30, pct_change 
             FROM {table_name} 
-            WHERE Date IN (
-                SELECT Date 
-                FROM {table_name} 
-                ORDER BY Date DESC 
-                LIMIT 2
-            )
-            ORDER BY Date DESC;
+            ORDER BY Date DESC 
+            LIMIT {limit};
         """
         cursor.execute(query)
         results = cursor.fetchall()
-        
-        if len(results) != 2:
+        if len(results) < 2:
             return None
-            
         return results
-        
     except Exception as e:
         logging.error(f"Error fetching stock data for {table_name}: {e}")
         return None
@@ -131,7 +123,7 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 
 def identify_weekly_breakouts(df: pd.DataFrame) -> Dict:
     """
-    Identify bullish and bearish breakouts on weekly timeframe.
+    Identify bullish and bearish breakouts on weekly timeframe with improved logic.
     """
     breakout_signals = {
         'bullish_breakout': [],
@@ -139,82 +131,134 @@ def identify_weekly_breakouts(df: pd.DataFrame) -> Dict:
     }
     
     try:
+        # Log the input data size
+        logging.info(f"Running breakout detection with {len(df)} data points")
+        
+        if len(df) < 20:  # Increased minimum data points for better trend analysis
+            logging.warning(f"Not enough data points for reliable breakout detection. Need at least 20, got {len(df)}")
+            return {'bullish_breakout': [], 'bearish_breakout': []}
+        
         # Calculate additional indicators
         df['Volume_MA'] = df['Volume'].rolling(window=20).mean()
         df['ATR'] = calculate_atr(df, period=14)
-        df['Upper_Band'] = df['MA_30'] + (1.5 * df['ATR'])  # Reduced from 2 to 1.5 for more sensitivity
-        df['Lower_Band'] = df['MA_30'] - (1.5 * df['ATR'])  # Reduced from 2 to 1.5 for more sensitivity
+        df['Upper_Band'] = df['MA_30'] + (2 * df['ATR'])  # Increased band width for stronger signals
+        df['Lower_Band'] = df['MA_30'] - (2 * df['ATR'])
         
-        # Calculate price momentum
+        # Calculate price momentum and trend indicators
         df['Price_Change'] = df['Close'].pct_change()
         df['Volume_Change'] = df['Volume'].pct_change()
+        df['Price_MA_5'] = df['Close'].rolling(window=5).mean()
+        df['Price_MA_20'] = df['Close'].rolling(window=20).mean()
+        df['Volume_MA_5'] = df['Volume'].rolling(window=5).mean()
+        
+        # Calculate trend strength
+        df['Trend_Strength'] = (df['Price_MA_5'] - df['Price_MA_20']) / df['Price_MA_20']
+        
+        # Log after calculations to check for NaN values
+        logging.info(f"NaN in Volume_MA: {df['Volume_MA'].isna().sum()}")
+        logging.info(f"NaN in ATR: {df['ATR'].isna().sum()}")
+        logging.info(f"NaN in Price_Change: {df['Price_Change'].isna().sum()}")
         
         # Bullish Breakout Conditions
         def check_bullish_breakout(row, prev_row):
-            # Check for None values
-            if any(pd.isna([row['Close'], row['Upper_Band'], row['Volume'], 
-                          row['Volume_MA'], row['MA_30'], row['RSI_Weekly_Avg'], 
-                          row['AO_weekly'], prev_row['MA_30'], prev_row['AO_weekly']])):
+            try:
+                if pd.isna(row['Close']) or pd.isna(row['Volume']) or pd.isna(row['RSI_Weekly_Avg']):
+                    return {'is_breakout': False, 'conditions': {}, 'strength': 0}
+                
+                # Price momentum conditions
+                price_momentum = row['Price_Change'] > 0.02  # Increased to 2% price increase
+                price_above_ma = row['Close'] > row['Price_MA_20']  # Price above 20-period MA
+                price_trend = row['Trend_Strength'] > 0.01  # Positive trend strength
+                
+                # Volume conditions
+                volume_momentum = row['Volume_Change'] > 0.5  # Increased to 50% volume increase
+                volume_above_ma = row['Volume'] > row['Volume_MA_5']  # Volume above 5-period MA
+                
+                # Technical indicator conditions
+                rsi_momentum = row['RSI_Weekly_Avg'] > 50  # RSI above 50
+                ao_momentum = row['AO_weekly'] > 0  # Positive AO
+                
+                # Breakout confirmation
+                price_breakout = row['Close'] > row['Upper_Band']  # Price breaks above upper band
+                
+                conditions = {
+                    'price_momentum': price_momentum,
+                    'price_above_ma': price_above_ma,
+                    'price_trend': price_trend,
+                    'volume_momentum': volume_momentum,
+                    'volume_above_ma': volume_above_ma,
+                    'rsi_momentum': rsi_momentum,
+                    'ao_momentum': ao_momentum,
+                    'price_breakout': price_breakout
+                }
+                
+                # Count how many conditions are met
+                conditions_met = sum(conditions.values())
+                
+                # Require at least 5 conditions to be met for a valid breakout
+                return {
+                    'is_breakout': conditions_met >= 5,
+                    'conditions': conditions,
+                    'strength': conditions_met / len(conditions)
+                }
+            except Exception as e:
+                logging.error(f"Error in bullish breakout check: {e}")
                 return {'is_breakout': False, 'conditions': {}, 'strength': 0}
-            
-            # Calculate momentum indicators
-            price_momentum = row['Price_Change'] > 0.02  # 2% price increase
-            volume_momentum = row['Volume_Change'] > 0.5  # 50% volume increase
-            
-            conditions = {
-                'price_breakout': row['Close'] > row['Upper_Band'],
-                'price_momentum': price_momentum,
-                'volume_confirmation': row['Volume'] > (row['Volume_MA'] * 1.2),  # Reduced from 1.5 to 1.2
-                'volume_momentum': volume_momentum,
-                'ma_crossover': (row['MA_30'] > row['MA_30'].shift(1)) and (prev_row['MA_30'] <= prev_row['MA_30'].shift(1)),
-                'rsi_momentum': 45 < row['RSI_Weekly_Avg'] < 75,  # Widened RSI range
-                'ao_momentum': row['AO_weekly'] > 0 and row['AO_weekly'] > prev_row['AO_weekly']
-            }
-            
-            # Count how many conditions are met
-            conditions_met = sum(conditions.values())
-            
-            # Reduced threshold from 3 to 2 conditions for more sensitivity
-            return {
-                'is_breakout': conditions_met >= 2,
-                'conditions': conditions,
-                'strength': conditions_met / len(conditions)
-            }
         
         # Bearish Breakout Conditions
         def check_bearish_breakout(row, prev_row):
-            # Check for None values
-            if any(pd.isna([row['Close'], row['Lower_Band'], row['Volume'], 
-                          row['Volume_MA'], row['MA_30'], row['RSI_Weekly_Avg'], 
-                          row['AO_weekly'], prev_row['MA_30'], prev_row['AO_weekly']])):
+            try:
+                if pd.isna(row['Close']) or pd.isna(row['Volume']) or pd.isna(row['RSI_Weekly_Avg']):
+                    return {'is_breakout': False, 'conditions': {}, 'strength': 0}
+                
+                # Price momentum conditions
+                price_momentum = row['Price_Change'] < -0.02  # Increased to 2% price decrease
+                price_below_ma = row['Close'] < row['Price_MA_20']  # Price below 20-period MA
+                price_trend = row['Trend_Strength'] < -0.01  # Negative trend strength
+                
+                # Volume conditions
+                volume_momentum = row['Volume_Change'] > 0.5  # Increased to 50% volume increase
+                volume_above_ma = row['Volume'] > row['Volume_MA_5']  # Volume above 5-period MA
+                
+                # Technical indicator conditions
+                rsi_momentum = row['RSI_Weekly_Avg'] < 50  # RSI below 50
+                ao_momentum = row['AO_weekly'] < 0  # Negative AO
+                
+                # Breakout confirmation
+                price_breakout = row['Close'] < row['Lower_Band']  # Price breaks below lower band
+                
+                conditions = {
+                    'price_momentum': price_momentum,
+                    'price_below_ma': price_below_ma,
+                    'price_trend': price_trend,
+                    'volume_momentum': volume_momentum,
+                    'volume_above_ma': volume_above_ma,
+                    'rsi_momentum': rsi_momentum,
+                    'ao_momentum': ao_momentum,
+                    'price_breakout': price_breakout
+                }
+                
+                # Count how many conditions are met
+                conditions_met = sum(conditions.values())
+                
+                # Require at least 5 conditions to be met for a valid breakout
+                return {
+                    'is_breakout': conditions_met >= 5,
+                    'conditions': conditions,
+                    'strength': conditions_met / len(conditions)
+                }
+            except Exception as e:
+                logging.error(f"Error in bearish breakout check: {e}")
                 return {'is_breakout': False, 'conditions': {}, 'strength': 0}
-            
-            # Calculate momentum indicators
-            price_momentum = row['Price_Change'] < -0.02  # 2% price decrease
-            volume_momentum = row['Volume_Change'] > 0.5  # 50% volume increase
-            
-            conditions = {
-                'price_breakdown': row['Close'] < row['Lower_Band'],
-                'price_momentum': price_momentum,
-                'volume_confirmation': row['Volume'] > (row['Volume_MA'] * 1.2),  # Reduced from 1.5 to 1.2
-                'volume_momentum': volume_momentum,
-                'ma_crossover': (row['MA_30'] < row['MA_30'].shift(1)) and (prev_row['MA_30'] >= prev_row['MA_30'].shift(1)),
-                'rsi_momentum': 25 < row['RSI_Weekly_Avg'] < 55,  # Widened RSI range
-                'ao_momentum': row['AO_weekly'] < 0 and row['AO_weekly'] < prev_row['AO_weekly']
-            }
-            
-            # Count how many conditions are met
-            conditions_met = sum(conditions.values())
-            
-            # Reduced threshold from 3 to 2 conditions for more sensitivity
-            return {
-                'is_breakout': conditions_met >= 2,
-                'conditions': conditions,
-                'strength': conditions_met / len(conditions)
-            }
         
-        # Process each week's data
-        for i in range(1, len(df)):
+        # Process each week's data - skip first 20 rows for accurate rolling calculations
+        breakout_count_bull = 0
+        breakout_count_bear = 0
+        
+        # Skip the first 20 rows if we have enough data
+        start_idx = 20 if len(df) > 20 else 1
+        
+        for i in range(start_idx, len(df)):
             current_row = df.iloc[i]
             previous_row = df.iloc[i-1]
             
@@ -222,7 +266,14 @@ def identify_weekly_breakouts(df: pd.DataFrame) -> Dict:
             bullish_signal = check_bullish_breakout(current_row, previous_row)
             bearish_signal = check_bearish_breakout(current_row, previous_row)
             
+            # Log key info for debugging (every 5th row)
+            if i % 5 == 0:
+                bull_conditions = sum(bullish_signal['conditions'].values())
+                bear_conditions = sum(bearish_signal['conditions'].values())
+                logging.info(f"Row {i}: Bull={bull_conditions}, Bear={bear_conditions}, RSI={current_row['RSI_Weekly_Avg']:.1f}, AO={current_row['AO_weekly']:.1f}")
+            
             if bullish_signal['is_breakout']:
+                breakout_count_bull += 1
                 breakout_signals['bullish_breakout'].append({
                     'date': current_row['Date'],
                     'price': current_row['Close'],
@@ -231,11 +282,13 @@ def identify_weekly_breakouts(df: pd.DataFrame) -> Dict:
                     'ao': current_row['AO_weekly'],
                     'strength': bullish_signal['strength'],
                     'conditions_met': [k for k, v in bullish_signal['conditions'].items() if v],
-                    'price_change': current_row['Price_Change'] * 100,  # Convert to percentage
-                    'volume_change': current_row['Volume_Change'] * 100  # Convert to percentage
+                    'price_change': current_row['Price_Change'] * 100 if not pd.isna(current_row['Price_Change']) else 0,
+                    'volume_change': current_row['Volume_Change'] * 100 if not pd.isna(current_row['Volume_Change']) else 0,
+                    'trend_strength': current_row['Trend_Strength'] * 100 if not pd.isna(current_row['Trend_Strength']) else 0
                 })
                 
             if bearish_signal['is_breakout']:
+                breakout_count_bear += 1
                 breakout_signals['bearish_breakout'].append({
                     'date': current_row['Date'],
                     'price': current_row['Close'],
@@ -244,14 +297,18 @@ def identify_weekly_breakouts(df: pd.DataFrame) -> Dict:
                     'ao': current_row['AO_weekly'],
                     'strength': bearish_signal['strength'],
                     'conditions_met': [k for k, v in bearish_signal['conditions'].items() if v],
-                    'price_change': current_row['Price_Change'] * 100,  # Convert to percentage
-                    'volume_change': current_row['Volume_Change'] * 100  # Convert to percentage
+                    'price_change': current_row['Price_Change'] * 100 if not pd.isna(current_row['Price_Change']) else 0,
+                    'volume_change': current_row['Volume_Change'] * 100 if not pd.isna(current_row['Volume_Change']) else 0,
+                    'trend_strength': current_row['Trend_Strength'] * 100 if not pd.isna(current_row['Trend_Strength']) else 0
                 })
         
+        logging.info(f"Breakout detection complete. Found {breakout_count_bull} bullish and {breakout_count_bear} bearish breakouts")
         return breakout_signals
         
     except Exception as e:
         logging.error(f"Error in identify_weekly_breakouts: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
         return {'bullish_breakout': [], 'bearish_breakout': []}
 
 def format_breakout_message(breakout_data: Dict, symbol: str) -> str:
@@ -297,37 +354,27 @@ def process_stock_data(table_name, results, cursor, multibagger_symbols, data_so
     sell_stock_data = []
     neutral_stock_data = []
     breakout_data = None
-    
-    if not results or len(results) != 2:
+    if not results or len(results) < 2:
         return [], [], [], None
-        
     try:
-        latest, previous = results
-        
-        # Unpack latest row
+        # Use the latest two rows for buy/sell/neutral logic
+        latest = results[0]
+        previous = results[1]
         (date_latest, close_latest, volume_latest, rsi_weekly_latest, 
          rsi_monthly_latest, rsi_3months_latest, rsi_monthly_avg_latest, 
          ao_weekly_latest, ma_30_latest, pct_change_latest) = latest
-        
-        # Unpack previous row
         (_, _, _, _, rsi_monthly_previous, rsi_3months_previous, 
          _, ao_weekly_previous, ma_30_previous, _) = previous
-
-        # Extract stock name and common data
         stock_name = table_name.replace('PSX_', '').replace('_stock_data', '').strip().upper()
         ao_change_date, ao_change_close = get_ao_change_date(cursor, table_name)
         freefloatratio = get_freefloatratio(stock_name)
         multibagger = stock_name in multibagger_symbols
         truncated_data_source = data_source.split('_')[4].split('.')[0]
-        
-        # Calculate P/L and holding days
         p_l = 0.0
         holding_days = 0
         if ao_change_date and ao_change_close:
             p_l = round(((close_latest - ao_change_close) / ao_change_close) * 100, 2)
             holding_days = (pd.to_datetime(date_latest.split(' ')[0]) - pd.to_datetime(ao_change_date)).days
-            
-        # Base data dictionary
         base_data = {
             'Stock': stock_name,
             'Data Source': truncated_data_source,
@@ -341,11 +388,12 @@ def process_stock_data(table_name, results, cursor, multibagger_symbols, data_so
             'Multibagger': 'Yes' if multibagger else 'No',
             'FreeFloatRatio': freefloatratio
         }
-        
-        # Check for breakouts
-        df = pd.DataFrame([latest, previous], columns=['Date', 'Close', 'Volume', 'RSI_Weekly_Avg', 
-                                                     'RSI_Monthly', 'RSI_3Months_Avg', 'RSI_Monthly_Avg', 
-                                                     'AO_weekly', 'MA_30', 'pct_change'])
+        # Use all available rows for breakout detection
+        df_columns = ['Date', 'Close', 'Volume', 'RSI_Weekly_Avg', 
+                      'RSI_Monthly', 'RSI_3Months_Avg', 'RSI_Monthly_Avg', 
+                      'AO_weekly', 'MA_30', 'pct_change']
+        df = pd.DataFrame(results, columns=df_columns)
+        df = df.iloc[::-1].reset_index(drop=True)  # Chronological order
         try:
             breakout_data = identify_weekly_breakouts(df)
             if not breakout_data['bullish_breakout'] and not breakout_data['bearish_breakout']:
@@ -353,13 +401,11 @@ def process_stock_data(table_name, results, cursor, multibagger_symbols, data_so
         except Exception as e:
             logging.error(f"Error calculating breakouts for {stock_name}: {e}")
             breakout_data = None
-        
         # Buy Condition
         if (rsi_3months_latest is not None and rsi_3months_latest >= 40 and
             rsi_weekly_latest is not None and rsi_weekly_latest >= 40 and
             ao_weekly_latest is not None and ao_weekly_latest >= 0 and
             volume_latest is not None and volume_latest > 5000):
-            
             buy_data = base_data.copy()
             buy_data.update({
                 'Success': 'Yes' if close_latest >= ao_change_close else 'No',
@@ -370,17 +416,13 @@ def process_stock_data(table_name, results, cursor, multibagger_symbols, data_so
                 'Status': 'Buy'
             })
             stock_data.append(buy_data)
-            
         # Sell Condition
         elif (rsi_monthly_latest is not None and rsi_monthly_latest <= 50 and
               rsi_weekly_latest is not None and rsi_weekly_latest <= 50 and
               ao_weekly_latest is not None and ao_weekly_latest <= 0 and 
               ma_30_latest is not None and
-              # Proper sell condition: price below moving average
               close_latest <= ma_30_latest and
-              # More selective volume filter
               volume_latest is not None and volume_latest > 0):
-              
             sell_data = base_data.copy()
             sell_data.update({
                 'Success': 'Yes' if close_latest < ao_change_close else 'No',
@@ -391,7 +433,6 @@ def process_stock_data(table_name, results, cursor, multibagger_symbols, data_so
                 'Status': 'Sell'
             })
             sell_stock_data.append(sell_data)
-            
         # Neutral Condition
         else:
             neutral_data = base_data.copy()
@@ -400,9 +441,7 @@ def process_stock_data(table_name, results, cursor, multibagger_symbols, data_so
                 'Status': 'Neutral'
             })
             neutral_stock_data.append(neutral_data)
-            
         return stock_data, sell_stock_data, neutral_stock_data, breakout_data
-        
     except Exception as e:
         logging.error(f"Error processing {table_name}: {e}")
         return [], [], [], None
@@ -483,7 +522,7 @@ def get_stock_data_with_rsi_above_40(db_paths):
                 for table_name in tables:
                     try:
                         logging.info(f"\nProcessing table: {table_name}")
-                        results = fetch_stock_data(cursor, table_name)
+                        results = fetch_stock_data(cursor, table_name, limit=30)  # Fetch more data for breakout
                         if results:
                             logging.info(f"Found {len(results)} results for {table_name}")
                             buy_data, sell_data, neutral_data, breakout = process_stock_data(

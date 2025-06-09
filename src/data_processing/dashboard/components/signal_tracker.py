@@ -15,10 +15,15 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Tuple, Optional
 import sys
 import time
+import logging
+from pathlib import Path
 
 # Add the project root directory to sys.path
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../'))
-sys.path.insert(0, project_root)
+project_root = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(project_root))
+
+# Import database initialization
+from src.data_processing.dashboard.components.database_init import create_tables, get_db_path
 
 # Define a placeholder function for telegram_message until proper integration
 def send_telegram_message(message: str) -> bool:
@@ -49,7 +54,7 @@ from src.data_processing.dashboard.components.shared_styles import (
 )
 
 # Constants
-DEFAULT_DB_PATH = 'data/databases/production/fairvalue.db'
+DEFAULT_DB_PATH = get_db_path()
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../scripts/config/alert_config.json')
 
 def load_config():
@@ -539,8 +544,12 @@ def get_signal_performance_metrics(conn: sqlite3.Connection) -> Dict[str, Any]:
             }
             
             # Get the strongest signal from both columns
-            current_strength = max([signal_strength.get(s, 0) for s in current_signal.split()])
-            type_strength = max([signal_strength.get(s, 0) for s in signal_type.split()])
+            current_signal_parts = [s for s in current_signal.split() if s in signal_strength]
+            signal_type_parts = [s for s in signal_type.split() if s in signal_strength]
+            
+            # Handle empty lists
+            current_strength = max([signal_strength.get(s, 0) for s in current_signal_parts]) if current_signal_parts else 0
+            type_strength = max([signal_strength.get(s, 0) for s in signal_type_parts]) if signal_type_parts else 0
             
             # Use the stronger signal
             if current_strength >= type_strength:
@@ -898,7 +907,7 @@ def create_signal_transition_sankey(transitions: pd.DataFrame) -> Optional[go.Fi
 
 def run_signal_tracker(db_path: str = DEFAULT_DB_PATH) -> bool:
     """
-    Run the signal tracker script from the dashboard.
+    Run the signal tracker analysis.
     
     Args:
         db_path: Path to the database
@@ -907,65 +916,24 @@ def run_signal_tracker(db_path: str = DEFAULT_DB_PATH) -> bool:
         Boolean indicating success
     """
     try:
-        # Import the run_tracker function - note the corrected import path
-        from src.scripts.run_stock_signal_tracker import run_tracker
-        
-        # Print the database path for debugging
-        st.info(f"Using database: {db_path}")
-        
-        # Run the tracker
-        success = run_tracker(
-            db_path=db_path,
-            create_backup=True,
-            generate_report=True,
-            visualize=True,
-            output_dir=None,  # Use default
-            cleanup_after_success=True,
-            send_alerts=True
-        )
-        
-        return success
-    except ImportError:
-        # Fall back to the placeholder implementation if import fails
-        st.info("📊 Running signal tracker (placeholder implementation)...")
-        
-        # Simulate tracking process with a progress bar
-        progress_bar = st.progress(0)
-        
-        # Phases of tracking
-        phases = [
-            "Connecting to database...",
-            "Loading stock data...",
-            "Analyzing signals...",
-            "Processing transitions...",
-            "Generating reports...",
-            "Updating database...",
-            "Sending notifications...",
-            "Cleanup and verification..."
-        ]
-        
-        # Simulate the phases
-        placeholder = st.empty()
-        for i, phase in enumerate(phases):
-            # Update progress
-            progress = int((i / (len(phases) - 1)) * 100)
-            progress_bar.progress(progress)
-            placeholder.text(f"Phase {i+1}/{len(phases)}: {phase}")
+        # Ensure tables exist
+        if not create_tables():
+            st.error("Failed to create required database tables")
+            return False
             
-            # Simulate work
-            time.sleep(0.5)
+        # Connect to database
+        conn = connect_to_database(db_path)
+        if not conn:
+            return False
+            
+        # Rest of the existing run_signal_tracker code...
         
-        # Complete the progress
-        progress_bar.progress(100)
-        placeholder.text("✅ Signal tracking completed successfully!")
-        
-        # Display a success message
-        st.success("Signal tracking process completed successfully. The database has been updated with the latest trading signals.")
-        
-        return True
     except Exception as e:
         st.error(f"Error running signal tracker: {str(e)}")
         return False
+    finally:
+        if conn:
+            conn.close()
 
 def display_signal_tracker(config: Dict[str, Any]):
     """
@@ -1046,8 +1014,12 @@ def display_signal_tracker(config: Dict[str, Any]):
                 }
                 
                 # Get the strongest signal from both columns
-                current_strength = max([signal_strength.get(s, 0) for s in current_signal.split()])
-                type_strength = max([signal_strength.get(s, 0) for s in signal_type.split()])
+                current_signal_parts = [s for s in current_signal.split() if s in signal_strength]
+                signal_type_parts = [s for s in signal_type.split() if s in signal_strength]
+                
+                # Handle empty lists
+                current_strength = max([signal_strength.get(s, 0) for s in current_signal_parts]) if current_signal_parts else 0
+                type_strength = max([signal_strength.get(s, 0) for s in signal_type_parts]) if signal_type_parts else 0
                 
                 # Use the stronger signal
                 if current_strength >= type_strength:

@@ -26,7 +26,8 @@ from src.data_processing.dashboard.components.shared_styles import (
     create_metric_card
 )
 from typing import Optional, Dict, Any
-import talib
+# Replacing talib with ta (pure Python implementation)
+import ta
 from scipy import stats
 import plotly.express as px
 import time
@@ -144,11 +145,17 @@ def get_stock_data(conn: sqlite3.Connection, symbol: str, days_back: int = 365 *
             
             # Calculate additional indicators if not present
             if 'RSI_14' not in df.columns:
-                df['RSI_14'] = talib.RSI(df['Close'], timeperiod=14)
+                df['RSI_14'] = ta.momentum.RSIIndicator(close=df['Close'], window=14).rsi()
             if 'MACD' not in df.columns:
-                df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = talib.MACD(df['Close'])
+                macd = ta.trend.MACD(close=df['Close'])
+                df['MACD'] = macd.macd()
+                df['MACD_Signal'] = macd.macd_signal()
+                df['MACD_Hist'] = macd.macd_diff()
             if 'BB_Upper' not in df.columns:
-                df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = talib.BBANDS(df['Close'])
+                bollinger = ta.volatility.BollingerBands(close=df['Close'])
+                df['BB_Upper'] = bollinger.bollinger_hband()
+                df['BB_Middle'] = bollinger.bollinger_mavg()
+                df['BB_Lower'] = bollinger.bollinger_lband()
             
         return df
     except Exception as e:
@@ -292,19 +299,20 @@ def calculate_advanced_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['Ichimoku_SpanB'] = (df['High'].rolling(window=52).max() + df['Low'].rolling(window=52).min()) / 2
     
     # ADX (Average Directional Index)
-    df['ADX'] = safe_talib_call('ADX', df['High'], df['Low'], df['Close'], timeperiod=14)
-    df['ADX_Positive'] = safe_talib_call('PLUS_DI', df['High'], df['Low'], df['Close'], timeperiod=14)
-    df['ADX_Negative'] = safe_talib_call('MINUS_DI', df['High'], df['Low'], df['Close'], timeperiod=14)
+    adx_indicator = ta.trend.ADXIndicator(df['High'], df['Low'], df['Close'], window=14)
+    df['ADX'] = adx_indicator.adx()
+    df['ADX_Positive'] = adx_indicator.adx_pos()
+    df['ADX_Negative'] = adx_indicator.adx_neg()
     
     # Parabolic SAR
-    df['Parabolic_SAR'] = safe_talib_call('SAR', df['High'], df['Low'], acceleration=0.02, maximum=0.2)
+    df['Parabolic_SAR'] = ta.trend.PSARIndicator(df['High'], df['Low'], df['Close']).psar()
     
     # Volume Indicators
-    df['OBV'] = safe_talib_call('OBV', df['Close'], df['Volume'])
-    df['CMF'] = safe_talib_call('ADOSC', df['High'], df['Low'], df['Close'], df['Volume'], fastperiod=3, slowperiod=10)
+    df['OBV'] = ta.volume.OnBalanceVolumeIndicator(df['Close'], df['Volume']).on_balance_volume()
+    df['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(df['High'], df['Low'], df['Close'], df['Volume'], window=10).chaikin_money_flow()
     
     # Volatility Indicators
-    df['ATR'] = safe_talib_call('ATR', df['High'], df['Low'], df['Close'], timeperiod=14)
+    df['ATR'] = ta.volatility.AverageTrueRange(df['High'], df['Low'], df['Close'], window=14).average_true_range()
     
     # Keltner Channels
     middle = df['Close'].rolling(window=20).mean()
@@ -339,12 +347,24 @@ def calculate_advanced_indicators(df: pd.DataFrame) -> pd.DataFrame:
     middle_bin = len(volume_profile) // 2
     df['Volume_Profile'] = df[f'Volume_Profile_Bin_{middle_bin}']
     
-    # Advanced Pattern Recognition - using safe calls
-    df['Doji'] = safe_talib_call('CDLDOJI', df['Open'], df['High'], df['Low'], df['Close'])
-    df['Hammer'] = safe_talib_call('CDLHAMMER', df['Open'], df['High'], df['Low'], df['Close'])
-    df['Engulfing'] = safe_talib_call('CDLENGULFING', df['Open'], df['High'], df['Low'], df['Close'])
-    df['EveningStar'] = safe_talib_call('CDLEVENINGSTAR', df['Open'], df['High'], df['Low'], df['Close'])
-    df['MorningStar'] = safe_talib_call('CDLMORNINGSTAR', df['Open'], df['High'], df['Low'], df['Close'])
+    # Advanced Pattern Recognition - using ta library
+    # Note: ta doesn't have direct equivalents for candlestick patterns
+    # Using placeholder values and simple pattern detection
+    
+    # Doji pattern (when open and close are very close)
+    df['Doji'] = ((df['Open'] - df['Close']).abs() / (df['High'] - df['Low']) < 0.1).astype(int)
+    
+    # Hammer pattern (simple approximation)
+    df['Hammer'] = (((df['High'] - df['Low']).abs() > 3 * (df['Open'] - df['Close']).abs()) & 
+                    (df['Close'] > df['Open']) & 
+                    ((df['High'] - df['Close']) / (df['High'] - df['Low']) < 0.3)).astype(int)
+    
+    # Engulfing pattern (simple approximation)
+    df['Engulfing'] = 0  # Placeholder, would need more complex logic
+    
+    # EveningStar and MorningStar patterns (placeholders)
+    df['EveningStar'] = 0  # Placeholder
+    df['MorningStar'] = 0  # Placeholder
     
     # Placeholder for complex patterns
     df['Head_Shoulders'] = 0
@@ -1445,26 +1465,49 @@ def main() -> None:
         
         conn.close()
 
-def safe_talib_call(func_name, *args, default_value=0, **kwargs):
-    """Safely call a TA-Lib function, returning a default value if the function doesn't exist.
+def safe_ta_call(indicator_type, method_name, df, **kwargs):
+    """Safely call a ta library indicator method, returning a default value if the method doesn't exist.
     
     Args:
-        func_name: Name of the TA-Lib function to call
-        *args: Positional arguments to pass to the function
-        default_value: Value to return if function fails
-        **kwargs: Keyword arguments to pass to the function
+        indicator_type: Type of indicator from ta library (e.g., 'momentum', 'trend', 'volatility', 'volume')
+        method_name: Name of the method to call
+        df: DataFrame containing price data
+        **kwargs: Keyword arguments to pass to the method
         
     Returns:
-        Result of the TA-Lib function or default value if function fails
+        Result of the ta library method or a Series of zeros if method fails
     """
     try:
-        func = getattr(talib, func_name)
-        return func(*args, **kwargs)
-    except (AttributeError, TypeError):
-        # Return a pandas Series or numpy array of the same shape as the first argument
-        if len(args) > 0 and hasattr(args[0], 'shape'):
-            return pd.Series(default_value, index=args[0].index)
-        return default_value
+        # Get the appropriate indicator class based on indicator_type
+        if indicator_type == 'momentum':
+            indicator_module = ta.momentum
+        elif indicator_type == 'trend':
+            indicator_module = ta.trend
+        elif indicator_type == 'volatility':
+            indicator_module = ta.volatility
+        elif indicator_type == 'volume':
+            indicator_module = ta.volume
+        elif indicator_type == 'others':
+            indicator_module = ta.others
+        else:
+            return pd.Series(0, index=df.index)
+            
+        # Create the indicator object
+        indicator_class = getattr(indicator_module, method_name)
+        indicator = indicator_class(df['High'], df['Low'], df['Close'], df['Volume'], **kwargs)
+        
+        # For methods that return the indicator directly without a specific method
+        if hasattr(indicator, 'indicator'):
+            return indicator.indicator()
+        # For methods that have a method with the same name as the class (lowercase)
+        method_name_lower = method_name.lower()
+        if hasattr(indicator, method_name_lower):
+            method = getattr(indicator, method_name_lower)
+            return method()
+        
+        return pd.Series(0, index=df.index)
+    except (AttributeError, TypeError, ValueError):
+        return pd.Series(0, index=df.index)
 
 def add_ma_analysis(indicator: str, data: pd.DataFrame) -> None:
     """Add Moving Average analysis."""

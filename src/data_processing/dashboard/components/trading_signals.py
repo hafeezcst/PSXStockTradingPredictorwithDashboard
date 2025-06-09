@@ -33,8 +33,8 @@ from .shared_styles import (
 )
 
 # Constants for database paths
-SIGNALS_DB_PATH = "/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/data/databases/production/PSX_investing_Stocks_KMI30.db"
-TRACKING_DB_PATH = "/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/data/databases/production/PSX_investing_Stocks_KMI30_tracking.db"
+SIGNALS_DB_PATH = os.path.join(project_root, 'data', 'databases', 'production', 'PSX_investing_Stocks_KMI30.db')
+TRACKING_DB_PATH = os.path.join(project_root, 'data', 'databases', 'production', 'PSX_investing_Stocks_KMI30_tracking.db')
 
 class SignalTracker:
     def __init__(self):
@@ -48,12 +48,35 @@ class SignalTracker:
     def connect(self) -> bool:
         """Establish connections to both databases."""
         try:
-            self.signals_conn = sqlite3.connect(self.signals_db_path)
+            # First try to connect to the tracking database
+            if not os.path.exists(self.tracking_db_path):
+                self.logger.error(f"Tracking database not found: {self.tracking_db_path}")
+                return False
+                
             self.tracking_conn = sqlite3.connect(self.tracking_db_path)
+            
+            # Then try to connect to the signals database
+            if not os.path.exists(self.signals_db_path):
+                self.logger.error(f"Signals database not found: {self.signals_db_path}")
+                self.tracking_conn.close()
+                self.tracking_conn = None
+                return False
+                
+            self.signals_conn = sqlite3.connect(self.signals_db_path)
+            
+            # Initialize tracking tables
             self._initialize_tracking_tables()
             return True
+            
         except Exception as e:
             self.logger.error(f"Error connecting to databases: {str(e)}")
+            # Clean up any successful connections
+            if self.tracking_conn:
+                self.tracking_conn.close()
+                self.tracking_conn = None
+            if self.signals_conn:
+                self.signals_conn.close()
+                self.signals_conn = None
             return False
 
     def disconnect(self):
@@ -801,8 +824,8 @@ def display_trading_signals(config: Dict[str, Any]):
     create_custom_header("Trading Signals")
     create_custom_divider()
     
-    # Get database path from config or use default
-    db_path = config.get("databases", {}).get("signals_db_path", SIGNALS_DB_PATH)
+    # Use the signals database path directly
+    db_path = SIGNALS_DB_PATH
     
     # Check if database exists
     if not os.path.exists(db_path):
