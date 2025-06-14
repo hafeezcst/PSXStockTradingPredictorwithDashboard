@@ -1,17 +1,19 @@
-import subprocess
 import os
 import sys
 import logging
-import schedule
-import time
-from datetime import datetime
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sqlalchemy import create_engine
 from tqdm import tqdm
+from datetime import datetime
+import schedule
+import time
+import subprocess
+import schedule
+import subprocess
 
-# Add project root to Python path
+# Project root path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -29,21 +31,34 @@ logging.basicConfig(
     ]
 )
 
+def handle_db_errors(func):
+    """Decorator to standardize database error handling"""
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            func_name = func.__name__
+            logging.error(f"Error in {func_name}: {str(e)}")
+            if func_name == 'fetch_column_names':
+                return []
+            elif func_name == 'get_available_symbols':
+                return []
+            return None
+    return wrapper
+
+@handle_db_errors
 def get_available_symbols(cursor):
     """Get list of available stock symbols from database"""
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'PSX_%_stock_data'")
     tables = cursor.fetchall()
     return [table[0].replace('PSX_', '').replace('_stock_data', '') for table in tables]
 
+@handle_db_errors
 def fetch_column_names(engine, table_name):
     """Fetch column names from a specific table"""
-    try:
-        query = f"SELECT * FROM {table_name} LIMIT 1"
-        df = pd.read_sql(query, engine)
-        return df.columns.tolist()
-    except Exception as e:
-        logging.error(f"Error fetching columns for {table_name}: {e}")
-        return []
+    query = f"SELECT * FROM {table_name} LIMIT 1"
+    df = pd.read_sql(query, engine)
+    return df.columns.tolist()
 
 def get_buy_sell_signals(symbol):
     """Get buy and sell signals for a specific symbol"""
