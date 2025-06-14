@@ -1,0 +1,19 @@
+{
+  "core_files": {
+    "src/data_processing/04-List_Weekly_RSI_GT_40_BUY_SELL_KMI30_100_Weekly_v1.0_stable_Development.py": "src/core/stock_analyzer.py",
+    "src/data_processing/notification_manager.py": "src/core/notifications.py",
+    "src/data_processing/database_manager.py": "src/core/database.py"
+  },
+  "data_files": {
+    "src/data/databases/production/PSX_investing_Stocks_KMI30.db": "data/databases/PSX_KMI30.db",
+    "src/data/databases/production/fairvalue.db": "data/databases/fairvalue.db"
+  },
+  "config_files": {
+    "src/data_processing/config.yaml": "config/app_config.yaml",
+    "src/data_processing/config/api_keys.json": "config/secrets/api_keys.json"
+  },
+  "modules": {
+    "src/data_processing/technical_analyzer.py": "src/modules/technical_analysis.py",
+    "src/data_processing/financial_analyzer.py": "src/modules/fundamental_analysis.py"
+  }
+}

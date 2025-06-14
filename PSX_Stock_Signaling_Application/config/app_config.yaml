@@ -1,0 +1,21 @@
+# Application Configuration
+database:
+  main: "stock_data.db"
+  path: "data/databases"
+  create_tables: true
+
+api:
+  psx_endpoint: "https://psx-api.example.com/v1"
+  api_key: "your_api_key_here"
+  timeout: 30
+
+analysis:
+  rsi_period: 14
+  ao_fast_period: 5
+  ao_slow_period: 34
+  signal_threshold: 0.5
+
+telegram:
+  bot_token: "your_bot_token"
+  chat_id: "your_chat_id"
+  enable_notifications: true
