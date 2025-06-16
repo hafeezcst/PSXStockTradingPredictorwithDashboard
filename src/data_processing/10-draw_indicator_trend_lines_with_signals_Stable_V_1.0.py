@@ -1387,6 +1387,7 @@ def draw_indicator_trend_lines_with_signals(database_path, table_name):
         # Determine stock status (buy/sell/neutral)
         # Priority: most recent signal type or neutral if no signals
         stock_status = "OPPORTUNITY"  # Default status
+        signal_hash = ""
         
         if buy_signals and sell_signals:
             latest_buy = max(buy_signals, key=lambda x: x[0])
@@ -1394,12 +1395,18 @@ def draw_indicator_trend_lines_with_signals(database_path, table_name):
             
             if latest_buy[0] > latest_sell[0]:
                 stock_status = "BUY/HOLD"
+                signal_hash = f"#BUY_Signal_{datetime.now().strftime('%Y%m%d')}_{symbol_name}"
             else:
                 stock_status = "SELL"
+                signal_hash = f"#SELL_Signal_{datetime.now().strftime('%Y%m%d')}_{symbol_name}"
         elif buy_signals:
             stock_status = "BUY/HOLD"
+            signal_hash = f"#BUY_Signal_{datetime.now().strftime('%Y%m%d')}_{symbol_name}"
         elif sell_signals:
             stock_status = "SELL"
+            signal_hash = f"#SELL_Signal_{datetime.now().strftime('%Y%m%d')}_{symbol_name}"
+        else:
+            signal_hash = f"#NEUTRAL_Signal_{datetime.now().strftime('%Y%m%d')}_{symbol_name}"
         
         # Calculate market phase (accumulation/distribution)
         market_phase, phase_probability, phase_details = calculate_market_phase(df, symbol_name)
@@ -1510,7 +1517,7 @@ def draw_indicator_trend_lines_with_signals(database_path, table_name):
 
         # Add a title with current date, signal status, and market phase
         current_date = datetime.now().strftime('%Y-%m-%d')
-        title_text = f'{symbol_name} Technical Analysis - {stock_status}'
+        title_text = f'{symbol_name} Technical Analysis - {stock_status} {signal_hash}'
         if holding_days is not None and stock_status == "BUY/HOLD":
             title_text += f' - Held for {holding_days} days'
         if profit_loss_pct is not None:
