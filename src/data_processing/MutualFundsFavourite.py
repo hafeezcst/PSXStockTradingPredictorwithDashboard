@@ -9,9 +9,9 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-# Add project root directory to Python path
-project_root = Path(__file__).resolve().parents[2]
-sys.path.append(str(project_root))
+# Add project root directory to Python path (insert at start for priority)
+project_root = Path(__file__).resolve().parents[1]  # Go up to src/ directory
+sys.path.insert(0, str(project_root))
 
 from config.paths import (
     DATA_LOGS_DIR,
