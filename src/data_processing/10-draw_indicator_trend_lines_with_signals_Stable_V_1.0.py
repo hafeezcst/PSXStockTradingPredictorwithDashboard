@@ -4,11 +4,18 @@ import matplotlib.dates as mdates
 from sqlalchemy import create_engine
 import sqlite3
 import os
+import json
 import logging
+import time
+from PIL import Image
 from datetime import datetime, timedelta
 from telegram_message import send_telegram_message_with_image
 from telegram_message import send_telegram_message
 from tabulate import tabulate
+
+# Load Telegram config
+with open('src/config/telegram_config.json') as f:
+    telegram_config = json.load(f)
 import numpy as np
 from collections import Counter
 import time
@@ -61,8 +68,45 @@ def send_signals_and_charts_summary(buy_df, sell_df, available_symbols, total_pr
             else:
                 message += "\n⚪ MARKET INTERPRETATION: Neutral\n"
         
-        # Send the message
-        send_telegram_message(message)
+        def sanitize_telegram_message(text):
+            """Sanitize text for Telegram API with proper encoding and escaping"""
+            import unicodedata
+            # Normalize Unicode
+            text = unicodedata.normalize('NFKC', text)
+            # Remove any remaining invalid characters
+            text = ''.join(c for c in text if ord(c) < 65536 and not unicodedata.category(c).startswith('C'))
+            # Escape special MarkdownV2 characters
+            special_chars = '_*[]()~`>#+-=|{}.!'
+            for char in special_chars:
+                text = text.replace(char, f'\\{char}')
+            return text
+
+        # Validate and sanitize message before sending
+        try:
+            sanitized_msg = sanitize_telegram_message(message)
+            if len(sanitized_msg.encode('utf-8')) > 4096:
+                # Truncate at last space before limit to avoid breaking words
+                sanitized_msg = sanitized_msg[:4000]
+                last_space = sanitized_msg.rfind(' ')
+                if last_space > 0:
+                    sanitized_msg = sanitized_msg[:last_space]
+                sanitized_msg += "\n...[truncated]"
+            
+            # Send the sanitized message
+            send_telegram_message(sanitized_msg)
+        except Exception as e:
+            logging.error(f"Failed to send Telegram message: {str(e)}", exc_info=True)
+            # Try sending a ultra-simple ASCII-only version
+            safe_msg = (
+                f"PSX Summary: {len(buy_symbols or [])} buys, "
+                f"{len(sell_symbols or [])} sells, "
+                f"{total_processed} charts"
+            )
+            safe_msg = ''.join(c for c in safe_msg if ord(c) < 128 and c.isprintable())
+            try:
+                send_telegram_message(safe_msg[:1000])
+            except Exception as fallback_error:
+                logging.critical(f"Failed to send fallback message: {str(fallback_error)}")
         return True
     except Exception as e:
         logging.error(f"Error sending signals and charts summary: {e}")
@@ -1566,12 +1610,21 @@ def draw_indicator_trend_lines_with_signals(database_path, table_name):
         plot_filename = os.path.join(charts_folder, f'{symbol_name}_trend_lines_with_signals.png')
         plt.savefig(plot_filename, bbox_inches='tight', dpi=120)
 
-        # Send the plot to Telegram
-        message = title_text
-        send_telegram_message_with_image(plot_filename, message)
+        # Send the plot to Telegram if file exists
+        if os.path.exists(plot_filename):
+            try:
+                message = title_text
+                send_telegram_message_with_image(plot_filename, message)
+            except Exception as e:
+                logging.error(f"Error sending image to Telegram: {e}")
+                # Try sending just the message if image fails
+                send_telegram_message(f"⚠️ Could not send chart for {symbol_name}. Error: {str(e)}")
+        else:
+            logging.error(f"Chart file not found: {plot_filename}")
+            send_telegram_message(f"⚠️ Chart generation failed for {symbol_name}")
 
         # Close the figure to avoid memory issues
-        plt.close()  
+        plt.close()
         
         return True
     except Exception as e:
