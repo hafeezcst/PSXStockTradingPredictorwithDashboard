@@ -51,7 +51,7 @@ process_stock_data = analyzer.process_stock_data
 
 def update_psx_investing_db(data, table_name):
     """
-    Update the buy, sell, or neutral stock tables in PSX_investing_Stocks_KMI30.db
+    Update the buy, sell, or neutral stock tables in PSX_investing_Stocks_KMI100.db
     
     Args:
         data: DataFrame containing stock data
@@ -62,7 +62,7 @@ def update_psx_investing_db(data, table_name):
     """
     try:
         # Create database if it doesn't exist
-        with sqlite3.connect('data/databases/production/PSX_investing_Stocks_KMI30.db') as conn:
+        with sqlite3.connect('data/databases/production/PSX_investing_Stocks_KMI100.db') as conn:
             # Add 'Update_Date' column to the data
             data['Update_Date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
@@ -404,9 +404,9 @@ def format_buy_signals(data_source_name: str, df: pd.DataFrame) -> str:
         # Generate a unique hash for same-day signal tracking with index categorization
         index_category = "KMI30_100" if "KMI30 & KMI100" in KMI_tag else "KMI30" if "KMI30" in KMI_tag else "KMI100" if "KMI100" in KMI_tag else "Other"
         signal_hash = f"#BUY_Signal_{datetime.now().strftime('%Y%m%d')}_{index_category}"
+        message += f"🟢 *{symbol}*{KMI_tag} - {signal_hash}\n"
         message += f"🕒 Analysis Time: {analysis_time}\n"
         message += f"📅 DataBase Update Date: {current_price_date}\n\n"
-        message += f"🟢 *{symbol}*{KMI_tag} - {signal_hash}\n"
         message += f"💰 Current Price: {close:.2f}\n"
         message += f"📊 RSI: {rsi:.2f}\n"
         message += f"📈 AO: {ao:.2f}\n"
@@ -483,9 +483,9 @@ def format_sell_signals(data_source_name: str, df: pd.DataFrame) -> str:
         # Generate a unique hash for same-day signal tracking with index categorization
         index_category = "KMI30_100" if "KMI30 & KMI100" in KMI_tag else "KMI30" if "KMI30" in KMI_tag else "KMI100" if "KMI100" in KMI_tag else "Other"
         signal_hash = f"#SELL_Signal_{datetime.now().strftime('%Y%m%d')}_{index_category}"
+        message += f"🔴 *{symbol}*{KMI_tag} - {signal_hash}\n"        
         message += f"🕒 Analysis Time: {analysis_time}\n"
         message += f"📅 DataBase Update Date: {current_price_date}\n\n"
-        message += f"🔴 *{symbol}*{KMI_tag} - {signal_hash}\n"
         message += f"💰 Current Price: {close:.2f}\n"
         message += f"📊 RSI: {rsi:.2f}\n"
         message += f"📉 AO: {ao:.2f}\n"
@@ -555,9 +555,9 @@ def format_neutral_signals(data_source_name: str, df: pd.DataFrame) -> str:
         index_category = "KMI30_100" if "KMI30 & KMI100" in KMI_tag else "KMI30" if "KMI30" in KMI_tag else "KMI100" if "KMI100" in KMI_tag else "Other"
         signal_type = "Bullish" if trend == "Bullish" else "Bearish"
         signal_hash = f"#NEUTRAL_Signal_{datetime.now().strftime('%Y%m%d')}_{signal_type}_{index_category}"
+        message += f"🟡 {trend_emoji} 🚀 *{symbol}*{KMI_tag} - {signal_hash}\n"        
         message += f"🕒 Analysis Time: {analysis_time}\n"
         message += f"📅 DataBase Update Date: {current_price_date}\n\n"
-        message += f"🟡 {trend_emoji} 🚀 *{symbol}*{KMI_tag} - {signal_hash}\n"
         message += f"💰 Current Price: {close:.2f}\n"
         message += f"📊 RSI: {rsi:.2f}\n"
         message += f"📈 AO: {ao:.2f}\n"

@@ -63,8 +63,8 @@ DEFAULT_CONFIG = {
     "announcements_file": os.path.join(
         project_root,
         "data",
-        "announcements",
-        "psx_announcements.xlsx"
+        "excel",
+        "PSX_Announcements.xlsx"
     ),
     "database_path": os.path.join(
         project_root,

@@ -2558,6 +2558,26 @@ if __name__ == "__main__":
     # Add this line at the beginning of your main code
     create_default_symbols_file()
     
+    # Load top 100 symbols from KMI100 sheet of the Excel file
+    symbols_file_path = os.path.join(os.getcwd(), 'data/databases/production/psxsymbols.xlsx')
+    try:
+        kmi100_df = pd.read_excel(symbols_file_path, sheet_name='KMI100')
+        selected_symbols = kmi100_df.iloc[:100, 0].tolist()  # Get top 100 symbols from first column
+        print(f"Loaded {len(selected_symbols)} symbols from KMI100 sheet for processing.")
+        # Filter available symbols to only include the top 100 from KMI100
+        original_available_symbols = available_symbols.copy()
+        available_symbols = [sym for sym in original_available_symbols if sym in selected_symbols]
+        # Log missing symbols from KMI100 top 100 that are not in the database
+        missing_symbols = [sym for sym in selected_symbols if sym not in original_available_symbols]
+        if missing_symbols:
+            print(f"⚠️ {len(missing_symbols)} symbols from KMI100 top 100 not found in database:")
+            for sym in missing_symbols:
+                print(f"⚠️ Symbol {sym} not found in available data tables")
+        print(f"Filtered to {len(available_symbols)} symbols that are in both database and KMI100 top 100.")
+    except Exception as e:
+        print(f"Error loading KMI100 symbols from Excel: {e}")
+        print("Proceeding with all available symbols from database.")
+    
     # Display all buy stocks sorted by update_date (most recent first), then by holding days
     print("\n🟢 ALL BUY SIGNALS (SORTED BY UPDATE DATE) 🟢")
     print("============================================")

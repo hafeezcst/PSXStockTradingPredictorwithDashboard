@@ -307,7 +307,12 @@ if __name__ == "__main__":
     # Delete any tables in the database that do not correspond to the valid symbols
     data_reader.delete_unused_tables(valid_symbols)
     
-    end_date = date.today() - timedelta(days=1)
+    # Set end_date based on current time: before 5 PM, use previous day; at or after 5 PM, use today
+    current_time = datetime.now()
+    if current_time.hour < 17:  # Before 5:00 PM
+        end_date = date.today() - timedelta(days=1)
+    else:  # At or after 5:00 PM
+        end_date = date.today()
     fixed_start_date = date(2000, 1, 1)
     failed_attempts = 0
 

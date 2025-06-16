@@ -51,7 +51,7 @@ process_stock_data = analyzer.process_stock_data
 
 def update_psx_investing_db(data, table_name):
     """
-    Update the buy, sell, or neutral stock tables in PSX_investing_Stocks_KMI30.db
+    Update the buy, sell, or neutral stock tables in PSX_investing_Stocks_KMI100.db
     
     Args:
         data: DataFrame containing stock data
@@ -62,7 +62,7 @@ def update_psx_investing_db(data, table_name):
     """
     try:
         # Create database if it doesn't exist
-        with sqlite3.connect('data/databases/production/PSX_investing_Stocks_KMI30.db') as conn:
+        with sqlite3.connect('data/databases/production/PSX_investing_Stocks_KMI100.db') as conn:
             # Add 'Update_Date' column to the data
             data['Update_Date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             

@@ -47,11 +47,11 @@ def analyze_stock(symbol: str, use_ai: bool = True, notify: bool = True) -> Dict
         # Analyze technical indicators
         technical_analysis = analyze_technical_indicators(technical_data)
         
-        # Temporarily disable financial data scraping, focus on technical indicators
+        # Temporarily disable financial data scraping due to persistent issues
         financial_data = {}
         financial_analysis = {'financial_score': 0.0, 'confidence': 0.0}
         intrinsic_valuation = {'intrinsic_value': 0.0, 'margin_of_safety': 0.0}
-        logger.info(f"Financial data scraping disabled for {symbol}, focusing on technical indicators")
+        logger.info(f"Financial data scraping disabled for {symbol} due to ongoing issues with data retrieval")
         
         # Read announcements
         announcements_data = read_psx_announcements()
@@ -80,15 +80,15 @@ def analyze_stock(symbol: str, use_ai: bool = True, notify: bool = True) -> Dict
         
         # Calculate overall score, focusing on technical indicators
         technical_score = technical_analysis.get('technical_score', 0.0)
-        financial_score = 0.0  # Financial score disabled
+        financial_score = financial_analysis.get('financial_score', 0.0)
         ai_score = ai_analysis.get('ai_score', 0.0)
         
-        # Weighted overall score, adjusted for disabled financial analysis
+        # Weighted overall score, excluding financial analysis due to temporary disablement
         if use_ai:
             overall_score = (technical_score * 0.6 + ai_score * 0.4)
         else:
             overall_score = technical_score
-        logger.info(f"Overall score for {symbol} calculated based on technical indicators only")
+        logger.info(f"Overall score for {symbol} calculated based on technical indicators and AI analysis only")
         
         # Generate recommendation based on overall score with detailed justification
         justification = ""
@@ -178,7 +178,7 @@ def analyze_stock(symbol: str, use_ai: bool = True, notify: bool = True) -> Dict
         return {}
 
 def analyze_batch_stocks(symbols: Optional[List[str]] = None, use_ai: bool = True, notify: bool = True, delay_seconds: int = 5) -> List[Dict]:
-    """Analyze multiple stocks sequentially with a delay to avoid rate limits"""
+    """Analyze multiple stocks using parallel processing with a delay to avoid rate limits"""
     try:
         if symbols is None:
             symbols = fetch_psx_symbols()
@@ -193,20 +193,24 @@ def analyze_batch_stocks(symbols: Optional[List[str]] = None, use_ai: bool = Tru
         ensure_database_exists()
         
         results = []
-        # Process stocks sequentially with a delay to avoid rate limits
-        for i, symbol in enumerate(symbols):
-            try:
-                result = analyze_stock(symbol, use_ai, notify)
-                if result:
-                    results.append(result)
-                    logger.info(f"Completed analysis for {symbol}")
-                else:
-                    logger.warning(f"Analysis failed for {symbol}")
-                # Add delay between requests to avoid rate limiting
+        # Use parallel processing with a controlled number of workers to avoid rate limits
+        max_workers = min(len(symbols), 5)  # Limit to 5 concurrent analyses to prevent rate limiting
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_symbol = {executor.submit(analyze_stock, symbol, use_ai, notify): symbol for symbol in symbols}
+            for i, future in enumerate(concurrent.futures.as_completed(future_to_symbol)):
+                symbol = future_to_symbol[future]
+                try:
+                    result = future.result()
+                    if result:
+                        results.append(result)
+                        logger.info(f"Completed analysis for {symbol}")
+                    else:
+                        logger.warning(f"Analysis failed for {symbol}")
+                except Exception as e:
+                    logger.error(f"Error processing {symbol}: {e}")
+                # Add delay between batches to avoid rate limiting
                 if i < len(symbols) - 1:  # No delay after the last symbol
                     time.sleep(delay_seconds)
-            except Exception as e:
-                logger.error(f"Error processing {symbol}: {e}")
         
         # Send batch notification if enabled
         if notify and results:
@@ -230,7 +234,7 @@ def generate_signals(symbol: str, analysis: Dict, technical_data: Dict) -> List[
         current_price = technical_data.get('close', 0.0)
         
         # Check for BUY signal
-        if recommendation == "BUY" and overall_score > 0.3 and confidence > 0.6:
+        if recommendation == "BUY" and overall_score > 0.4 and confidence > 0.7:
             signal_strength = overall_score * confidence
             target_price = current_price * 1.1  # 10% target
             stop_loss = current_price * 0.95   # 5% stop loss
@@ -252,7 +256,7 @@ def generate_signals(symbol: str, analysis: Dict, technical_data: Dict) -> List[
             })
         
         # Check for SELL signal
-        elif recommendation == "SELL" and overall_score < -0.3 and confidence > 0.6:
+        elif recommendation == "SELL" and overall_score < -0.4 and confidence > 0.7:
             signal_strength = abs(overall_score) * confidence
             target_price = current_price * 0.9  # 10% target down
             stop_loss = current_price * 1.05   # 5% stop loss up
@@ -338,6 +342,23 @@ def monitor_signals():
     except Exception as e:
         logger.error(f"Error monitoring signals: {e}")
 
+def extract_latest_signals(database_path: str = os.path.join("data", "databases", "production", "PSX_investing_Stocks_KMI100.db"), limit: int = 10) -> List[Dict]:
+    """Extract the most recent signals from the specified database."""
+    try:
+        from sqlite3 import connect
+        conn = connect(database_path)
+        cursor = conn.cursor()
+        query = f"SELECT * FROM signals ORDER BY date DESC LIMIT {limit}"
+        cursor.execute(query)
+        columns = [description[0] for description in cursor.description]
+        signals = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        conn.close()
+        logger.info(f"Extracted {len(signals)} latest signals from {database_path}")
+        return signals
+    except Exception as e:
+        logger.error(f"Error extracting signals from {database_path}: {e}")
+        return []
+
 def main():
     """Main function to run stock analysis"""
     try:
@@ -359,6 +380,15 @@ def main():
         
         # Monitor signals
         monitor_signals()
+        
+        # Extract and display latest signals from the specified database
+        latest_signals = extract_latest_signals()
+        if latest_signals:
+            logger.info("Latest Signals:")
+            for signal in latest_signals:
+                logger.info(f"Symbol: {signal.get('symbol', 'N/A')}, Type: {signal.get('signal_type', 'N/A')}, Date: {signal.get('date', 'N/A')}, Strength: {signal.get('signal_strength', 0.0):.2f}")
+        else:
+            logger.info("No signals found in the database.")
         
         logger.info("PSX Stock Analysis completed")
         

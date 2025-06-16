@@ -474,14 +474,226 @@ def parse_kmi_shariah_data(html_content):
     except Exception as e:
         logging.error(f"Error parsing HTML: {e}")
         logging.error(traceback.format_exc())
+def parse_allshr_data(html_content):
+    """Parse the HTML to extract ALLSHR stocks with specific columns"""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    try:
+        logging.info("Parsing ALLSHR stocks data")
+        
+        # Find all tables on the page
+        tables = soup.find_all('table', {'class': 'table'})
+        
+        # The table we want should have the specific headers we're looking for
+        target_table = None
+        for table in tables:
+            headers = table.find_all('th')
+            header_texts = [h.text.strip() for h in headers if h.text.strip()]
+            
+            # Check if this looks like our target table
+            if any('Symbol' in h for h in header_texts) and any('Points' in h for h in header_texts):
+                target_table = table
+                break
+        
+        if not target_table:
+            logging.warning("Could not find the table with ALLSHR data")
+            return None
+        
+        # Extract data from table rows
+        rows = target_table.find_all('tr')
+        if len(rows) <= 1:  # Only header row or no rows
+            logging.warning("Table has no data rows")
+            return None
+            
+        # Identify column indices
+        header_row = rows[0]
+        headers = [th.text.strip() for th in header_row.find_all('th')]
+        logging.info(f"Found table headers: {headers}")
+        
+        # Find indices for the columns we need
+        symbol_idx = next((i for i, h in enumerate(headers) if 'Symbol' in h), None)
+        points_idx = next((i for i, h in enumerate(headers) if 'Points' in h), None)
+        weight_idx = next((i for i, h in enumerate(headers) if 'Weight' in h), None)
+        current_idx = next((i for i, h in enumerate(headers) if 'Cur.' in h), None)
+        change_idx = next((i for i, h in enumerate(headers) if 'Chg.' in h), None)
+        change_pct_idx = next((i for i, h in enumerate(headers) if 'Chg.%' in h), None)
+        high52_idx = next((i for i, h in enumerate(headers) if '52WK High' in h), None)
+        low52_idx = next((i for i, h in enumerate(headers) if '52WK Low' in h), None)
+        volume_idx = next((i for i, h in enumerate(headers) if 'Vol.' in h), None)
+        market_cap_idx = next((i for i, h in enumerate(headers) if 'Market Cap' in h), None)
+        
+        if None in (symbol_idx, points_idx, current_idx):
+            logging.error(f"Could not find all required columns in headers: {headers}")
+            return None
+            
+        # Parse data rows
+        data = []
+        current_date = datetime.now().strftime('%Y-%m-%d')
+        
+        for row in rows[1:]:  # Skip header row
+            columns = row.find_all('td')
+            if len(columns) > max(symbol_idx, points_idx, current_idx):
+                # Extract symbol
+                symbol = columns[symbol_idx].text.strip()
+                
+                # Extract points
+                points_text = columns[points_idx].text.strip().replace(',', '')
+                points = float(points_text) if points_text.replace('.', '').isdigit() else 0.0
+                
+                # Extract weight (percentage value)
+                weight = 0.0
+                if weight_idx is not None and len(columns) > weight_idx:
+                    weight_text = columns[weight_idx].text.strip()
+                    # Remove commas and percentage signs, then convert to float
+                    weight_text = weight_text.replace(',', '').replace('%', '')
+                    try:
+                        weight = float(weight_text)
+                    except ValueError:
+                        logging.warning(f"Could not parse weight value: {columns[weight_idx].text.strip()}")
+                        weight = 0.0
+                
+                # Extract current price
+                current_text = columns[current_idx].text.strip().replace(',', '')
+                current = float(current_text) if current_text.replace('.', '').isdigit() else 0.0
+                
+                # Extract change
+                change = 0.0
+                if change_idx is not None and len(columns) > change_idx:
+                    change_text = columns[change_idx].text.strip().replace(',', '')
+                    change = float(change_text) if change_text.replace('.', '').isdigit() else 0.0
+                
+                # Extract change percentage
+                change_pct = 0.0
+                if change_pct_idx is not None and len(columns) > change_pct_idx:
+                    change_pct_text = columns[change_pct_idx].text.strip().replace('%', '').replace(',', '')
+                    change_pct = float(change_pct_text) if change_pct_text.replace('.', '').isdigit() else 0.0
+                
+                # Extract 52-week high
+                high52 = 0.0
+                if high52_idx is not None and len(columns) > high52_idx:
+                    high52_text = columns[high52_idx].text.strip().replace(',', '')
+                    high52 = float(high52_text) if high52_text.replace('.', '').isdigit() else 0.0
+                
+                # Extract 52-week low
+                low52 = 0.0
+                if low52_idx is not None and len(columns) > low52_idx:
+                    low52_text = columns[low52_idx].text.strip().replace(',', '')
+                    low52 = float(low52_text) if low52_text.replace('.', '').isdigit() else 0.0
+                
+                # Extract volume
+                volume = 0
+                if volume_idx is not None and len(columns) > volume_idx:
+                    volume_text = columns[volume_idx].text.strip().replace(',', '')
+                    volume = int(volume_text) if volume_text.isdigit() else 0
+                
+                # Extract market cap (in thousands) with enhanced validation
+                market_cap = 0
+                if market_cap_idx is not None and len(columns) > market_cap_idx:
+                    market_cap_text = columns[market_cap_idx].text.strip()
+                    try:
+                        # Remove commas, spaces and any non-numeric characters except B/M
+                        clean_text = market_cap_text.replace(',', '').replace(' ', '')
+                        
+                        # Handle billions (B) and millions (M) suffixes
+                        if 'B' in clean_text:
+                            value = float(clean_text.replace('B', ''))
+                            market_cap = int(value * 1000000)  # Convert billions to thousands
+                            logging.debug(f"Parsed market cap (B): {market_cap_text} → {market_cap}")
+                        elif 'M' in clean_text:
+                            value = float(clean_text.replace('M', ''))
+                            market_cap = int(value * 1000)  # Convert millions to thousands
+                            logging.debug(f"Parsed market cap (M): {market_cap_text} → {market_cap}")
+                        else:
+                            # Plain numeric value (already in thousands)
+                            market_cap = int(float(clean_text))
+                            logging.debug(f"Parsed market cap: {market_cap_text} → {market_cap}")
+                            
+                    except (ValueError, AttributeError) as e:
+                        logging.warning(f"Failed to parse market cap value: {market_cap_text} - {e}")
+                        market_cap = 0
+                
+                record = {
+                    'symbol': symbol,
+                    'points': points,
+                    'weight': weight,
+                    'current_price': current,
+                    'change': change,
+                    'change_percent': change_pct,
+                    'high_52_week': high52,
+                    'low_52_week': low52,
+                    'volume': volume,
+                    'market_cap_000': market_cap,
+                    'date_added': current_date
+                }
+                
+                data.append(record)
+        
+        logging.info(f"Found {len(data)} ALLSHR stocks")
+        return data
+        
+    except Exception as e:
+        logging.error(f"Error parsing HTML for ALLSHR: {e}")
+        logging.error(traceback.format_exc())
+        return None
         return None
 
-def save_to_database(data, db_path=None):
-    """Save the extracted data to SQLite database with data retention"""
+def save_to_database(data, db_path=None, table_name='KMIALLSHR'):
+    """Save the extracted data to SQLite database with data retention for specified table
+    Args:
+        data: List of dicts containing stock data with expected columns:
+            - KMIALLSHR: symbol, points, weight, current_price, change, change_percent,
+                        high_52_week, low_52_week, volume, market_cap_000,
+                        date_added, update_date, rank
+            - ALLSHR: Same as KMIALLSHR
+            - KSE100: Same as KMIALLSHR
+            - KMI30: Same as KMIALLSHR
+            - KMI100: Same as KMIALLSHR (must have exactly 100 records)
+        db_path: Path to SQLite database file
+        table_name: Name of table to save to (KMIALLSHR, ALLSHR, KSE100, KMI30, KMI100)
+    Returns:
+        bool: True if successful, False if failed
+    Raises:
+        ValueError: If input data doesn't match expected schema
+    """
     if db_path is None:
         db_path = Path("/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/data/databases/production/PSXSymbols.db")
     
     try:
+        # Validate input data schema
+        required_columns = {
+            'symbol': str,
+            'points': (int, float),
+            'weight': (int, float),
+            'current_price': (int, float),
+            'change': (int, float),
+            'change_percent': (int, float),
+            'high_52_week': (int, float),
+            'low_52_week': (int, float),
+            'volume': int,
+            'market_cap_000': int,
+            'date_added': str,
+            'update_date': str,
+            'rank': (int, type(None))
+        }
+
+        # Special validation for KMI100
+        if table_name == 'KMI100' and len(data) != 100:
+            error_msg = f"KMI100 must have exactly 100 records, got {len(data)}"
+            logging.error(error_msg)
+            raise ValueError(error_msg)
+
+        # Validate each record
+        for record in data:
+            for col, col_type in required_columns.items():
+                if col not in record:
+                    error_msg = f"Missing required column '{col}' in record for {table_name}"
+                    logging.error(error_msg)
+                    raise ValueError(error_msg)
+                if not isinstance(record[col], col_type):
+                    error_msg = f"Invalid type for column '{col}' in {table_name}. Expected {col_type}, got {type(record[col])}"
+                    logging.error(error_msg)
+                    raise ValueError(error_msg)
+
         # Ensure the database directory exists
         db_path.parent.mkdir(parents=True, exist_ok=True)
         
@@ -492,7 +704,7 @@ def save_to_database(data, db_path=None):
             print("  - Creating new database file")
             open(db_path, 'a').close()
         
-        logging.info(f"Saving {len(data)} records to database: {db_path}")
+        logging.info(f"Saving {len(data)} records to {table_name} table in database: {db_path}")
         
         # Add update timestamp
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -510,8 +722,8 @@ def save_to_database(data, db_path=None):
             conn.execute("PRAGMA journal_mode = WAL")
             
             # Create backup table if it doesn't exist
-            conn.execute('''
-            CREATE TABLE IF NOT EXISTS KMIALLSHR_backup (
+            conn.execute(f'''
+            CREATE TABLE IF NOT EXISTS {table_name}_backup (
                 symbol TEXT,
                 points REAL,
                 weight REAL,
@@ -524,15 +736,15 @@ def save_to_database(data, db_path=None):
                 market_cap_000 INTEGER,
                 date_added TEXT,
                 update_date TEXT,
-                backup_date TEXT,
                 rank INTEGER,
+                backup_date TEXT,
                 PRIMARY KEY (symbol, date_added, backup_date)
             )
             ''')
             
             # Create main table if it doesn't exist
-            conn.execute('''
-            CREATE TABLE IF NOT EXISTS KMIALLSHR (
+            conn.execute(f'''
+            CREATE TABLE IF NOT EXISTS {table_name} (
                 symbol TEXT,
                 points REAL,
                 weight REAL,
@@ -550,36 +762,91 @@ def save_to_database(data, db_path=None):
             )
             ''')
             
+            # Check for missing columns and add them if needed
+            cursor = conn.cursor()
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            existing_columns = [col[1] for col in cursor.fetchall()]
+            
+            # List of all possible columns
+            all_columns = [
+                'symbol', 'points', 'weight', 'current_price', 'change',
+                'change_percent', 'high_52_week', 'low_52_week', 'volume',
+                'market_cap_000', 'date_added', 'update_date', 'rank'
+            ]
+            
+            # Add any missing columns with error handling
+            for col in all_columns:
+                if col not in existing_columns:
+                    try:
+                        print(f"  - Adding missing column: {col}")
+                        if col == 'rank':
+                            col_type = 'INTEGER'
+                        elif col in ['volume', 'market_cap_000']:
+                            col_type = 'INTEGER'
+                        elif col in ['points', 'weight', 'current_price', 'change',
+                                    'change_percent', 'high_52_week', 'low_52_week']:
+                            col_type = 'REAL'
+                        else:
+                            col_type = 'TEXT'
+                        
+                        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {col} {col_type}")
+                        print(f"    - Successfully added column {col} with type {col_type}")
+                    except sqlite3.OperationalError as e:
+                        if "duplicate column name" in str(e):
+                            print(f"    - Column {col} already exists (skipping)")
+                            continue
+                        else:
+                            print(f"    ❌ Error adding column {col}: {str(e)}")
+                            logging.error(f"Failed to add column {col}: {str(e)}")
+            
             # Begin transaction
             with conn:
                 today = datetime.now().strftime('%Y-%m-%d')
                 
                 # Backup existing data for today before deleting
-                conn.execute('''
-                INSERT INTO KMIALLSHR_backup
-                SELECT *, ? FROM KMIALLSHR
+                conn.execute(f'''
+                INSERT INTO {table_name}_backup
+                SELECT
+                    symbol, points, weight, current_price, change,
+                    change_percent, high_52_week, low_52_week, volume,
+                    market_cap_000, date_added, update_date, rank, ?
+                FROM {table_name}
                 WHERE date_added = ?
                 ''', (timestamp, today))
                 
                 # Delete existing records for today
-                conn.execute("DELETE FROM KMIALLSHR WHERE date_added = ?", (today,))
+                conn.execute(f"DELETE FROM {table_name} WHERE date_added = ?", (today,))
                 
                 # Insert new data
-                df.to_sql('KMIALLSHR', conn, if_exists='append', index=False)
+                df.to_sql(table_name, conn, if_exists='append', index=False)
                 
                 # Verify data was inserted correctly
-                count = conn.execute("SELECT COUNT(*) FROM KMIALLSHR WHERE date_added = ?",
+                count = conn.execute(f"SELECT COUNT(*) FROM {table_name} WHERE date_added = ?",
                                    (today,)).fetchone()[0]
                 if count != len(data):
                     raise ValueError(f"Data count mismatch: expected {len(data)}, got {count}")
             
-        logging.info(f"Successfully saved {len(data)} records to KMIALLSHR table")
+        logging.info(f"Successfully saved {len(data)} records to {table_name} table")
         return True
     except Exception as e:
-        logging.error(f"Failed to save data to database: {e}")
+        error_msg = f"Failed to save data to {table_name}: {str(e)}"
+        logging.error(error_msg)
         logging.error(traceback.format_exc())
-        print(f"  ❌ Database error: {str(e)}")
+        print(f"  ❌ Database error: {error_msg}")
         print(f"  ❌ Check log file for details: {DATA_LOGS_DIR / 'kmi_shariah_processor.log'}")
+        
+        # Log schema mismatch details if available
+        if "columns but" in str(e) and "values were supplied" in str(e):
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"PRAGMA table_info({table_name})")
+                columns = [col[1] for col in cursor.fetchall()]
+                cursor.execute(f"PRAGMA table_info({table_name}_backup)")
+                backup_columns = [col[1] for col in cursor.fetchall()]
+                logging.error(f"Schema mismatch - {table_name} columns: {columns}")
+                logging.error(f"Schema mismatch - {table_name}_backup columns: {backup_columns}")
+                logging.error(f"Data columns: {list(data[0].keys()) if data else 'No data'}")
+        
         return False
 
 def export_to_csv(data, filename=None):
@@ -674,9 +941,25 @@ def export_to_excel(data, filename=None, sheet_name='KMI100'):
                 print(f"  - Writing all sheets back to file")
                 with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
                     for sheet_name, sheet_df in all_sheets.items():
+                        # Special handling for KMI100 sheet
+                        if sheet_name == 'KMI100':
+                            # Validate we have exactly 100 rows
+                            if len(sheet_df) != 100:
+                                error_msg = f"Invalid row count for KMI100: expected 100, got {len(sheet_df)}"
+                                print(f"  ❌ {error_msg}")
+                                logging.error(error_msg)
+                                # Create new DataFrame with exactly 100 rows
+                                sheet_df = sheet_df.head(100)
+                                print("  - Truncated to 100 rows")
+                                
+                            # Clear existing data before writing
+                            print(f"  - Clearing existing KMI100 data")
+                            logging.info("Clearing KMI100 sheet before writing new data")
+                            
                         sheet_df.to_excel(writer, sheet_name=sheet_name, index=False)
-                
-                print(f"  - Successfully updated {sheet_name} sheet while preserving {len(existing_sheets)} other sheets")
+                    
+                    print(f"  - Successfully updated {sheet_name} sheet while preserving {len(existing_sheets)} other sheets")
+                    logging.info(f"Updated {sheet_name} sheet with {len(sheet_df)} rows")
                 
                 # Verify the KMI100 sheet after writing
                 with pd.ExcelFile(excel_path) as xls:
@@ -692,6 +975,12 @@ def export_to_excel(data, filename=None, sheet_name='KMI100'):
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
             
             print(f"  - Successfully created new file with {sheet_name} sheet")
+            if sheet_name == 'KMI100':
+                if len(df) != 100:
+                    print(f"  ❌ Invalid row count for KMI100: expected 100, got {len(df)}")
+                    logging.error(f"Invalid KMI100 row count: expected 100, got {len(df)}")
+                else:
+                    logging.info(f"Created new KMI100 sheet with {len(df)} rows")
             
             # Verify the KMI100 sheet after writing
             with pd.ExcelFile(excel_path) as xls:
@@ -908,8 +1197,15 @@ def main():
     ensure_dependencies()
     
     # URL of the page to scrape
-    url = "https://sarmaaya.pk/psx/market/KMIALLSHR"
-    print(f"\n🌐 Target URL: {url}")
+    kmi_url = "https://sarmaaya.pk/psx/market/KMIALLSHR"
+    allshr_url = "https://sarmaaya.pk/psx/market/ALLSHR"
+    kse100_url = "https://sarmaaya.pk/psx/market/KSE100"
+    kmi30_url = "https://sarmaaya.pk/psx/market/KMI30"
+    print(f"\n🌐 Target URLs:")
+    print(f"  - KMIALLSHR: {kmi_url}")
+    print(f"  - ALLSHR: {allshr_url}")
+    print(f"  - KSE100: {kse100_url}")
+    print(f"  - KMI30: {kmi30_url}")
     
     # Paths for output - using path constants for consistency
     db_path = Path("/Users/muhammadhafeez/Documents/GitHub/PSXStockTradingPredictorwithDashboard/data/databases/production/PSXSymbols.db")
@@ -946,68 +1242,183 @@ def main():
     
     # copy the psxsymbols.xlsx file to the src/data_processing
     shutil.copy(excel_path, SCRIPTS_DIR / 'data_processing/psxsymbols.xlsx')
-    html_content = None
+    kmi_html_content = None
+    allshr_html_content = None
+    kse100_html_content = None
+    kmi30_html_content = None
     
     print("\n🔍 Fetching webpage content...")
     # Method 1: Standard requests
-    print("  - Trying standard requests...")
-    html_content = fetch_webpage(url)
+    print("  - Trying standard requests for KMIALLSHR...")
+    kmi_html_content = fetch_webpage(kmi_url)
+    print("  - Trying standard requests for ALLSHR...")
+    allshr_html_content = fetch_webpage(allshr_url)
+    print("  - Trying standard requests for KSE100...")
+    kse100_html_content = fetch_webpage(kse100_url)
+    print("  - Trying standard requests for KMI30...")
+    kmi30_html_content = fetch_webpage(kmi30_url)
     
     # Method 2: Cloudscraper
-    if not html_content:
-        print("  - Standard requests failed, trying cloudscraper...")
-        html_content = fetch_webpage_cloudscraper(url)
+    if not kmi_html_content:
+        print("  - Standard requests failed for KMIALLSHR, trying cloudscraper...")
+        kmi_html_content = fetch_webpage_cloudscraper(kmi_url)
+    if not allshr_html_content:
+        print("  - Standard requests failed for ALLSHR, trying cloudscraper...")
+        allshr_html_content = fetch_webpage_cloudscraper(allshr_url)
+    if not kse100_html_content:
+        print("  - Standard requests failed for KSE100, trying cloudscraper...")
+        kse100_html_content = fetch_webpage_cloudscraper(kse100_url)
+    if not kmi30_html_content:
+        print("  - Standard requests failed for KMI30, trying cloudscraper...")
+        kmi30_html_content = fetch_webpage_cloudscraper(kmi30_url)
     
     # Method 3: Selenium with fallbacks
-    if not html_content:
-        print("  - Cloudscraper failed, trying Selenium...")
-        html_content = fetch_webpage_with_selenium(url)
+    if not kmi_html_content:
+        print("  - Cloudscraper failed for KMIALLSHR, trying Selenium...")
+        kmi_html_content = fetch_webpage_with_selenium(kmi_url)
+    if not allshr_html_content:
+        print("  - Cloudscraper failed for ALLSHR, trying Selenium...")
+        allshr_html_content = fetch_webpage_with_selenium(allshr_url)
+    if not kse100_html_content:
+        print("  - Cloudscraper failed for KSE100, trying Selenium...")
+        kse100_html_content = fetch_webpage_with_selenium(kse100_url)
+    if not kmi30_html_content:
+        print("  - Cloudscraper failed for KMI30, trying Selenium...")
+        kmi30_html_content = fetch_webpage_with_selenium(kmi30_url)
     
-    if not html_content:
-        print("  ❌ All methods failed to fetch webpage content")
-        logging.error("Failed to fetch webpage content by any method. Exiting.")
+    if not kmi_html_content:
+        print("  ❌ All methods failed to fetch KMIALLSHR webpage content")
+        logging.error("Failed to fetch KMIALLSHR webpage content by any method.")
+        return False
+    if not allshr_html_content:
+        print("  ❌ All methods failed to fetch ALLSHR webpage content")
+        logging.error("Failed to fetch ALLSHR webpage content by any method.")
+        return False
+    if not kse100_html_content:
+        print("  ❌ All methods failed to fetch KSE100 webpage content")
+        logging.error("Failed to fetch KSE100 webpage content by any method.")
+        return False
+    if not kmi30_html_content:
+        print("  ❌ All methods failed to fetch KMI30 webpage content")
+        logging.error("Failed to fetch KMI30 webpage content by any method.")
         return False
     
-    print("  ✅ Successfully fetched webpage content")
+    print("  ✅ Successfully fetched KMIALLSHR webpage content")
+    print("  ✅ Successfully fetched ALLSHR webpage content")
     
     # Parse the HTML to extract data
     print("\n🔍 Parsing KMIALLSHR data...")
-    data = parse_kmi_shariah_data(html_content)
-    if not data or len(data) == 0:
+    kmi_data = parse_kmi_shariah_data(kmi_html_content)
+    if not kmi_data or len(kmi_data) == 0:
         print("  ❌ Could not parse KMIALLSHR data")
         logging.error("Could not parse KMIALLSHR data. Exiting.")
         return False
     
-    print(f"  ✅ Successfully parsed {len(data)} KMIALLSHR stocks")
+    print("\n🔍 Parsing ALLSHR data...")
+    allshr_data = parse_allshr_data(allshr_html_content)
+    if not allshr_data or len(allshr_data) == 0:
+        print("  ❌ Could not parse ALLSHR data")
+        logging.error("Could not parse ALLSHR data. Exiting.")
+        return False
+
+    print("\n🔍 Parsing KSE100 data...")
+    kse100_data = parse_kmi_shariah_data(kse100_html_content)
+    if not kse100_data or len(kse100_data) == 0:
+        print("  ❌ Could not parse KSE100 data")
+        logging.error("Could not parse KSE100 data. Exiting.")
+        return False
+
+    print("\n🔍 Parsing KMI30 data...")
+    kmi30_data = parse_kmi_shariah_data(kmi30_html_content)
+    if not kmi30_data or len(kmi30_data) == 0:
+        print("  ❌ Could not parse KMI30 data")
+        logging.error("Could not parse KMI30 data. Exiting.")
+        return False
+    
+    print(f"  ✅ Successfully parsed {len(kmi_data)} KMIALLSHR stocks")
+    print(f"  ✅ Successfully parsed {len(allshr_data)} ALLSHR stocks")
+    print(f"  ✅ Successfully parsed {len(kse100_data)} KSE100 stocks")
+    print(f"  ✅ Successfully parsed {len(kmi30_data)} KMI30 stocks")
         
     # Sort data by market cap in descending order
-    data = sorted(data, key=lambda x: x['market_cap_000'], reverse=True)
-    print(f"  ✅ Sorted {len(data)} stocks by market capitalization")
-    logging.info(f"Sorted {len(data)} stocks by market capitalization")
+    kmi_data = sorted(kmi_data, key=lambda x: x['market_cap_000'], reverse=True)
+    allshr_data = sorted(allshr_data, key=lambda x: x['market_cap_000'], reverse=True)
+    kse100_data = sorted(kse100_data, key=lambda x: x['market_cap_000'], reverse=True)
+    kmi30_data = sorted(kmi30_data, key=lambda x: x['market_cap_000'], reverse=True)
+
+    # Create KMI100 data from top 100 KMIALL stocks
+    kmi100_data = kmi_data[:100]
+    for i, stock in enumerate(kmi100_data):
+        stock['rank'] = i + 1
+    print(f"  ✅ Sorted {len(kmi_data)} KMIALLSHR stocks by market capitalization")
+    print(f"  ✅ Sorted {len(allshr_data)} ALLSHR stocks by market capitalization")
+    print(f"  ✅ Sorted {len(kse100_data)} KSE100 stocks by market capitalization")
+    print(f"  ✅ Sorted {len(kmi30_data)} KMI30 stocks by market capitalization")
+    logging.info(f"Sorted {len(kmi_data)} KMIALLSHR stocks by market capitalization")
+    logging.info(f"Sorted {len(allshr_data)} ALLSHR stocks by market capitalization")
+    logging.info(f"Sorted {len(kse100_data)} KSE100 stocks by market capitalization")
+    logging.info(f"Sorted {len(kmi30_data)} KMI30 stocks by market capitalization")
     
     # Save the data to the database
     print("\n💾 Saving data to database...")
-    db_success = save_to_database(data, db_path)
-    if db_success:
-        print("  ✅ Successfully saved data to database")
+    kmi_db_success = save_to_database(kmi_data, db_path, table_name='KMIALLSHR')
+    allshr_db_success = save_to_database(allshr_data, db_path, table_name='ALLSHR')
+    kse100_db_success = save_to_database(kse100_data, db_path, table_name='KSE100')
+    kmi30_db_success = save_to_database(kmi30_data, db_path, table_name='KMI30')
+    if kmi_db_success:
+        print("  ✅ Successfully saved KMIALLSHR data to database")
     else:
-        print("  ❌ Failed to save data to database")
+        print("  ❌ Failed to save KMIALLSHR data to database")
+    if allshr_db_success:
+        print("  ✅ Successfully saved ALLSHR data to database")
+    else:
+        print("  ❌ Failed to save ALLSHR data to database")
+    if kse100_db_success:
+        print("  ✅ Successfully saved KSE100 data to database")
+    else:
+        print("  ❌ Failed to save KSE100 data to database")
+    if kmi30_db_success:
+        print("  ✅ Successfully saved KMI30 data to database")
+    else:
+        print("  ❌ Failed to save KMI30 data to database")
     
     # Export to Excel - use the specific Excel file path
     print("\n📊 Exporting data to Excel...")
-    excel_success = export_to_excel(data, excel_path, 'KMI100')
-    if excel_success:
-        print("  ✅ Successfully exported data to Excel")
+    excel_path = Path("src/data_processing/psxsymbols.xlsx")  # Ensure correct path
+    kmi_excel_success = export_to_excel(kmi100_data, excel_path, 'KMI100')
+    allshr_excel_success = export_to_excel(allshr_data, excel_path, 'KSEALL')
+    kse100_excel_success = export_to_excel(kse100_data, excel_path, 'KSE100')
+    kmi30_excel_success = export_to_excel(kmi30_data, excel_path, 'KMI30')
+    if kmi_excel_success:
+        print("  ✅ Successfully exported KMIALLSHR data to Excel")
     else:
-        print("  ❌ Failed to export data to Excel")
+        print("  ❌ Failed to export KMIALLSHR data to Excel")
+    if allshr_excel_success:
+        print("  ✅ Successfully exported ALLSHR data to Excel")
+    else:
+        print("  ❌ Failed to export ALLSHR data to Excel")
+    if kse100_excel_success:
+        print("  ✅ Successfully exported KSE100 data to Excel")
+    else:
+        print("  ❌ Failed to export KSE100 data to Excel")
+    if kmi30_excel_success:
+        print("  ✅ Successfully exported KMI30 data to Excel")
+    else:
+        print("  ❌ Failed to export KMI30 data to Excel")
     
     # Export to CSV
     print("\n📊 Exporting data to CSV...")
-    csv_success = export_to_csv(data, csv_path)
-    if csv_success:
-        print("  ✅ Successfully exported data to CSV")
+    kmi_csv_success = export_to_csv(kmi_data, csv_path)
+    allshr_csv_path = DATA_EXPORTS_DIR / 'reports' / 'ALLSHR.csv'
+    allshr_csv_success = export_to_csv(allshr_data, allshr_csv_path)
+    if kmi_csv_success:
+        print("  ✅ Successfully exported KMIALLSHR data to CSV")
     else:
-        print("  ❌ Failed to export data to CSV")
+        print("  ❌ Failed to export KMIALLSHR data to CSV")
+    if allshr_csv_success:
+        print("  ✅ Successfully exported ALLSHR data to CSV")
+    else:
+        print("  ❌ Failed to export ALLSHR data to CSV")
     
     # Verify the KMI100 sheet after all operations
     if excel_path.exists():
@@ -1024,7 +1435,9 @@ def main():
             print(f"\n⚠️ Error reading Excel file after processing: {e}")
     
     # Check if all operations completed successfully
-    if db_success and excel_success and csv_success:
+    if (kmi_db_success and allshr_db_success and kse100_db_success and kmi30_db_success and
+        kmi_excel_success and allshr_excel_success and kse100_excel_success and kmi30_excel_success and
+        kmi_csv_success and allshr_csv_success):
         print("\n✅ KMIALLSHR data processing completed successfully")
         logging.info("KMIALLSHR data processing completed successfully.")
         return True

@@ -95,7 +95,7 @@ def main():
     # Database connections and processing
     databases = [
 
-        ("data/databases/production/psx_consolidated_data_psx.db", "PSX"),
+        ("data\databases\production\PSX_consolidated_data_PSX.db", "PSX"),
     ]
     
     for db_file, db_name in databases:
