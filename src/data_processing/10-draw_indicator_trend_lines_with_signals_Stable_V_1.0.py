@@ -6,6 +6,7 @@ import sqlite3
 import os
 import json
 import logging
+import hashlib
 import time
 from PIL import Image
 from datetime import datetime, timedelta
@@ -71,42 +72,115 @@ def send_signals_and_charts_summary(buy_df, sell_df, available_symbols, total_pr
         def sanitize_telegram_message(text):
             """Sanitize text for Telegram API with proper encoding and escaping"""
             import unicodedata
-            # Normalize Unicode
+            import re
+            
+            # First validate input type
+            if not isinstance(text, str):
+                logging.error("Invalid message type - expected string")
+                return None, None
+                
+            # Check minimum length requirement
+            if len(text.strip()) < 5:
+                logging.error(f"Message too short (length: {len(text.strip())})")
+                return None, None
+                
+            # Normalize Unicode and remove control chars
             text = unicodedata.normalize('NFKC', text)
-            # Remove any remaining invalid characters
             text = ''.join(c for c in text if ord(c) < 65536 and not unicodedata.category(c).startswith('C'))
-            # Escape special MarkdownV2 characters
+            
+            # First escape backslashes to prevent double escaping
+            text = text.replace('\\', '\\\\')
+            
+            # Escape all special MarkdownV2 characters
             special_chars = '_*[]()~`>#+-=|{}.!'
             for char in special_chars:
                 text = text.replace(char, f'\\{char}')
-            return text
-
-        # Validate and sanitize message before sending
-        try:
-            sanitized_msg = sanitize_telegram_message(message)
-            if len(sanitized_msg.encode('utf-8')) > 4096:
-                # Truncate at last space before limit to avoid breaking words
-                sanitized_msg = sanitized_msg[:4000]
-                last_space = sanitized_msg.rfind(' ')
-                if last_space > 0:
-                    sanitized_msg = sanitized_msg[:last_space]
-                sanitized_msg += "\n...[truncated]"
+                
+            # Remove any remaining problematic sequences
+            text = re.sub(r'\\{2,}', '\\\\', text)  # Normalize multiple backslashes
+            text = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', text)  # Remove control chars
             
-            # Send the sanitized message
-            send_telegram_message(sanitized_msg)
-        except Exception as e:
-            logging.error(f"Failed to send Telegram message: {str(e)}", exc_info=True)
-            # Try sending a ultra-simple ASCII-only version
-            safe_msg = (
-                f"PSX Summary: {len(buy_symbols or [])} buys, "
-                f"{len(sell_symbols or [])} sells, "
-                f"{total_processed} charts"
-            )
-            safe_msg = ''.join(c for c in safe_msg if ord(c) < 128 and c.isprintable())
+            # Final validation check
+            if not text.strip():
+                logging.error("Message empty after sanitization")
+                return None, None
+                
+            # Generate hash of sanitized content for debugging
+            import hashlib
+            content_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+            logging.info(f"Message sanitized (hash: {content_hash}, length: {len(text)})")
+            
+            return text, content_hash
+
+        # Enhanced message sending with retries and logging
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                send_telegram_message(safe_msg[:1000])
-            except Exception as fallback_error:
-                logging.critical(f"Failed to send fallback message: {str(fallback_error)}")
+                sanitized_msg, msg_hash = sanitize_telegram_message(message)
+                
+                # Validate sanitization result
+                if not sanitized_msg or not msg_hash:
+                    logging.error(f"Invalid message content - skipping send attempt {attempt+1}")
+                    continue
+                    
+                # Log sanitized message for debugging
+                logging.info(f"Attempt {attempt+1}: Sending message (hash: {msg_hash}, length: {len(sanitized_msg)})")
+                logging.debug(f"Message preview (first 200 chars): {sanitized_msg[:200]}")
+                    
+                if len(sanitized_msg.encode('utf-8')) > 4096:
+                    # Smart truncation preserving message structure
+                    parts = []
+                    current_part = []
+                    current_length = 0
+                    
+                    for line in sanitized_msg.split('\n'):
+                        line_length = len(line.encode('utf-8'))
+                        if current_length + line_length < 4000:
+                            current_part.append(line)
+                            current_length += line_length
+                        else:
+                            parts.append('\n'.join(current_part))
+                            current_part = [line]
+                            current_length = line_length
+                    
+                    if current_part:
+                        parts.append('\n'.join(current_part))
+                        
+                    for i, part in enumerate(parts):
+                        try:
+                            # Sanitize each part again in case splitting introduced issues
+                            part_sanitized, _ = sanitize_telegram_message(part)
+                            send_telegram_message(f"{part_sanitized}\n[Part {i+1}/{len(parts)}]")
+                        except Exception as e:
+                            logging.error(f"Failed to send message part {i+1}: {str(e)}")
+                else:
+                    # Final validation before sending
+                    if len(sanitized_msg.encode('utf-8')) == 0:
+                        logging.error("Message length is 0 after encoding")
+                        continue
+                        
+                    send_telegram_message(sanitized_msg)
+                break
+                
+            except Exception as e:
+                # Capture full error response if available
+                error_details = str(e)
+                if hasattr(e, 'response') and hasattr(e.response, 'text'):
+                    error_details += f"\nResponse: {e.response.text}"
+                logging.error(f"Attempt {attempt+1} failed: {error_details}", exc_info=True)
+                if attempt == max_retries - 1:
+                    # Final fallback to ultra-simple ASCII
+                    safe_msg = (
+                        f"PSX Summary: {len(buy_symbols or [])} buys, "
+                        f"{len(sell_symbols or [])} sells, "
+                        f"{total_processed} charts"
+                    )
+                    safe_msg = ''.join(c for c in safe_msg if ord(c) < 128 and c.isprintable())
+                    try:
+                        send_telegram_message(safe_msg[:1000])
+                    except Exception as fallback_error:
+                        logging.critical(f"Final fallback failed: {str(fallback_error)}")
+                time.sleep(2 ** attempt)  # Exponential backoff
         return True
     except Exception as e:
         logging.error(f"Error sending signals and charts summary: {e}")
@@ -568,7 +642,14 @@ def format_signals_for_telegram(signal_df, signal_type="BUY"):
         footer = f"\nTotal {signal_type} Signals: {len(display_df)}"
         
         # Combine all parts
-        formatted_message = f"```\n{header}{table}\n{footer}\n```"
+        formatted_message = f"{header}{table}\n{footer}"
+        
+        # Validate message length
+        if len(formatted_message) > 4096:
+            # Truncate if too long
+            max_content_length = 4096 - len(header) - len(footer) - 10  # Leave some buffer
+            truncated_table = table[:max_content_length] + "\n[...truncated...]"
+            formatted_message = f"{header}{truncated_table}\n{footer}"
         
         return formatted_message
     
@@ -1439,18 +1520,18 @@ def draw_indicator_trend_lines_with_signals(database_path, table_name):
             
             if latest_buy[0] > latest_sell[0]:
                 stock_status = "BUY/HOLD"
-                signal_hash = f"#BUY_Signal_{datetime.now().strftime('%Y%m%d')}_{symbol_name}"
+                signal_hash = f"#BUY_Signal_{datetime.now().strftime('%Y%m%d')}"
             else:
                 stock_status = "SELL"
-                signal_hash = f"#SELL_Signal_{datetime.now().strftime('%Y%m%d')}_{symbol_name}"
+                signal_hash = f"#SELL_Signal_{datetime.now().strftime('%Y%m%d')}"
         elif buy_signals:
             stock_status = "BUY/HOLD"
-            signal_hash = f"#BUY_Signal_{datetime.now().strftime('%Y%m%d')}_{symbol_name}"
+            signal_hash = f"#BUY_Signal_{datetime.now().strftime('%Y%m%d')}"
         elif sell_signals:
             stock_status = "SELL"
-            signal_hash = f"#SELL_Signal_{datetime.now().strftime('%Y%m%d')}_{symbol_name}"
+            signal_hash = f"#SELL_Signal_{datetime.now().strftime('%Y%m%d')}"
         else:
-            signal_hash = f"#NEUTRAL_Signal_{datetime.now().strftime('%Y%m%d')}_{symbol_name}"
+            signal_hash = f"#NEUTRAL_Signal_{datetime.now().strftime('%Y%m%d')}"
         
         # Calculate market phase (accumulation/distribution)
         market_phase, phase_probability, phase_details = calculate_market_phase(df, symbol_name)
