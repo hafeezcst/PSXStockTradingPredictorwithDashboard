@@ -1,0 +1,68 @@
+[
+  {
+    "total_symbols": 0,
+    "successful_downloads": 0,
+    "failed_downloads": 0,
+    "total_response_time": 0.0,
+    "start_time": "2025-06-20T00:34:17.667006",
+    "end_time": "2025-06-20T00:34:17.667472",
+    "failed_symbols": [],
+    "response_times": [],
+    "duration_seconds": 0.000466
+  },
+  {
+    "total_symbols": 0,
+    "successful_downloads": 0,
+    "failed_downloads": 0,
+    "total_response_time": 0.0,
+    "start_time": "2025-06-20T00:34:44.562109",
+    "end_time": "2025-06-20T00:34:44.562570",
+    "failed_symbols": [],
+    "response_times": [],
+    "duration_seconds": 0.000461
+  },
+  {
+    "total_symbols": 0,
+    "successful_downloads": 0,
+    "failed_downloads": 0,
+    "total_response_time": 0.0,
+    "start_time": "2025-06-20T00:35:48.699475",
+    "end_time": "2025-06-20T00:35:48.700497",
+    "failed_symbols": [],
+    "response_times": [],
+    "duration_seconds": 0.001022
+  },
+  {
+    "total_symbols": 0,
+    "successful_downloads": 0,
+    "failed_downloads": 0,
+    "total_response_time": 0.0,
+    "start_time": "2025-06-20T00:36:09.874488",
+    "end_time": "2025-06-20T00:36:09.875516",
+    "failed_symbols": [],
+    "response_times": [],
+    "duration_seconds": 0.001028
+  },
+  {
+    "total_symbols": 0,
+    "successful_downloads": 0,
+    "failed_downloads": 0,
+    "total_response_time": 0.0,
+    "start_time": "2025-06-20T00:36:36.322609",
+    "end_time": "2025-06-20T00:36:36.323486",
+    "failed_symbols": [],
+    "response_times": [],
+    "duration_seconds": 0.000877
+  },
+  {
+    "total_symbols": 0,
+    "successful_downloads": 0,
+    "failed_downloads": 0,
+    "total_response_time": 0.0,
+    "start_time": "2025-06-20T00:48:44.471904",
+    "end_time": "2025-06-20T00:48:44.472893",
+    "failed_symbols": [],
+    "response_times": [],
+    "duration_seconds": 0.000989
+  }
+]

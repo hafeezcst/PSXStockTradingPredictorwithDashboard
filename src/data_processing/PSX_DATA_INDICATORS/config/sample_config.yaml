@@ -1,0 +1,29 @@
+# Enhanced PSX Indicator Processor Configuration
+# Copy this file and modify as needed
+
+# Performance settings
+max_workers: 4  # Adjust based on your CPU cores
+batch_size: 1000
+use_gpu: false  # Set to true if you have CUDA setup
+cache_size: 128
+
+# Processing options
+calculate_advanced_indicators: true
+include_ml_features: true
+enable_data_validation: true
+
+# Export formats
+export_formats:
+  - sqlite
+  # - csv      # Uncomment to export CSV
+  # - parquet  # Uncomment to export Parquet
+
+# Indicator parameters
+rsi_periods: [9, 14, 21, 26]
+ma_periods: [20, 30, 50, 100, 200]
+bollinger_period: 20
+bollinger_std: 2.0
+
+# Database paths (null = use defaults)
+source_db_path: null
+target_db_path: null

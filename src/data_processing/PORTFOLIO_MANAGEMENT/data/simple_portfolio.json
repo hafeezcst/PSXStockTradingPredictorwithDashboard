@@ -1,0 +1,884 @@
+{
+  "cash_balance": 23988859.693074077,
+  "positions": {
+    "DGKC": {
+      "shares": 4867,
+      "avg_price": 162.7749,
+      "total_cost": 792225.4382999999,
+      "entry_date": "2025-06-18T20:14:09.721995",
+      "last_update": "2025-06-18T20:14:09.721997"
+    },
+    "MLCF": {
+      "shares": 8521,
+      "avg_price": 82.70508000000001,
+      "total_cost": 704729.9866800001,
+      "entry_date": "2025-06-18T20:14:09.726647",
+      "last_update": "2025-06-18T20:14:09.726651"
+    },
+    "POWER": {
+      "shares": 40004,
+      "avg_price": 13.8276,
+      "total_cost": 553159.3104000001,
+      "entry_date": "2025-06-18T20:14:09.729786",
+      "last_update": "2025-06-18T20:14:09.729789"
+    },
+    "SSGC": {
+      "shares": 11763,
+      "avg_price": 41.60304,
+      "total_cost": 489376.55952,
+      "entry_date": "2025-06-18T20:14:09.730875",
+      "last_update": "2025-06-18T20:14:09.730878"
+    },
+    "GATM": {
+      "shares": 13447,
+      "avg_price": 24.10812,
+      "total_cost": 324181.88964,
+      "entry_date": "2025-06-19T01:23:03.219619",
+      "last_update": "2025-06-19T01:23:03.219626"
+    },
+    "NML": {
+      "shares": 7021,
+      "avg_price": 122.85522,
+      "total_cost": 862566.4996199999,
+      "entry_date": "2025-06-19T01:23:03.221803",
+      "last_update": "2025-06-19T01:23:03.221814"
+    },
+    "LOTCHEM": {
+      "shares": 15592,
+      "avg_price": 20.02998,
+      "total_cost": 312307.44815999997,
+      "entry_date": "2025-06-19T01:23:03.222399",
+      "last_update": "2025-06-19T01:23:03.222402"
+    },
+    "KEL": {
+      "shares": 57357,
+      "avg_price": 5.39076,
+      "total_cost": 309197.82132,
+      "entry_date": "2025-06-19T01:23:03.222847",
+      "last_update": "2025-06-19T01:23:03.222859"
+    },
+    "HUBC": {
+      "shares": 2229,
+      "avg_price": 137.274,
+      "total_cost": 305983.746,
+      "entry_date": "2025-06-19T01:23:03.223242",
+      "last_update": "2025-06-19T01:23:03.223244"
+    },
+    "ISL": {
+      "shares": 3436,
+      "avg_price": 88.176,
+      "total_cost": 302972.736,
+      "entry_date": "2025-06-19T01:23:03.223575",
+      "last_update": "2025-06-19T01:23:03.223578"
+    },
+    "PAKOXY": {
+      "shares": 1999,
+      "avg_price": 150.0495,
+      "total_cost": 299948.9505,
+      "entry_date": "2025-06-19T01:23:03.223887",
+      "last_update": "2025-06-19T01:23:03.223889"
+    },
+    "GHGL": {
+      "shares": 12367,
+      "avg_price": 39.10806,
+      "total_cost": 483649.37802,
+      "entry_date": "2025-06-19T01:23:03.224190",
+      "last_update": "2025-06-19T01:23:03.224192"
+    },
+    "GGL": {
+      "shares": 19248,
+      "avg_price": 15.70134,
+      "total_cost": 302219.39232,
+      "entry_date": "2025-06-19T01:23:03.224489",
+      "last_update": "2025-06-19T01:23:03.224491"
+    },
+    "FABL": {
+      "shares": 4887,
+      "avg_price": 59.168099999999995,
+      "total_cost": 289154.5047,
+      "entry_date": "2025-06-19T01:23:03.224799",
+      "last_update": "2025-06-19T01:23:03.224801"
+    },
+    "DYNO": {
+      "shares": 1131,
+      "avg_price": 253.04507999999998,
+      "total_cost": 286193.98548,
+      "entry_date": "2025-06-19T01:23:03.225095",
+      "last_update": "2025-06-19T01:23:03.225097"
+    },
+    "FFL": {
+      "shares": 39532,
+      "avg_price": 15.731399999999999,
+      "total_cost": 621893.7048000001,
+      "entry_date": "2025-06-19T01:23:03.225504",
+      "last_update": "2025-06-19T01:23:03.225507"
+    },
+    "NATF": {
+      "shares": 2129,
+      "avg_price": 287.05296000000004,
+      "total_cost": 611135.75184,
+      "entry_date": "2025-06-19T01:23:03.225858",
+      "last_update": "2025-06-19T01:23:03.225860"
+    },
+    "AGIL": {
+      "shares": 2680,
+      "avg_price": 136.50245999999999,
+      "total_cost": 365826.5928,
+      "entry_date": "2025-06-19T01:23:03.226184",
+      "last_update": "2025-06-19T01:23:03.226187"
+    },
+    "MARI": {
+      "shares": 419,
+      "avg_price": 637.93332,
+      "total_cost": 267294.06107999996,
+      "entry_date": "2025-06-19T01:23:03.226560",
+      "last_update": "2025-06-19T01:23:03.226563"
+    },
+    "FCEPL": {
+      "shares": 2785,
+      "avg_price": 95.0397,
+      "total_cost": 264685.5645,
+      "entry_date": "2025-06-19T01:23:03.227020",
+      "last_update": "2025-06-19T01:23:03.227023"
+    },
+    "MEBL": {
+      "shares": 897,
+      "avg_price": 309.0669,
+      "total_cost": 277233.0093,
+      "entry_date": "2025-06-19T01:23:03.227389",
+      "last_update": "2025-06-19T01:23:03.227391"
+    },
+    "ASL": {
+      "shares": 35475,
+      "avg_price": 11.08212,
+      "total_cost": 393138.207,
+      "entry_date": "2025-06-19T01:23:03.227728",
+      "last_update": "2025-06-19T01:23:03.227731"
+    },
+    "PIBTL": {
+      "shares": 30857,
+      "avg_price": 8.27652,
+      "total_cost": 255388.57764,
+      "entry_date": "2025-06-19T01:23:03.228068",
+      "last_update": "2025-06-19T01:23:03.228070"
+    },
+    "FEROZ": {
+      "shares": 670,
+      "avg_price": 377.19288,
+      "total_cost": 252719.2296,
+      "entry_date": "2025-06-19T01:23:03.228397",
+      "last_update": "2025-06-19T01:23:03.228399"
+    },
+    "ATRL": {
+      "shares": 639,
+      "avg_price": 667.64262,
+      "total_cost": 426623.63418,
+      "entry_date": "2025-06-19T01:23:03.228729",
+      "last_update": "2025-06-19T01:23:03.228731"
+    },
+    "CNERGY": {
+      "shares": 84900,
+      "avg_price": 7.25448,
+      "total_cost": 615905.352,
+      "entry_date": "2025-06-19T01:23:03.229592",
+      "last_update": "2025-06-19T01:23:03.229616"
+    }
+  },
+  "trade_history": [
+    {
+      "timestamp": "2025-06-18T20:14:09.717494",
+      "stock": "PAEL",
+      "action": "BUY",
+      "shares": 33716,
+      "price": 41.44,
+      "total_cost": 1399985.42208,
+      "cash_after": 33600014.57792
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.718376",
+      "stock": "LCI",
+      "action": "BUY",
+      "shares": 874,
+      "price": 1533.48,
+      "total_cost": 1342942.0430400001,
+      "cash_after": 32257072.534879997
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.718824",
+      "stock": "GLAXO",
+      "action": "BUY",
+      "shares": 3367,
+      "price": 382.39,
+      "total_cost": 1290082.14426,
+      "cash_after": 30966990.390619997
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.719161",
+      "stock": "SHFA",
+      "action": "BUY",
+      "shares": 2544,
+      "price": 485.84,
+      "total_cost": 1238448.91392,
+      "cash_after": 29728541.476699997
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.719485",
+      "stock": "SAZEW",
+      "action": "BUY",
+      "shares": 1042,
+      "price": 1138.28,
+      "total_cost": 1188459.93552,
+      "cash_after": 28540081.541179996
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.719954",
+      "stock": "CPHL",
+      "action": "BUY",
+      "shares": 13386,
+      "price": 85.11,
+      "total_cost": 1141561.02492,
+      "cash_after": 27398520.516259994
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.720489",
+      "stock": "DCR",
+      "action": "BUY",
+      "shares": 37778,
+      "price": 27.07,
+      "total_cost": 1024695.7609199999,
+      "cash_after": 26373824.755339995
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.720802",
+      "stock": "MACTER",
+      "action": "BUY",
+      "shares": 2478,
+      "price": 424.71,
+      "total_cost": 1054536.2427599998,
+      "cash_after": 25319288.512579996
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.721100",
+      "stock": "PIOC",
+      "action": "BUY",
+      "shares": 4763,
+      "price": 212.18,
+      "total_cost": 1012634.56668,
+      "cash_after": 24306653.945899997
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.721391",
+      "stock": "TGL",
+      "action": "BUY",
+      "shares": 4218,
+      "price": 230.0,
+      "total_cost": 972080.28,
+      "cash_after": 23334573.665899996
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.721698",
+      "stock": "FCCL",
+      "action": "BUY",
+      "shares": 20067,
+      "price": 46.42,
+      "total_cost": 933373.1602800001,
+      "cash_after": 22401200.505619995
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.721998",
+      "stock": "DGKC",
+      "action": "BUY",
+      "shares": 4867,
+      "price": 162.45,
+      "total_cost": 792225.4382999999,
+      "cash_after": 21608975.067319997
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.722304",
+      "stock": "FLYNG",
+      "action": "BUY",
+      "shares": 15825,
+      "price": 54.51,
+      "total_cost": 864345.9915,
+      "cash_after": 20744629.075819995
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.724847",
+      "stock": "BWCL",
+      "action": "BUY",
+      "shares": 2047,
+      "price": 404.5,
+      "total_cost": 829667.523,
+      "cash_after": 19914961.552819997
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.725304",
+      "stock": "ECOP",
+      "action": "BUY",
+      "shares": 9915,
+      "price": 80.18,
+      "total_cost": 796574.6694,
+      "cash_after": 19118386.883419998
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.725792",
+      "stock": "HINOON",
+      "action": "BUY",
+      "shares": 803,
+      "price": 949.64,
+      "total_cost": 764086.0418400001,
+      "cash_after": 18354300.841579996
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.726185",
+      "stock": "FATIMA",
+      "action": "BUY",
+      "shares": 8260,
+      "price": 88.7,
+      "total_cost": 734127.324,
+      "cash_after": 17620173.517579995
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.726653",
+      "stock": "MLCF",
+      "action": "BUY",
+      "shares": 8521,
+      "price": 82.54,
+      "total_cost": 704729.9866800001,
+      "cash_after": 16915443.530899994
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.727026",
+      "stock": "GAL",
+      "action": "BUY",
+      "shares": 1655,
+      "price": 407.94,
+      "total_cost": 676490.9813999999,
+      "cash_after": 16238952.549499994
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.727455",
+      "stock": "PREMA",
+      "action": "BUY",
+      "shares": 14623,
+      "price": 44.33,
+      "total_cost": 649534.0651799999,
+      "cash_after": 15589418.484319994
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.728118",
+      "stock": "GHNI",
+      "action": "BUY",
+      "shares": 962,
+      "price": 646.33,
+      "total_cost": 623012.99892,
+      "cash_after": 14966405.485399995
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.728783",
+      "stock": "PSO",
+      "action": "BUY",
+      "shares": 1520,
+      "price": 368.43,
+      "total_cost": 561133.6272,
+      "cash_after": 14405271.858199995
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.729344",
+      "stock": "AGP",
+      "action": "BUY",
+      "shares": 3075,
+      "price": 187.01,
+      "total_cost": 576205.8615,
+      "cash_after": 13829065.996699994
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.729791",
+      "stock": "POWER",
+      "action": "BUY",
+      "shares": 40004,
+      "price": 13.8,
+      "total_cost": 553159.3104000001,
+      "cash_after": 13275906.686299995
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.730163",
+      "stock": "OGDC",
+      "action": "BUY",
+      "shares": 2537,
+      "price": 208.86,
+      "total_cost": 530937.57564,
+      "cash_after": 12744969.110659994
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.730527",
+      "stock": "CHCC",
+      "action": "BUY",
+      "shares": 1825,
+      "price": 278.66,
+      "total_cost": 509571.60900000005,
+      "cash_after": 12235397.501659995
+    },
+    {
+      "timestamp": "2025-06-18T20:14:09.730879",
+      "stock": "SSGC",
+      "action": "BUY",
+      "shares": 11763,
+      "price": 41.52,
+      "total_cost": 489376.55952,
+      "cash_after": 11746020.942139994
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.211784",
+      "stock": "TGL",
+      "action": "SELL",
+      "shares": 4218,
+      "price": 230.46,
+      "net_proceeds": 970136.11944,
+      "pnl": -1944.16056,
+      "pnl_percent": -0.2,
+      "cash_after": 12716157.061579995
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.212109",
+      "stock": "PSO",
+      "action": "SELL",
+      "shares": 1520,
+      "price": 369.16686,
+      "net_proceeds": 560011.3599456,
+      "pnl": -1122.2672544,
+      "pnl_percent": -0.2,
+      "cash_after": 13276168.421525596
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.212225",
+      "stock": "AGP",
+      "action": "SELL",
+      "shares": 3075,
+      "price": 187.38402,
+      "net_proceeds": 575053.449777,
+      "pnl": -1152.411723,
+      "pnl_percent": -0.2,
+      "cash_after": 13851221.871302595
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.212391",
+      "stock": "PREMA",
+      "action": "SELL",
+      "shares": 14623,
+      "price": 44.418659999999996,
+      "net_proceeds": 648234.9970496399,
+      "pnl": -1299.06813036,
+      "pnl_percent": -0.2,
+      "cash_after": 14499456.868352234
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.212490",
+      "stock": "PIOC",
+      "action": "SELL",
+      "shares": 4763,
+      "price": 212.60436,
+      "net_proceeds": 1010609.29754664,
+      "pnl": -2025.26913336,
+      "pnl_percent": -0.2,
+      "cash_after": 15510066.165898874
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.212576",
+      "stock": "BWCL",
+      "action": "SELL",
+      "shares": 2047,
+      "price": 405.309,
+      "net_proceeds": 828008.1879540001,
+      "pnl": -1659.3350460000001,
+      "pnl_percent": -0.2,
+      "cash_after": 16338074.353852874
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.212654",
+      "stock": "ECOP",
+      "action": "SELL",
+      "shares": 9915,
+      "price": 80.34036,
+      "net_proceeds": 794981.5200612,
+      "pnl": -1593.1493388000001,
+      "pnl_percent": -0.2,
+      "cash_after": 17133055.873914074
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.212761",
+      "stock": "SAZEW",
+      "action": "SELL",
+      "shares": 1042,
+      "price": 1140.55656,
+      "net_proceeds": 1186083.0156489601,
+      "pnl": -2376.91987104,
+      "pnl_percent": -0.2,
+      "cash_after": 18319138.889563035
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.212905",
+      "stock": "GAL",
+      "action": "SELL",
+      "shares": 1655,
+      "price": 408.75588,
+      "net_proceeds": 675137.9994371999,
+      "pnl": -1352.9819627999998,
+      "pnl_percent": -0.2,
+      "cash_after": 18994276.889000237
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.213025",
+      "stock": "OGDC",
+      "action": "SELL",
+      "shares": 2537,
+      "price": 209.27772000000002,
+      "net_proceeds": 529875.7004887201,
+      "pnl": -1061.8751512800002,
+      "pnl_percent": -0.2,
+      "cash_after": 19524152.589488957
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.213192",
+      "stock": "FATIMA",
+      "action": "SELL",
+      "shares": 8260,
+      "price": 88.87740000000001,
+      "net_proceeds": 732659.069352,
+      "pnl": -1468.254648,
+      "pnl_percent": -0.2,
+      "cash_after": 20256811.658840958
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.213280",
+      "stock": "CPHL",
+      "action": "SELL",
+      "shares": 13386,
+      "price": 85.28022,
+      "net_proceeds": 1139277.90287016,
+      "pnl": -2283.12204984,
+      "pnl_percent": -0.2,
+      "cash_after": 21396089.561711118
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.213388",
+      "stock": "DCR",
+      "action": "SELL",
+      "shares": 37778,
+      "price": 27.12414,
+      "net_proceeds": 1022646.36939816,
+      "pnl": -2049.39152184,
+      "pnl_percent": -0.2,
+      "cash_after": 22418735.93110928
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.213495",
+      "stock": "SHFA",
+      "action": "SELL",
+      "shares": 2544,
+      "price": 486.81167999999997,
+      "net_proceeds": 1235972.01609216,
+      "pnl": -2476.89782784,
+      "pnl_percent": -0.2,
+      "cash_after": 23654707.94720144
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.213580",
+      "stock": "GHNI",
+      "action": "SELL",
+      "shares": 962,
+      "price": 647.62266,
+      "net_proceeds": 621766.97292216,
+      "pnl": -1246.0259978400002,
+      "pnl_percent": -0.2,
+      "cash_after": 24276474.9201236
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.213692",
+      "stock": "GLAXO",
+      "action": "SELL",
+      "shares": 3367,
+      "price": 383.15477999999996,
+      "net_proceeds": 1287501.9799714799,
+      "pnl": -2580.16428852,
+      "pnl_percent": -0.2,
+      "cash_after": 25563976.90009508
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.213769",
+      "stock": "HINOON",
+      "action": "SELL",
+      "shares": 803,
+      "price": 951.53928,
+      "net_proceeds": 762557.8697563199,
+      "pnl": -1528.17208368,
+      "pnl_percent": -0.2,
+      "cash_after": 26326534.769851398
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.213838",
+      "stock": "PAEL",
+      "action": "SELL",
+      "shares": 33716,
+      "price": 41.52288,
+      "net_proceeds": 1397185.4512358399,
+      "pnl": -2799.97084416,
+      "pnl_percent": -0.2,
+      "cash_after": 27723720.221087236
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.213931",
+      "stock": "CHCC",
+      "action": "SELL",
+      "shares": 1825,
+      "price": 279.21732000000003,
+      "net_proceeds": 508552.46578200004,
+      "pnl": -1019.1432180000002,
+      "pnl_percent": -0.2,
+      "cash_after": 28232272.686869238
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.214053",
+      "stock": "FLYNG",
+      "action": "SELL",
+      "shares": 15825,
+      "price": 54.61902,
+      "net_proceeds": 862617.299517,
+      "pnl": -1728.691983,
+      "pnl_percent": -0.2,
+      "cash_after": 29094889.986386236
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.214169",
+      "stock": "MACTER",
+      "action": "SELL",
+      "shares": 2478,
+      "price": 425.55942,
+      "net_proceeds": 1052427.17027448,
+      "pnl": -2109.07248552,
+      "pnl_percent": -0.2,
+      "cash_after": 30147317.156660717
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.214360",
+      "stock": "FCCL",
+      "action": "SELL",
+      "shares": 20067,
+      "price": 46.512840000000004,
+      "net_proceeds": 931506.4139594401,
+      "pnl": -1866.7463205600002,
+      "pnl_percent": -0.2,
+      "cash_after": 31078823.570620157
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.214590",
+      "stock": "LCI",
+      "action": "SELL",
+      "shares": 874,
+      "price": 1536.5469600000001,
+      "net_proceeds": 1340256.1589539202,
+      "pnl": -2685.8840860800005,
+      "pnl_percent": -0.2,
+      "cash_after": 32419079.729574077
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.219633",
+      "stock": "GATM",
+      "action": "BUY",
+      "shares": 13447,
+      "price": 24.06,
+      "total_cost": 324181.88964,
+      "cash_after": 32094897.839934077
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.221819",
+      "stock": "NML",
+      "action": "BUY",
+      "shares": 7021,
+      "price": 122.61,
+      "total_cost": 862566.4996199999,
+      "cash_after": 31232331.340314075
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.222404",
+      "stock": "LOTCHEM",
+      "action": "BUY",
+      "shares": 15592,
+      "price": 19.99,
+      "total_cost": 312307.44815999997,
+      "cash_after": 30920023.892154075
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.222861",
+      "stock": "KEL",
+      "action": "BUY",
+      "shares": 57357,
+      "price": 5.38,
+      "total_cost": 309197.82132,
+      "cash_after": 30610826.070834074
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.223246",
+      "stock": "HUBC",
+      "action": "BUY",
+      "shares": 2229,
+      "price": 137.0,
+      "total_cost": 305983.746,
+      "cash_after": 30304842.324834075
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.223579",
+      "stock": "ISL",
+      "action": "BUY",
+      "shares": 3436,
+      "price": 88.0,
+      "total_cost": 302972.736,
+      "cash_after": 30001869.588834073
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.223891",
+      "stock": "PAKOXY",
+      "action": "BUY",
+      "shares": 1999,
+      "price": 149.75,
+      "total_cost": 299948.9505,
+      "cash_after": 29701920.638334073
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.224194",
+      "stock": "GHGL",
+      "action": "BUY",
+      "shares": 12367,
+      "price": 39.03,
+      "total_cost": 483649.37802,
+      "cash_after": 29218271.260314073
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.224493",
+      "stock": "GGL",
+      "action": "BUY",
+      "shares": 19248,
+      "price": 15.67,
+      "total_cost": 302219.39232,
+      "cash_after": 28916051.867994074
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.224802",
+      "stock": "FABL",
+      "action": "BUY",
+      "shares": 4887,
+      "price": 59.05,
+      "total_cost": 289154.5047,
+      "cash_after": 28626897.363294072
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.225098",
+      "stock": "DYNO",
+      "action": "BUY",
+      "shares": 1131,
+      "price": 252.54,
+      "total_cost": 286193.98548,
+      "cash_after": 28340703.377814073
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.225509",
+      "stock": "FFL",
+      "action": "BUY",
+      "shares": 39532,
+      "price": 15.7,
+      "total_cost": 621893.7048000001,
+      "cash_after": 27718809.673014075
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.225862",
+      "stock": "NATF",
+      "action": "BUY",
+      "shares": 2129,
+      "price": 286.48,
+      "total_cost": 611135.75184,
+      "cash_after": 27107673.921174075
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.226188",
+      "stock": "AGIL",
+      "action": "BUY",
+      "shares": 2680,
+      "price": 136.23,
+      "total_cost": 365826.5928,
+      "cash_after": 26741847.328374077
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.226564",
+      "stock": "MARI",
+      "action": "BUY",
+      "shares": 419,
+      "price": 636.66,
+      "total_cost": 267294.06107999996,
+      "cash_after": 26474553.267294075
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.227030",
+      "stock": "FCEPL",
+      "action": "BUY",
+      "shares": 2785,
+      "price": 94.85,
+      "total_cost": 264685.5645,
+      "cash_after": 26209867.702794075
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.227393",
+      "stock": "MEBL",
+      "action": "BUY",
+      "shares": 897,
+      "price": 308.45,
+      "total_cost": 277233.0093,
+      "cash_after": 25932634.693494074
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.227732",
+      "stock": "ASL",
+      "action": "BUY",
+      "shares": 35475,
+      "price": 11.06,
+      "total_cost": 393138.207,
+      "cash_after": 25539496.486494076
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.228072",
+      "stock": "PIBTL",
+      "action": "BUY",
+      "shares": 30857,
+      "price": 8.26,
+      "total_cost": 255388.57764,
+      "cash_after": 25284107.908854075
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.228401",
+      "stock": "FEROZ",
+      "action": "BUY",
+      "shares": 670,
+      "price": 376.44,
+      "total_cost": 252719.2296,
+      "cash_after": 25031388.679254074
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.228733",
+      "stock": "ATRL",
+      "action": "BUY",
+      "shares": 639,
+      "price": 666.31,
+      "total_cost": 426623.63418,
+      "cash_after": 24604765.045074075
+    },
+    {
+      "timestamp": "2025-06-19T01:23:03.229619",
+      "stock": "CNERGY",
+      "action": "BUY",
+      "shares": 84900,
+      "price": 7.24,
+      "total_cost": 615905.352,
+      "cash_after": 23988859.693074077
+    }
+  ],
+  "last_update": "2025-06-19T02:05:34.510952"
+}

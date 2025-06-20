@@ -1,0 +1,24 @@
+[
+  {
+    "total_symbols": 0,
+    "successful_downloads": 0,
+    "failed_downloads": 0,
+    "total_response_time": 0.0,
+    "start_time": "2025-06-20T01:08:00.565218",
+    "end_time": "2025-06-20T01:08:00.646326",
+    "failed_symbols": [],
+    "response_times": [],
+    "duration_seconds": 0.081108
+  },
+  {
+    "total_symbols": 0,
+    "successful_downloads": 0,
+    "failed_downloads": 0,
+    "total_response_time": 0.0,
+    "start_time": "2025-06-20T01:19:04.422494",
+    "end_time": "2025-06-20T01:19:04.423669",
+    "failed_symbols": [],
+    "response_times": [],
+    "duration_seconds": 0.001175
+  }
+]

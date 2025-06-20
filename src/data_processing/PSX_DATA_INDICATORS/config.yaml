@@ -1,0 +1,47 @@
+# Enhanced PSX Indicator Processor Configuration
+
+# Database settings
+source_db_path: "C:\\Users\\muhammadhafeez\\Documents\\GitHub\\PSXStockTradingPredictorwithDashboard\\data\\databases\\production\\PSX_consolidated_data_PSX.db"
+target_db_path: "C:\\Users\\muhammadhafeez\\Documents\\GitHub\\PSXStockTradingPredictorwithDashboard\\data\\databases\\production\\psx_consolidated_data_indicators_PSX.db"
+
+# Performance settings
+max_workers: 8  # Number of parallel workers (auto-detected if not specified)
+batch_size: 1000  # Batch size for processing
+use_gpu: false  # Enable GPU acceleration (requires cuDF/cuPy)
+cache_size: 128  # LRU cache size
+
+# Processing options
+calculate_advanced_indicators: true  # Include advanced technical indicators
+include_ml_features: true  # Include machine learning features
+enable_data_validation: true  # Enable data quality validation
+export_formats:  # Export formats
+  - sqlite
+  # - csv
+  # - parquet
+
+# Timeframe settings (trading days)
+trading_days_per_week: 5
+trading_days_per_month: 21
+trading_days_per_quarter: 63
+trading_days_per_year: 252
+
+# Indicator parameters
+rsi_periods:  # RSI calculation periods
+  - 9
+  - 14
+  - 21
+  - 26
+
+ma_periods:  # Moving average periods
+  - 20
+  - 30
+  - 50
+  - 100
+  - 200
+
+bollinger_period: 20  # Bollinger Bands period
+bollinger_std: 2.0  # Bollinger Bands standard deviation
+
+# Logging settings
+log_level: INFO
+log_file: psx_indicator_processor.log

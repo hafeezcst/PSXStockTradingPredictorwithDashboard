@@ -338,12 +338,12 @@ if __name__ == "__main__":
             attempts += 1
             logging.warning(f"Attempt {attempts} failed for {symbol}. Retrying...")
 
-        if attempts >= 1:
-            logging.error(f"Failed to download and save data for {symbol} after 1 attempts. Deleting the table.")
+        if attempts >= 5:
+            logging.error(f"Failed to download and save data for {symbol} after 5 attempts. Deleting the table.")
             #data_reader.delete_failing_table(symbol)
             #print (f'Failed to download and save data for {symbol} after 5 attempts. Deleting the table.')
             failed_attempts += 1
 
         if failed_attempts > 500:
-            logging.error("More than 500 tables failed. Switching to alternative database for data integrity.")
+            logging.error("More than 5 tables failed. Switching to alternative database for data integrity.")
             break
