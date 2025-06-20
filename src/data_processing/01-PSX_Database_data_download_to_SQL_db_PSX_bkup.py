@@ -328,7 +328,7 @@ if __name__ == "__main__":
             continue
 
         attempts = 0
-        while attempts < 5:
+        while attempts < 1:
             data = data_reader.stocks(symbol, start_date, end_date)
             if not data.empty:
                 data_reader.save_to_db(data, f'PSX_{symbol}_stock_data')

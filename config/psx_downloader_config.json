@@ -1,0 +1,7 @@
+{
+    "theme": "light",
+    "db_path": "data/databases/production/PSX_consolidated_data_PSX.db",
+    "alt_db_path": "data/databases/production/PSX_consolidated_data_PSX_Alternative.db",
+    "request_timeout": 60,
+    "chunk_size": 400000
+}

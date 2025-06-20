@@ -1,0 +1,19 @@
+{
+    "db_path": "data/databases/production/PSX_consolidated_data_PSX.db",
+    "alt_db_path": "data/databases/production/PSX_consolidated_data_PSX_Alternative.db",
+    "max_workers": 4,
+    "max_threads": 8,
+    "min_threads": 2,
+    "request_timeout": 60,
+    "theme": "dark",
+    "export_path": "exports",
+    "auto_update": true,
+    "check_interval_hours": 24,
+    "last_update_check": null,
+    "default_symbols": ["KSE100", "KSE30"],
+    "default_start_date": "2000-01-01",
+    "log_level": "INFO",
+    "enable_tray": true,
+    "start_minimized": false,
+    "export_formats": ["csv", "excel", "json"]
+}
