@@ -328,7 +328,7 @@ if __name__ == "__main__":
             continue
 
         attempts = 0
-        while attempts < 1:
+        while attempts < 5:
             data = data_reader.stocks(symbol, start_date, end_date)
             if not data.empty:
                 data_reader.save_to_db(data, f'PSX_{symbol}_stock_data')
@@ -338,7 +338,7 @@ if __name__ == "__main__":
             attempts += 1
             logging.warning(f"Attempt {attempts} failed for {symbol}. Retrying...")
 
-        if attempts >= 1:
+        if attempts >= 5:
             logging.error(f"Failed to download and save data for {symbol} after 1 attempts. Deleting the table.")
             #data_reader.delete_failing_table(symbol)
             #print (f'Failed to download and save data for {symbol} after 5 attempts. Deleting the table.')

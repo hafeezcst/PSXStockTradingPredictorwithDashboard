@@ -829,9 +829,9 @@ def job():
             '02-sql_duplicate_remover_ALL.py',
             '01-PSX_SQL_Indicator_PSX.py',
             '06_PSX_Dividend_Schedule.py',
-            'stable_versions\04-List_Weekly_RSI_GT_40_BUY_SELL_KMI30_100_Weekly_v1.0_stable.py',
+            'stock_analysis\\04-List_Weekly_RSI_GT_40_BUY_SELL_KMI30_100_Weekly_v1.0_stable_Development.py',
             #'10-draw_indicator_trend_lines_with_signals_Stable_V_1.0.py',
-            'stable_versions\draw_indicator_trend_lines_v1.0_KMI30_stable.py',
+            #'draw_indicator_trend_lines_v1.0_KMI30_stable.py',
 
         ]
         

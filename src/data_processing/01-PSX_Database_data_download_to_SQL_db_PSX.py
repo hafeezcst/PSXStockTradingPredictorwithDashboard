@@ -300,14 +300,15 @@ if __name__ == "__main__":
     current_dir = os.getcwd()
     symbols_file_path = os.path.join(current_dir, 'data/databases/production/psxsymbols.xlsx')
     
-    # Load valid symbols from the 'KSEALL' sheet
-    symbols_df = pd.read_excel(symbols_file_path, sheet_name='KSEALL')
+    # Load valid symbols from the 'KSEALLKMIALL' sheet
+    symbols_df = pd.read_excel(symbols_file_path, sheet_name='KMIALL')
     valid_symbols = symbols_df.iloc[:, 0].tolist()  # Get list of valid symbols from the first column
     print (f'total symbols are: {len(valid_symbols)}')
     # Delete any tables in the database that do not correspond to the valid symbols
     data_reader.delete_unused_tables(valid_symbols)
     
     end_date = date.today() - timedelta(days=1)
+
     fixed_start_date = date(2000, 1, 1)
     failed_attempts = 0
 
@@ -328,7 +329,7 @@ if __name__ == "__main__":
             continue
 
         attempts = 0
-        while attempts <1:
+        while attempts < 5:
             data = data_reader.stocks(symbol, start_date, end_date)
             if not data.empty:
                 data_reader.save_to_db(data, f'PSX_{symbol}_stock_data')
@@ -338,7 +339,7 @@ if __name__ == "__main__":
             attempts += 1
             logging.warning(f"Attempt {attempts} failed for {symbol}. Retrying...")
 
-        if attempts >= 1:
+        if attempts >= 5:
             logging.error(f"Failed to download and save data for {symbol} after 1 attempts. Deleting the table.")
             #data_reader.delete_failing_table(symbol)
             #print (f'Failed to download and save data for {symbol} after 5 attempts. Deleting the table.')

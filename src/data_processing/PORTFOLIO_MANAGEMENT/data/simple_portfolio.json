@@ -1,13 +1,6 @@
 {
-  "cash_balance": 23988859.693074077,
+  "cash_balance": 24702974.623009123,
   "positions": {
-    "DGKC": {
-      "shares": 4867,
-      "avg_price": 162.7749,
-      "total_cost": 792225.4382999999,
-      "entry_date": "2025-06-18T20:14:09.721995",
-      "last_update": "2025-06-18T20:14:09.721997"
-    },
     "MLCF": {
       "shares": 8521,
       "avg_price": 82.70508000000001,
@@ -155,13 +148,6 @@
       "entry_date": "2025-06-19T01:23:03.227728",
       "last_update": "2025-06-19T01:23:03.227731"
     },
-    "PIBTL": {
-      "shares": 30857,
-      "avg_price": 8.27652,
-      "total_cost": 255388.57764,
-      "entry_date": "2025-06-19T01:23:03.228068",
-      "last_update": "2025-06-19T01:23:03.228070"
-    },
     "FEROZ": {
       "shares": 670,
       "avg_price": 377.19288,
@@ -169,19 +155,33 @@
       "entry_date": "2025-06-19T01:23:03.228397",
       "last_update": "2025-06-19T01:23:03.228399"
     },
-    "ATRL": {
-      "shares": 639,
-      "avg_price": 667.64262,
-      "total_cost": 426623.63418,
-      "entry_date": "2025-06-19T01:23:03.228729",
-      "last_update": "2025-06-19T01:23:03.228731"
-    },
     "CNERGY": {
       "shares": 84900,
       "avg_price": 7.25448,
       "total_cost": 615905.352,
       "entry_date": "2025-06-19T01:23:03.229592",
       "last_update": "2025-06-19T01:23:03.229616"
+    },
+    "INIL": {
+      "shares": 1546,
+      "avg_price": 164.6286,
+      "total_cost": 254515.81560000003,
+      "entry_date": "2025-06-24T22:38:15.424979",
+      "last_update": "2025-06-24T22:38:15.425005"
+    },
+    "BIPL": {
+      "shares": 8967,
+      "avg_price": 28.1061,
+      "total_cost": 252027.39870000002,
+      "entry_date": "2025-06-24T22:38:15.428457",
+      "last_update": "2025-06-24T22:38:15.428469"
+    },
+    "TREET": {
+      "shares": 12129,
+      "avg_price": 20.571060000000003,
+      "total_cost": 249506.38674000002,
+      "entry_date": "2025-06-24T22:38:15.429809",
+      "last_update": "2025-06-24T22:38:15.429819"
     }
   },
   "trade_history": [
@@ -878,7 +878,67 @@
       "price": 7.24,
       "total_cost": 615905.352,
       "cash_after": 23988859.693074077
+    },
+    {
+      "timestamp": "2025-06-24T22:38:15.407493",
+      "stock": "ATRL",
+      "action": "SELL",
+      "shares": 639,
+      "price": 667.64262,
+      "net_proceeds": 425770.38691164,
+      "pnl": -853.24726836,
+      "pnl_percent": -0.2,
+      "cash_after": 24414630.07998572
+    },
+    {
+      "timestamp": "2025-06-24T22:38:15.408306",
+      "stock": "PIBTL",
+      "action": "SELL",
+      "shares": 30857,
+      "price": 8.24,
+      "net_proceeds": 253753.15664,
+      "pnl": -1635.4209999999828,
+      "pnl_percent": -0.6403657575889316,
+      "cash_after": 24668383.23662572
+    },
+    {
+      "timestamp": "2025-06-24T22:38:15.408831",
+      "stock": "DGKC",
+      "action": "SELL",
+      "shares": 4867,
+      "price": 162.7749,
+      "net_proceeds": 790640.9874234,
+      "pnl": -1584.4508766000001,
+      "pnl_percent": -0.2,
+      "cash_after": 25459024.22404912
+    },
+    {
+      "timestamp": "2025-06-24T22:38:15.425079",
+      "stock": "INIL",
+      "action": "BUY",
+      "shares": 1546,
+      "price": 164.3,
+      "total_cost": 254515.81560000003,
+      "cash_after": 25204508.40844912
+    },
+    {
+      "timestamp": "2025-06-24T22:38:15.428476",
+      "stock": "BIPL",
+      "action": "BUY",
+      "shares": 8967,
+      "price": 28.05,
+      "total_cost": 252027.39870000002,
+      "cash_after": 24952481.009749122
+    },
+    {
+      "timestamp": "2025-06-24T22:38:15.429823",
+      "stock": "TREET",
+      "action": "BUY",
+      "shares": 12129,
+      "price": 20.53,
+      "total_cost": 249506.38674000002,
+      "cash_after": 24702974.623009123
     }
   ],
-  "last_update": "2025-06-19T02:05:34.510952"
+  "last_update": "2025-06-24T22:38:15.431113"
 }

@@ -771,6 +771,94 @@ def handle_breakout_data(data_tuple):
     # are implemented to compare current closing price with weekly and monthly closing prices.
     logging.info("Ensure breakout analysis includes weekly and monthly closing price comparisons in analyzer module.")
 
+def run_full_analysis(db_path, log_callback=None, result_callback=None):
+    """
+    Run the full stock analysis workflow for the given database path.
+    Optionally provide log_callback(str) and result_callback(dict) for real-time updates.
+    Returns a dict with all results.
+    """
+    import traceback
+    results = {
+        'buy': None,
+        'sell': None,
+        'neutral': None,
+        'breakout': None,
+        'log': []
+    }
+    def log(msg):
+        if log_callback:
+            log_callback(msg)
+        results['log'].append(msg)
+        logging.info(msg)
+    try:
+        log(f"\nRunning stock analysis for: {db_path}")
+        db_paths = [db_path]
+        all_buy_stock_data, all_sell_stock_data, all_neutral_stock_data, all_breakout_data = get_stock_data_with_rsi_above_40(db_paths)
+
+        def handle_stock_data(data_tuple, stock_type, format_func):
+            data_source_name, stock_data, filtered_symbols = data_tuple
+            df = pd.DataFrame(stock_data)
+            log(f"\nProcessing {stock_type} signals...")
+            log(f"DataFrame empty: {df.empty}")
+            if not df.empty:
+                log(f"DataFrame columns: {df.columns}")
+            if not df.empty and 'Volume' in df.columns:
+                log(f"\nData Source: {data_source_name}")
+                log(f"Found {len(df)} {stock_type} signals")
+                log(tabulate(df, headers='keys', tablefmt='dash', showindex=True))
+                log("Formatting message...")
+                message = format_func(data_source_name, df)
+                log(f"Message length: {len(message)}")
+                log("Sample of message:")
+                log(message[:500] + "...")
+                if result_callback:
+                    result_callback({'type': stock_type, 'message': message, 'df': df})
+                try:
+                    update_psx_investing_db(df, f'{stock_type.lower()}_stocks')
+                    log(f"{stock_type} stocks updated in database")
+                except Exception as e:
+                    log(f"Error updating database: {e}")
+            else:
+                if df.empty:
+                    log(f"No {stock_type} signals found (DataFrame is empty)")
+                else:
+                    log(f"No {stock_type} signals found (Volume column missing)")
+                    log(f"Available columns: {df.columns}")
+            results[stock_type.lower()] = df
+
+        for data_tuple in all_buy_stock_data:
+            handle_stock_data(data_tuple, "Buy", format_buy_signals)
+        for data_tuple in all_sell_stock_data:
+            handle_stock_data(data_tuple, "Sell", format_sell_signals)
+        for data_tuple in all_neutral_stock_data:
+            handle_stock_data(data_tuple, "Neutral", format_neutral_signals)
+
+        def handle_breakout_data(data_tuple):
+            data_source_name, breakout_data, filtered_symbols = data_tuple
+            if not breakout_data:
+                log("No breakout signals found")
+                return
+            log(f"\nProcessing breakout signals for {data_source_name}...")
+            for table_name, breakout in breakout_data:
+                symbol = table_name.replace('PSX_', '').replace('_stock_data', '').strip().upper()
+                message = format_breakout_message(breakout, symbol)
+                if message:
+                    log(f"Breakout message for {symbol}:")
+                    log(message[:500] + "...")
+                    if result_callback:
+                        result_callback({'type': 'Breakout', 'message': message, 'symbol': symbol})
+            log("Ensure breakout analysis includes weekly and monthly closing price comparisons in analyzer module.")
+            results['breakout'] = breakout_data
+
+        for data_tuple in all_breakout_data:
+            handle_breakout_data(data_tuple)
+        log("Analysis complete")
+        return results
+    except Exception as e:
+        tb = traceback.format_exc()
+        log(f"An error occurred during execution: {e}\n{tb}")
+        return results
+
 # Main execution
 if __name__ == "__main__":
     try:

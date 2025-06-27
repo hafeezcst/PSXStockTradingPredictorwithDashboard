@@ -4,19 +4,11 @@ import matplotlib.dates as mdates
 from sqlalchemy import create_engine
 import sqlite3
 import os
-import json
 import logging
-import hashlib
-import time
-from PIL import Image
 from datetime import datetime, timedelta
 from telegram_message import send_telegram_message_with_image
 from telegram_message import send_telegram_message
 from tabulate import tabulate
-
-# Load Telegram config
-with open('src/config/telegram_config.json') as f:
-    telegram_config = json.load(f)
 import numpy as np
 from collections import Counter
 import time
@@ -69,118 +61,8 @@ def send_signals_and_charts_summary(buy_df, sell_df, available_symbols, total_pr
             else:
                 message += "\n⚪ MARKET INTERPRETATION: Neutral\n"
         
-        def sanitize_telegram_message(text):
-            """Sanitize text for Telegram API with proper encoding and escaping"""
-            import unicodedata
-            import re
-            
-            # First validate input type
-            if not isinstance(text, str):
-                logging.error("Invalid message type - expected string")
-                return None, None
-                
-            # Check minimum length requirement
-            if len(text.strip()) < 5:
-                logging.error(f"Message too short (length: {len(text.strip())})")
-                return None, None
-                
-            # Normalize Unicode and remove control chars
-            text = unicodedata.normalize('NFKC', text)
-            text = ''.join(c for c in text if ord(c) < 65536 and not unicodedata.category(c).startswith('C'))
-            
-            # First escape backslashes to prevent double escaping
-            text = text.replace('\\', '\\\\')
-            
-            # Escape all special MarkdownV2 characters
-            special_chars = '_*[]()~`>#+-=|{}.!'
-            for char in special_chars:
-                text = text.replace(char, f'\\{char}')
-                
-            # Remove any remaining problematic sequences
-            text = re.sub(r'\\{2,}', '\\\\', text)  # Normalize multiple backslashes
-            text = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', text)  # Remove control chars
-            
-            # Final validation check
-            if not text.strip():
-                logging.error("Message empty after sanitization")
-                return None, None
-                
-            # Generate hash of sanitized content for debugging
-            import hashlib
-            content_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
-            logging.info(f"Message sanitized (hash: {content_hash}, length: {len(text)})")
-            
-            return text, content_hash
-
-        # Enhanced message sending with retries and logging
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                sanitized_msg, msg_hash = sanitize_telegram_message(message)
-                
-                # Validate sanitization result
-                if not sanitized_msg or not msg_hash:
-                    logging.error(f"Invalid message content - skipping send attempt {attempt+1}")
-                    continue
-                    
-                # Log sanitized message for debugging
-                logging.info(f"Attempt {attempt+1}: Sending message (hash: {msg_hash}, length: {len(sanitized_msg)})")
-                logging.debug(f"Message preview (first 200 chars): {sanitized_msg[:200]}")
-                    
-                if len(sanitized_msg.encode('utf-8')) > 4096:
-                    # Smart truncation preserving message structure
-                    parts = []
-                    current_part = []
-                    current_length = 0
-                    
-                    for line in sanitized_msg.split('\n'):
-                        line_length = len(line.encode('utf-8'))
-                        if current_length + line_length < 4000:
-                            current_part.append(line)
-                            current_length += line_length
-                        else:
-                            parts.append('\n'.join(current_part))
-                            current_part = [line]
-                            current_length = line_length
-                    
-                    if current_part:
-                        parts.append('\n'.join(current_part))
-                        
-                    for i, part in enumerate(parts):
-                        try:
-                            # Sanitize each part again in case splitting introduced issues
-                            part_sanitized, _ = sanitize_telegram_message(part)
-                            send_telegram_message(f"{part_sanitized}\n[Part {i+1}/{len(parts)}]")
-                        except Exception as e:
-                            logging.error(f"Failed to send message part {i+1}: {str(e)}")
-                else:
-                    # Final validation before sending
-                    if len(sanitized_msg.encode('utf-8')) == 0:
-                        logging.error("Message length is 0 after encoding")
-                        continue
-                        
-                    send_telegram_message(sanitized_msg)
-                break
-                
-            except Exception as e:
-                # Capture full error response if available
-                error_details = str(e)
-                if hasattr(e, 'response') and hasattr(e.response, 'text'):
-                    error_details += f"\nResponse: {e.response.text}"
-                logging.error(f"Attempt {attempt+1} failed: {error_details}", exc_info=True)
-                if attempt == max_retries - 1:
-                    # Final fallback to ultra-simple ASCII
-                    safe_msg = (
-                        f"PSX Summary: {len(buy_symbols or [])} buys, "
-                        f"{len(sell_symbols or [])} sells, "
-                        f"{total_processed} charts"
-                    )
-                    safe_msg = ''.join(c for c in safe_msg if ord(c) < 128 and c.isprintable())
-                    try:
-                        send_telegram_message(safe_msg[:1000])
-                    except Exception as fallback_error:
-                        logging.critical(f"Final fallback failed: {str(fallback_error)}")
-                time.sleep(2 ** attempt)  # Exponential backoff
+        # Send the message
+        send_telegram_message(message)
         return True
     except Exception as e:
         logging.error(f"Error sending signals and charts summary: {e}")
@@ -642,14 +524,7 @@ def format_signals_for_telegram(signal_df, signal_type="BUY"):
         footer = f"\nTotal {signal_type} Signals: {len(display_df)}"
         
         # Combine all parts
-        formatted_message = f"{header}{table}\n{footer}"
-        
-        # Validate message length
-        if len(formatted_message) > 4096:
-            # Truncate if too long
-            max_content_length = 4096 - len(header) - len(footer) - 10  # Leave some buffer
-            truncated_table = table[:max_content_length] + "\n[...truncated...]"
-            formatted_message = f"{header}{truncated_table}\n{footer}"
+        formatted_message = f"```\n{header}{table}\n{footer}\n```"
         
         return formatted_message
     
@@ -1512,7 +1387,6 @@ def draw_indicator_trend_lines_with_signals(database_path, table_name):
         # Determine stock status (buy/sell/neutral)
         # Priority: most recent signal type or neutral if no signals
         stock_status = "OPPORTUNITY"  # Default status
-        signal_hash = ""
         
         if buy_signals and sell_signals:
             latest_buy = max(buy_signals, key=lambda x: x[0])
@@ -1520,18 +1394,12 @@ def draw_indicator_trend_lines_with_signals(database_path, table_name):
             
             if latest_buy[0] > latest_sell[0]:
                 stock_status = "BUY/HOLD"
-                signal_hash = f"#BUY_Signal_{datetime.now().strftime('%Y%m%d')}"
             else:
                 stock_status = "SELL"
-                signal_hash = f"#SELL_Signal_{datetime.now().strftime('%Y%m%d')}"
         elif buy_signals:
             stock_status = "BUY/HOLD"
-            signal_hash = f"#BUY_Signal_{datetime.now().strftime('%Y%m%d')}"
         elif sell_signals:
             stock_status = "SELL"
-            signal_hash = f"#SELL_Signal_{datetime.now().strftime('%Y%m%d')}"
-        else:
-            signal_hash = f"#NEUTRAL_Signal_{datetime.now().strftime('%Y%m%d')}"
         
         # Calculate market phase (accumulation/distribution)
         market_phase, phase_probability, phase_details = calculate_market_phase(df, symbol_name)
@@ -1642,7 +1510,7 @@ def draw_indicator_trend_lines_with_signals(database_path, table_name):
 
         # Add a title with current date, signal status, and market phase
         current_date = datetime.now().strftime('%Y-%m-%d')
-        title_text = f'{symbol_name} Technical Analysis - {stock_status} {signal_hash}'
+        title_text = f'{symbol_name} Technical Analysis - {stock_status}'
         if holding_days is not None and stock_status == "BUY/HOLD":
             title_text += f' - Held for {holding_days} days'
         if profit_loss_pct is not None:
@@ -1691,21 +1559,12 @@ def draw_indicator_trend_lines_with_signals(database_path, table_name):
         plot_filename = os.path.join(charts_folder, f'{symbol_name}_trend_lines_with_signals.png')
         plt.savefig(plot_filename, bbox_inches='tight', dpi=120)
 
-        # Send the plot to Telegram if file exists
-        if os.path.exists(plot_filename):
-            try:
-                message = title_text
-                send_telegram_message_with_image(plot_filename, message)
-            except Exception as e:
-                logging.error(f"Error sending image to Telegram: {e}")
-                # Try sending just the message if image fails
-                send_telegram_message(f"⚠️ Could not send chart for {symbol_name}. Error: {str(e)}")
-        else:
-            logging.error(f"Chart file not found: {plot_filename}")
-            send_telegram_message(f"⚠️ Chart generation failed for {symbol_name}")
+        # Send the plot to Telegram
+        message = title_text
+        send_telegram_message_with_image(plot_filename, message)
 
         # Close the figure to avoid memory issues
-        plt.close()
+        plt.close()  
         
         return True
     except Exception as e:
@@ -2698,26 +2557,6 @@ if __name__ == "__main__":
         
     # Add this line at the beginning of your main code
     create_default_symbols_file()
-    
-    # Load top 100 symbols from KMI100 sheet of the Excel file
-    symbols_file_path = os.path.join(os.getcwd(), 'data/databases/production/psxsymbols.xlsx')
-    try:
-        kmi100_df = pd.read_excel(symbols_file_path, sheet_name='KMI100')
-        selected_symbols = kmi100_df.iloc[:100, 0].tolist()  # Get top 100 symbols from first column
-        print(f"Loaded {len(selected_symbols)} symbols from KMI100 sheet for processing.")
-        # Filter available symbols to only include the top 100 from KMI100
-        original_available_symbols = available_symbols.copy()
-        available_symbols = [sym for sym in original_available_symbols if sym in selected_symbols]
-        # Log missing symbols from KMI100 top 100 that are not in the database
-        missing_symbols = [sym for sym in selected_symbols if sym not in original_available_symbols]
-        if missing_symbols:
-            print(f"⚠️ {len(missing_symbols)} symbols from KMI100 top 100 not found in database:")
-            for sym in missing_symbols:
-                print(f"⚠️ Symbol {sym} not found in available data tables")
-        print(f"Filtered to {len(available_symbols)} symbols that are in both database and KMI100 top 100.")
-    except Exception as e:
-        print(f"Error loading KMI100 symbols from Excel: {e}")
-        print("Proceeding with all available symbols from database.")
     
     # Display all buy stocks sorted by update_date (most recent first), then by holding days
     print("\n🟢 ALL BUY SIGNALS (SORTED BY UPDATE DATE) 🟢")

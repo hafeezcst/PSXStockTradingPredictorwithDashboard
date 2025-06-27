@@ -843,5 +843,35 @@ if __name__ == "__main__":
 
         logging.info("Analysis complete")
         
+        # --- Dashboard Update Logic ---
+        try:
+            import subprocess
+            from datetime import date
+            db_path = 'data/databases/production/psx_consolidated_data_indicators_PSX.db'
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            # Try to get the latest update date from a relevant table (e.g., buy_stocks, sell_stocks, or any with a Date/Update_Date column)
+            last_update = None
+            for table in ['buy_stocks', 'sell_stocks', 'neutral_stocks']:
+                try:
+                    cursor.execute(f"SELECT MAX(Date) FROM {table}")
+                    result = cursor.fetchone()
+                    if result and result[0]:
+                        last_update = result[0]
+                        break
+                except Exception:
+                    continue
+            conn.close()
+            today_str = date.today().strftime('%Y-%m-%d')
+            if last_update is None or str(last_update) < today_str:
+                logging.info(f"Dashboard is outdated (last update: {last_update}). Updating dashboard...")
+                # Run the dashboard update (non-blocking)
+                subprocess.Popen(['python', 'src/data_processing/run_dashboard.py'])
+            else:
+                logging.info(f"Dashboard is up-to-date (last update: {last_update}).")
+        except Exception as e:
+            logging.error(f"Error checking or updating dashboard: {e}")
+
     except Exception as e:
         logging.error(f"An error occurred during execution: {e}")

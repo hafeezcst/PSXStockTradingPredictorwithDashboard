@@ -1,3 +1,3 @@
-Script executed at 2025-06-20T17:29:20.044988
+Script executed at 2025-06-26T22:19:19.465075
 Current working directory: C:\Users\muhammadhafeez\Documents\GitHub\PSXStockTradingPredictorwithDashboard
 Python version: 3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]
